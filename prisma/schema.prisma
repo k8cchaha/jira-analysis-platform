@@ -8,24 +8,14 @@ datasource db {
 }
 
 model User {
-  id        String     @id @default(cuid())
-  email     String     @unique
-  name      String?
-  image     String?
-  jiraToken JiraToken?
-  accounts  Account[]
-  sessions  Session[]
-}
-
-model JiraToken {
-  id           String   @id @default(cuid())
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessToken  String
-  refreshToken String
-  cloudId      String
-  expiresAt    DateTime
-  updatedAt    DateTime @updatedAt
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name          String?
+  image         String?
+  emailVerified DateTime?
+  jiraCloudId   String
+  accounts    Account[]
+  sessions    Session[]
 }
 
 model Account {
