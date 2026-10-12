@@ -152,10 +152,9 @@ export function getIssueStoryPoints(
 }
 
 export async function updateJiraStoryPoints(
-  userId: string,
   changes: StoryPointsChange[]
 ): Promise<StoryPointsUpdateResult> {
-  const credentials = await getJiraToken(userId)
+  const credentials = await getJiraToken(true)
   const candidates = await getJiraStoryPointsFields(credentials)
   const eligibleIssues = await getEligibleIssues(credentials, changes, candidates)
 

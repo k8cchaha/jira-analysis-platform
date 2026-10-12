@@ -51,12 +51,10 @@ export class JiraIssueSearchError extends Error {
   }
 }
 
-export async function getRecentAssignedIssues(
-  userId: string
-): Promise<JiraIssueSearchResult> {
+export async function getRecentAssignedIssues(): Promise<JiraIssueSearchResult> {
   let credentials: JiraCredentials
   try {
-    credentials = await getJiraToken(userId)
+    credentials = await getJiraToken()
   } catch (error) {
     if (error instanceof JiraAuthorizationError) throw error
     throw new JiraIssueSearchError(
