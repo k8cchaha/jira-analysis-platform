@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jira Analysis Platform
 
-## Getting Started
+Next.js application that uses Atlassian OAuth 2.0 (3LO) for both application login and Jira Cloud API access.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20.9 or newer
+- An Atlassian developer app with OAuth 2.0 (3LO)
+- Access to the configured Jira Cloud site
+
+## Atlassian configuration
+
+In the [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/), configure this callback URL for local development:
+
+```text
+http://localhost:3000/api/auth/callback/atlassian
+```
+
+Use the equivalent application origin in production. Enable these OAuth scopes:
+
+```text
+read:me
+read:jira-work
+read:jira-user
+write:jira-work
+offline_access
+```
+
+Copy `.env.example` to `.env.local`, then set the Auth.js secret, Atlassian client credentials, and target Jira Cloud URL. Never commit `.env.local` or real credentials.
+
+## Local setup
+
+Install dependencies and initialize the database:
+
+```bash
+npm install
+npx prisma migrate dev
+npx prisma generate
+```
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). The Jira login button performs one Atlassian authorization flow that creates the application session and grants Jira API access.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+After login, the dashboard shows up to the latest 50 issues returned by:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```jql
+assignee = currentUser() AND created >= -30d ORDER BY created DESC
+```
 
-## Learn More
+The dashboard uses Jira field `customfield_10005` for Story Points. You can edit non-negative integer or decimal values, clear a value, and submit only the issues that changed. In JQL this field can also be referenced as `cf[10005]`; Jira REST request and response bodies use `customfield_10005`.
 
-To learn more about Next.js, take a look at the following resources:
+Reading issues requires `read:jira-work`; saving Story Points also requires `write:jira-work`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Reset development data
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The migration to Jira-only authentication does not link existing Google accounts. Reset the local SQLite database when upgrading an existing development checkout:
 
-## Deploy on Vercel
+```bash
+npx prisma migrate reset
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This deletes local development data and reapplies all migrations.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Validation
+
+```bash
+npx prisma validate
+npx tsc --noEmit
+npm run lint
+npm run build
+```
