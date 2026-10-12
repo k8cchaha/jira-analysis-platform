@@ -6,28 +6,11 @@ import {
   type JiraIssueSearchResult,
 } from "@/lib/jira-issues"
 import { JiraAuthorizationError } from "@/lib/jira-token"
-import { prisma } from "@/lib/prisma"
 import { redirect } from "next/navigation"
 
 export default async function DashboardPage() {
   const session = await auth()
   if (!session?.user?.id) redirect("/login")
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      jiraCloudId: true,
-      accounts: {
-        where: { provider: "atlassian" },
-        select: { id: true },
-        take: 1,
-      },
-    },
-  })
-
-  if (!user?.jiraCloudId || user.accounts.length === 0) {
-    await signOut({ redirectTo: "/login?error=Configuration" })
-  }
 
   const jiraBaseUrl = getJiraBaseUrl()
   let result: JiraIssueSearchResult | null = null
@@ -35,7 +18,7 @@ export default async function DashboardPage() {
     null
 
   try {
-    result = await getRecentAssignedIssues(session.user.id)
+    result = await getRecentAssignedIssues()
   } catch (error) {
     if (error instanceof JiraAuthorizationError) {
       errorState =

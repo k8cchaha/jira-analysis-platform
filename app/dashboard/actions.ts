@@ -35,7 +35,7 @@ export async function updateStoryPointsAction(
   if ("error" in parsed) return errorState(submissionId, parsed.error)
 
   try {
-    const result = await updateJiraStoryPoints(session.user.id, parsed.changes)
+    const result = await updateJiraStoryPoints(parsed.changes)
     if (result.succeededIssueIds.length > 0) refresh()
 
     if (result.failures.length === 0) {

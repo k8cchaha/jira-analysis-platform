@@ -30,7 +30,7 @@ interface AccessibleResource {
 
 export interface RefreshedAtlassianTokens {
   accessToken: string
-  refreshToken?: string
+  refreshToken: string
   expiresAt: number
 }
 
@@ -150,7 +150,8 @@ export function parseRefreshedTokens(
   const accessToken = requireString(data.access_token)
   const expiresAt = getTokenExpiry(data)
 
-  if (!accessToken || !expiresAt) {
+  const refreshToken = requireString(data.refresh_token)
+  if (!accessToken || !refreshToken || !expiresAt) {
     throw new AtlassianOAuthError(
       "Atlassian returned an incomplete refresh response",
       "invalid_token_response"
@@ -159,7 +160,7 @@ export function parseRefreshedTokens(
 
   return {
     accessToken,
-    refreshToken: requireString(data.refresh_token),
+    refreshToken,
     expiresAt,
   }
 }
