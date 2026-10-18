@@ -70,6 +70,23 @@ Custom field mappings are centralized in `lib/jira-fields.ts`: Story Points and 
 
 Reading issues requires `read:jira-work`; saving fields also requires `write:jira-work`.
 
+## Dashboard alerts
+
+The first dashboard row shows exact, independently loaded Bug, due-reminder and pending-Issue counts. All six queries use the applied filter's assignee: `currentUser()` for self, a server-verified account ID for person, or the resolved and deduplicated included members for team. Selected projects intersect the base query. The filter's **近 X 天** does not add a date restriction to these alerts; only the explicit `updated` and `duedate` conditions below apply. Due dates use Jira's `startOfDay()` boundaries: overdue is before today; upcoming includes today until, but not including, the start of the day three days ahead. No additional issue-type or status restriction is applied.
+
+| Check | Base JQL (before the assignee/project intersection) |
+| --- | --- |
+| S0／S1 | `project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")` |
+| S2 超過10天未更新 | `project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d` |
+| In Review | `issuetype in (DEV-Task, QA-Task) and status = "In Review"` |
+| Request Info | `status = "Request Info"` |
+| 已逾期 | `duedate < startOfDay()` |
+| 即將到期 | `duedate >= startOfDay() AND duedate < startOfDay("+3d")` |
+
+Bug, due-reminder and pending-Issue borders are green when both totals are zero; positive totals use red, amber and blue borders respectively. Both missing-data cards retain neutral borders. Loading and failed queries retain neutral borders and never imply zero. All three alert cards are read-only. A nonzero Bug card opens a detail dialog: S0/S1 first, a divider, then S2 stale for more than ten days. It shows Ticket (external Jira link), Priority, Summary, Status and complete 24-hour days since the last update. A nonzero due-reminder card opens a detail dialog: overdue first, a divider, then upcoming. It shows Ticket (external Jira link), Issue Type, Summary, Status and 逾期日 (Jira due date as YYYY-MM-DD). Issue Type text is green for Story, red for Bug/QA-Task, blue for Task/DEV-Task, and neutral for other types. Both dialogs show Assignee only for nonself filters, retain the opening filter, have no visible pagination and offer no editing or save controls. Pending-Issue counts have no detail dialog.
+
+Each group resolves its scope once and runs at most two count searches concurrently, with sequential pagination per query, a 5,000-issue cap and at most 100 search pages. No approximate-count API is used. Errors do not publish partial group counts. Separate Jira searches are not an atomic snapshot. The client rejects malformed counts and obsolete filter responses.
+
 ## Dashboard missing-data completion
 
 `/dashboard` shows two independently loaded, exact missing-data counts. The top filter uses three radio modes: **自己** (default), **指定人**, and **團隊／專案**. Selecting **自己** immediately applies the self scope; if the displayed data is already self-scoped, selecting it again does not reload. **指定人** and **團隊／專案** draft changes only apply after Query. Applied state is encoded in a canonical URL, including repeated group/project/exclusion parameters. Browser history and reload restore the applied scope. Optional remembered team/project selections are per-viewer browser conveniences, not authoritative membership or permissions. Person names are not stored in browser preferences; an applied person scope is restored only from the URL.

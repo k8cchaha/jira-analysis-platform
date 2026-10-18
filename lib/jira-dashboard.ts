@@ -180,6 +180,35 @@ async function search(credentials: JiraCredentials, jql: string, fields: string[
   if ((data.isLast === true && next) || (!next && data.isLast !== true) || (next && data.issues.length === 0)) throw invalidResponse("Jira 分頁資訊不完整，無法提供精確結果。")
   return { issues: data.issues.map(parseIssue), nextPageToken: next }
 }
+export async function* searchJiraIssues(credentials: JiraCredentials, jql: string, fields: string[] = []): AsyncGenerator<RawIssue[]> {
+  const seen = new Set<string>()
+  const cursors = new Set<string>()
+  let cursor: string | null = null
+  for (let page = 0; page < 100; page += 1) {
+    const result = await search(credentials, jql, [...new Set(["project", ...fields])], 100, cursor)
+    for (const issue of result.issues) {
+      if (seen.has(issue.id)) throw invalidResponse("Jira 分頁包含重複資料，請重新載入以取得完整結果。")
+      seen.add(issue.id)
+      if (seen.size > MISSING_DATA_LIMIT) throw limitError()
+    }
+    cursor = result.nextPageToken
+    if (cursor) {
+      if (seen.size >= MISSING_DATA_LIMIT) throw limitError()
+      if (cursors.has(cursor)) throw invalidResponse("Jira 分頁無法完成，請重新載入。")
+      cursors.add(cursor)
+    }
+    yield result.issues
+    if (!cursor) return
+  }
+  throw invalidResponse("Jira 分頁過多，無法提供精確筆數，請縮小查詢範圍。")
+}
+export async function countJiraIssues(credentials: JiraCredentials, jql: string): Promise<number> {
+  let total = 0
+  for await (const issues of searchJiraIssues(credentials, jql)) total += issues.length
+  return total
+}
+export { baseUrl as dashboardJiraBaseUrl }
+
 function pointsValues(fields: FieldSet, issue: RawIssue) {
   const point = requireField(fields.points, issue)
   const actual = requireField(fields.actualPoints, issue)
