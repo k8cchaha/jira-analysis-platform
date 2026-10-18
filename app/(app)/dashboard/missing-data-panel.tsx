@@ -7,10 +7,6 @@ import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missi
 
 type CardState = { status: "loading" } | MissingDataSummaryResult
 const kinds: MissingDataKind[] = ["points", "defect-cause"]
-const descriptions: Record<MissingDataKind, string> = {
-  points: "指派給我、Done 的 DEV-Task / QA-Task，不限日期。SUN / TKK 僅納入 resolution 為 Done 或 Fixed。",
-  "defect-cause": "SUN / TKK 指派給我的 Bug；排除 To Do 類別、In Progress 與 Dev Ready，resolution 為空、Done 或 Fixed。",
-}
 
 export function MissingDataPanel() {
   const [cards, setCards] = useState<Record<MissingDataKind, CardState>>({
@@ -77,11 +73,10 @@ export function MissingDataPanel() {
       <div className="grid gap-4 lg:grid-cols-2">
         {kinds.map((kind) => {
           const card = cards[kind]
-          const title = kind === "points" ? "Points 缺失" : "Defect Cause 缺失"
+          const title = kind === "points" ? "(Actual) Story Points 缺失" : "Defect Cause 缺失"
           return (
             <article key={kind} aria-busy={card.status === "loading"} className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
               <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
-              <p className="mt-2 min-h-12 text-xs leading-5 text-slate-600 dark:text-slate-400">{descriptions[kind]}</p>
               {card.status === "loading" ? <MissingDataCardSkeleton /> : card.status === "error" ? (
                 <div role="alert" className="mt-5 flex-1">
                   <p className="flex items-start gap-2 text-sm leading-6 text-slate-800 dark:text-slate-200"><WarningIcon /><span>無法取得精確筆數：{card.error.message}</span></p>
