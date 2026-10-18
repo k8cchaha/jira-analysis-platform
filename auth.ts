@@ -134,9 +134,10 @@ function createAuthConfig(internalSession: boolean): NextAuthConfig {
         session.jiraAuthorizationError = getJiraAuthError(token.jiraAuthError)
 
         if (internalSession) {
-          session.jiraAccessToken = getString(token.atlassianAccessToken)
-          session.jiraCloudId = getString(token.jiraCloudId)
-          session.jiraExpiresAt = getPositiveNumber(token.atlassianExpiresAt)
+          const internal = session as InternalJiraSession
+          internal.jiraAccessToken = getString(token.atlassianAccessToken)
+          internal.jiraCloudId = getString(token.jiraCloudId)
+          internal.jiraExpiresAt = getPositiveNumber(token.atlassianExpiresAt)
         }
 
         return session
@@ -149,14 +150,24 @@ function createAuthConfig(internalSession: boolean): NextAuthConfig {
   }
 }
 
+export interface InternalJiraSession extends Session {
+  jiraAccessToken?: string
+  jiraCloudId?: string
+  jiraExpiresAt?: number
+}
+
 const publicAuth = NextAuth(createAuthConfig(false))
 const internalAuth = NextAuth(createAuthConfig(true))
 
 export const handlers = publicAuth.handlers
-export const { auth, signIn, signOut } = internalAuth
+export const { auth, signIn, signOut } = publicAuth
 
-export async function refreshAuthSession(): Promise<Session | null> {
-  return internalAuth.unstable_update({})
+export async function getInternalAuthSession(): Promise<InternalJiraSession | null> {
+  return (await internalAuth.auth()) as InternalJiraSession | null
+}
+
+export async function refreshAuthSession(): Promise<InternalJiraSession | null> {
+  return (await internalAuth.unstable_update({})) as InternalJiraSession | null
 }
 
 async function refreshAtlassianToken(refreshToken: string) {

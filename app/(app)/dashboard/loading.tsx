@@ -1,0 +1,26 @@
+import { PageHeader } from "@/components/page-header"
+
+export default function DashboardLoading() {
+  return (
+    <>
+      <PageHeader
+        title="儀表板"
+        description="你的 Jira 資料工作區。查看指派給自己的缺失資料，並補填 Points 與 Defect Cause。"
+        breadcrumbs={["總覽", "儀表板"]}
+      />
+      <section role="status" aria-label="正在載入儀表板">
+        <h2 className="mb-4 text-lg font-semibold text-slate-950 dark:text-white">待補資料</h2>
+        <div aria-hidden="true" className="grid gap-4 lg:grid-cols-2">
+          {["points", "defect-cause"].map((kind) => (
+            <div key={kind} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+              <div className="h-5 w-40 animate-pulse rounded bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />
+              <div className="h-10 w-full animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />
+              <div className="h-10 w-28 animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />
+              <div className="h-16 w-full animate-pulse rounded-lg bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  )
+}

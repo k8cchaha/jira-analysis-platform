@@ -1,7 +1,10 @@
 import "server-only"
 
-import { auth, refreshAuthSession } from "@/auth"
-import type { Session } from "next-auth"
+import {
+  getInternalAuthSession,
+  refreshAuthSession,
+  type InternalJiraSession,
+} from "@/auth"
 
 export interface JiraCredentials {
   accessToken: string
@@ -26,11 +29,15 @@ export class JiraAuthorizationError extends Error {
 export async function getJiraToken(
   persistRefresh = false
 ): Promise<JiraCredentials> {
-  const session = persistRefresh ? await refreshAuthSession() : await auth()
+  const session = persistRefresh
+    ? await refreshAuthSession()
+    : await getInternalAuthSession()
   return getCredentialsFromSession(session)
 }
 
-function getCredentialsFromSession(session: Session | null): JiraCredentials {
+function getCredentialsFromSession(
+  session: InternalJiraSession | null
+): JiraCredentials {
   if (!session?.user?.id) {
     throw new JiraAuthorizationError(
       "No Jira authorization was found",

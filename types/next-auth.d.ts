@@ -11,9 +11,6 @@ declare module "next-auth" {
       id: string
     } & DefaultSession["user"]
     jiraAuthorizationError?: JiraAuthorizationError
-    jiraAccessToken?: string
-    jiraCloudId?: string
-    jiraExpiresAt?: number
   }
 }
 

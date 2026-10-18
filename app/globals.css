@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 @theme inline {
@@ -14,13 +14,101 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #020617;
+    --foreground: #f1f5f9;
   }
 }
 
+html {
+  background: var(--background);
+}
+
 body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+@layer components {
+  .app-icon-button {
+    display: inline-flex;
+    height: 2.25rem;
+    width: 2.25rem;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.625rem;
+    color: #475569;
+    transition: background-color 150ms, color 150ms;
+  }
+}
+
+.app-icon-button:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.app-nav-item {
+  display: flex;
+  min-height: 2.5rem;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  color: #475569;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 150ms, color 150ms;
+}
+
+.app-nav-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.app-nav-item-active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.app-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+  .app-icon-button {
+    color: #94a3b8;
+  }
+
+  .app-icon-button:hover,
+  .app-nav-item:hover {
+    background: #1e293b;
+    color: #f8fafc;
+  }
+
+  .app-nav-item {
+    color: #94a3b8;
+  }
+
+  .app-nav-item-active {
+    background: #172554;
+    color: #bfdbfe;
+  }
+
+  .app-scrollbar {
+    scrollbar-color: #475569 transparent;
+  }
 }

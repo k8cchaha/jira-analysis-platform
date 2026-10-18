@@ -11,6 +11,7 @@ import { refresh } from "next/cache"
 
 const MAX_CHANGES = 50
 const MAX_PAYLOAD_LENGTH = 10_000
+const MAX_SUBMISSION_ID_LENGTH = 10_000
 const JIRA_ISSUE_ID_PATTERN = /^\d{1,30}$/
 
 export interface StoryPointsActionState {
@@ -126,7 +127,9 @@ function parseChanges(value: FormDataEntryValue | null):
 }
 
 function getSubmissionId(value: FormDataEntryValue | null) {
-  return typeof value === "string" && value.length <= 100 ? value : null
+  return typeof value === "string" && value.length <= MAX_SUBMISSION_ID_LENGTH
+    ? value
+    : null
 }
 
 function getJiraErrorMessage(code: JiraStoryPointsError["code"]) {

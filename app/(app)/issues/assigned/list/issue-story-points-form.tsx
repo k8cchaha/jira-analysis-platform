@@ -3,9 +3,10 @@
 import {
   updateStoryPointsAction,
   type StoryPointsActionState,
-} from "@/app/dashboard/actions"
+} from "@/app/(app)/issues/assigned/list/actions"
+import { useNavigationBlocker } from "@/components/navigation-blocker"
 import type { JiraIssueSummary } from "@/lib/jira-issues"
-import { useActionState, useMemo, useState } from "react"
+import { useActionState, useEffect, useMemo, useState } from "react"
 
 interface IssueStoryPointsFormProps {
   issues: JiraIssueSummary[]
@@ -29,6 +30,7 @@ export function IssueStoryPointsForm({
   jiraBaseUrl,
 }: IssueStoryPointsFormProps) {
   const [drafts, setDrafts] = useState<Drafts>({})
+  const { setBlocked } = useNavigationBlocker()
   const [state, formAction, pending] = useActionState(
     updateStoryPointsAction,
     initialStoryPointsActionState
@@ -64,6 +66,23 @@ export function IssueStoryPointsForm({
     state.failures.map((failure) => [failure.issueId, failure.message])
   )
   const canSubmit = changes.length > 0 && !hasInvalidDraft && !pending
+  const hasUnsavedChanges = changes.length > 0 || hasInvalidDraft
+
+  useEffect(() => {
+    setBlocked("assigned-story-points", hasUnsavedChanges)
+    return () => setBlocked("assigned-story-points", false)
+  }, [hasUnsavedChanges, setBlocked])
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault()
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [hasUnsavedChanges])
 
   function updateDraft(issue: JiraIssueSummary, raw: string) {
     if (!/^\d*(?:\.\d*)?$/.test(raw)) return
