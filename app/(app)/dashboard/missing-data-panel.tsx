@@ -6,6 +6,8 @@ import { useNavigationBlocker } from "@/components/navigation-blocker"
 import { DashboardFilter as DashboardFilterControls } from "./dashboard-filter"
 import { SELF_FILTER, dashboardHref, serializeDashboardFilter, type DashboardFilter, type DashboardFilterResult } from "@/lib/jira-dashboard-filter"
 import { MissingDataDialog } from "./missing-data-dialog"
+import { BugAlertCard } from "./bug-alert-card"
+import { PendingIssueCard } from "./pending-issue-card"
 import { reauthorizeDashboardAction } from "./actions"
 import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missing-data"
 
@@ -92,16 +94,20 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
   return (
     <>
     <DashboardFilterControls key={`${viewerId}:${query ?? "invalid"}`} filter={filter} viewerId={viewerId} onApply={applyFilter} />
-    {query === null ? <p role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">{applied.error} 請重新設定上方篩選條件。</p> : <section aria-labelledby="missing-data-title">
-      <div className="mb-4">
-        <h2 id="missing-data-title" className="text-lg font-semibold text-slate-950 dark:text-white">待補資料</h2>
-      </div>
+    {query === null ? <p role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">{applied.error} 請重新設定上方篩選條件。</p> : <section aria-label="儀表板檢查">
       <div className="grid gap-4 lg:grid-cols-2">
+        <BugAlertCard />
+        <PendingIssueCard />
         {kinds.map((kind) => {
           const card: CardState = cardsQuery === query ? cards[kind] : { status: "loading" }
           const title = kind === "points" ? "(Actual) Story Points 缺失" : "Defect Cause 缺失"
+          const border = card.status !== "success"
+            ? "border-slate-200 dark:border-slate-800"
+            : card.summary.total === 0
+              ? "border-green-500 dark:border-green-400"
+              : "border-orange-500 dark:border-orange-400"
           return (
-            <article key={kind} aria-busy={card.status === "loading"} className="relative flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+            <article key={kind} aria-busy={card.status === "loading"} className={`relative flex min-w-0 flex-col rounded-2xl border-2 bg-white p-5 shadow-sm sm:p-6 dark:bg-slate-900 ${border}`}>
               <h3 id={`${cardId}-${kind}-title`} className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
               {card.status === "loading" ? <MissingDataCardSkeleton /> : card.status === "error" ? (
                 <div role="alert" className="mt-5 flex-1">
