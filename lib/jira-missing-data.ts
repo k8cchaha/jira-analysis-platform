@@ -1,4 +1,5 @@
 import { JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
+import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 
 export { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "./jira-fields.ts"
 
@@ -8,19 +9,32 @@ export const MISSING_DATA_LIMIT = 5_000
 export const MISSING_DATA_PAGE_SIZE = 50
 
 export const POINTS_SCOPE_JQL =
-  'issuetype in ("DEV-Task", "QA-Task") AND assignee = currentUser() AND status = Done AND (project not in (sun, tkk) OR resolution in (Done, Fixed))'
+  'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed)'
 
 const storyPointsJql = customFieldJql(JIRA_FIELDS.storyPoints.id)
 const actualStoryPointsJql = customFieldJql(JIRA_FIELDS.actualStoryPoints.id)
 
 export const MISSING_POINTS_JQL =
-  `${POINTS_SCOPE_JQL} AND (${storyPointsJql} is EMPTY OR ${storyPointsJql} = 0 OR ${actualStoryPointsJql} is EMPTY OR ${actualStoryPointsJql} = 0)`
+  `${POINTS_SCOPE_JQL} and ((status = Done and ${actualStoryPointsJql} in (EMPTY, 0)) or (statusCategory not in ("To Do") and ${storyPointsJql} in (EMPTY, 0))) and assignee = currentUser()`
 
 export const MISSING_DEFECT_CAUSE_JQL =
-  `project in (sun, tkk) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
+  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
 
 export function missingDataJql(kind: MissingDataKind) {
   return kind === "points" ? MISSING_POINTS_JQL : MISSING_DEFECT_CAUSE_JQL
+}
+
+export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboardScope): string {
+  if (scope.mode === "self") return missingDataJql(kind)
+  dashboardDays(String(scope.days))
+  if (!scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT || scope.accountIds.some((id) => !isDashboardAccountId(id)) || scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))) throw new DashboardFilterError()
+  const assignees = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`).join(", ")
+  const base = missingDataJql(kind).replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+  const date = kind === "points" ? `status CHANGED TO Done AFTER -${scope.days}d` : `created >= -${scope.days}d`
+  const projects = scope.projects.length ? ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})` : ""
+  const jql = `${base} AND ${date}${projects}`
+  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
+  return jql
 }
 
 export function isMissingPoint(value: unknown): value is null | 0 {
@@ -29,6 +43,13 @@ export function isMissingPoint(value: unknown): value is null | 0 {
 
 export function isPointValue(value: unknown): value is number | null {
   return value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0)
+}
+
+export function missingPoints(value: Pick<MissingIssue, "storyPoints" | "actualStoryPoints" | "storyPointsRequired" | "actualStoryPointsRequired">) {
+  return {
+    storyPointsMissing: value.storyPointsRequired && isMissingPoint(value.storyPoints),
+    actualStoryPointsMissing: value.actualStoryPointsRequired && isMissingPoint(value.actualStoryPoints),
+  }
 }
 
 export interface MissingDataSummary {
@@ -42,8 +63,12 @@ export interface MissingIssue {
   id: string
   key: string
   summary: string
+  assigneeDisplayName: string | null
+  parentIssueType: { status: "known"; name: string } | { status: "none" | "unknown" }
   storyPoints: number | null
   actualStoryPoints: number | null
+  storyPointsRequired: boolean
+  actualStoryPointsRequired: boolean
   storyPointsEditable: boolean
   actualStoryPointsEditable: boolean
   rootCause: string
@@ -55,6 +80,7 @@ export interface MissingIssue {
 }
 
 export interface MissingDataPage {
+  readOnly: boolean
   issues: MissingIssue[]
   page: number
   nextPageToken: string | null
@@ -130,7 +156,7 @@ export function parseMissingDataChanges(kind: MissingDataKind, value: unknown): 
         if (typeof point !== "number" || !Number.isFinite(point) || point <= 0) {
           throw new Error("補填的 Points 必須是大於 0 的有限數值。")
         }
-        if (!isMissingPoint(record[expected])) throw new Error("原始 Points 值無效。")
+        if (!isPointValue(record[expected])) throw new Error("原始 Points 值無效。")
         change[field] = point
         change[expected] = record[expected]
       }

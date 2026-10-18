@@ -6,10 +6,11 @@ import { JIRA_FIELDS, STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD, matchesJira
 import {
   MISSING_DATA_LIMIT,
   MISSING_DATA_PAGE_SIZE,
-  isMissingPoint,
   isPointValue,
+  missingPoints,
   jiraText,
   missingDataJql,
+  missingDataReadJql,
   type MissingDataChange,
   type MissingDataError,
   type MissingDataKind,
@@ -18,6 +19,8 @@ import {
   type MissingIssue,
 } from "@/lib/jira-missing-data"
 import { initialPageCursor, openPageToken, sealPageToken } from "@/lib/jira-page-token"
+import { DashboardFilterError, SELF_FILTER, serializeDashboardFilter, type DashboardFilter } from "@/lib/jira-dashboard-filter"
+import { resolveDashboardScope, JiraDashboardLookupError, lookupError } from "@/lib/jira-dashboard-lookups"
 
 export class JiraDashboardError extends Error {
   constructor(readonly code: MissingDataError["code"], message: string) {
@@ -62,6 +65,8 @@ function invalidResponse(message = "Jira 回傳了無法識別的資料，無法
 }
 
 export function dashboardError(error: unknown): MissingDataError {
+  if (error instanceof DashboardFilterError) return { code: "configuration", message: error.message }
+  if (error instanceof JiraDashboardLookupError) return lookupError(error)
   if (error instanceof JiraDashboardError) return { code: error.code, message: error.message }
   if (error instanceof JiraAuthorizationError) {
     return error.code === "invalid_configuration"
@@ -155,7 +160,7 @@ function fieldIds(fields: FieldSet, kind: MissingDataKind, detail: boolean) {
   const selected = kind === "points"
     ? [...fields.points, ...fields.actualPoints]
     : [...fields.defectCause, ...(detail ? [...fields.rootCause, ...fields.solution] : [])]
-  return [...new Set(["project", ...(detail ? ["summary"] : []), ...selected.map((field) => field.id)])]
+  return [...new Set(["project", ...(kind === "points" ? ["status"] : []), ...(detail ? ["summary", "assignee", "parent"] : []), ...selected.map((field) => field.id)])]
 }
 function parseIssue(value: unknown): RawIssue {
   if (!record(value) || !nonemptyString(value.id) || !/^\d{1,30}$/.test(value.id) || !nonemptyString(value.key) || !record(value.fields) || !record(value.fields.project) || !nonemptyString(value.fields.project.id)) {
@@ -181,7 +186,15 @@ function pointsValues(fields: FieldSet, issue: RawIssue) {
   const storyPoints = issue.fields[point.id]
   const actualStoryPoints = issue.fields[actual.id]
   if (!isPointValue(storyPoints) || !isPointValue(actualStoryPoints)) throw invalidResponse(`${issue.key} 的 Points 值無效，無法提供精確缺失結果。`)
-  return { storyPoints, actualStoryPoints }
+  const status = issue.fields.status
+  if (!record(status) || !nonemptyString(status.name) || !status.name.trim() || !record(status.statusCategory) || !nonemptyString(status.statusCategory.key) || !["new", "indeterminate", "done"].includes(status.statusCategory.key)) {
+    throw new JiraDashboardError("configuration", `${issue.key} 未回傳有效狀態，無法判定 Points 缺失範圍。`)
+  }
+  return {
+    storyPoints, actualStoryPoints,
+    storyPointsRequired: status.statusCategory.key !== "new",
+    actualStoryPointsRequired: status.name.toLowerCase() === "done",
+  }
 }
 function causeValues(fields: FieldSet, issue: RawIssue): string[] {
   const cause = requireField(fields.defectCause, issue)
@@ -191,26 +204,26 @@ function causeValues(fields: FieldSet, issue: RawIssue): string[] {
   return value.map((option) => (option as RecordValue).id as string)
 }
 
-export async function getMissingDataSummary(kind: MissingDataKind): Promise<MissingDataSummary> {
+export async function getMissingDataSummary(kind: MissingDataKind, filter: DashboardFilter = SELF_FILTER): Promise<MissingDataSummary> {
   const credentials = await getJiraToken()
+  const scope = await resolveDashboardScope(filter, credentials)
+  const jql = `${missingDataReadJql(kind, scope)} ORDER BY key ASC`
   const fields = await getFields(credentials, kind)
   const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0 }
   const seen = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | null = null
   do {
-    const result = await search(credentials, `${missingDataJql(kind)} ORDER BY key ASC`, fieldIds(fields, kind, false), 100, cursor)
+    const result = await search(credentials, jql, fieldIds(fields, kind, false), 100, cursor)
     for (const issue of result.issues) {
       if (seen.has(issue.id)) throw invalidResponse("Jira 分頁包含重複資料，請重新載入以取得完整結果。")
       seen.add(issue.id)
       if (seen.size > MISSING_DATA_LIMIT) throw limitError()
       if (kind === "points") {
-        const value = pointsValues(fields, issue)
-        const missingPoint = isMissingPoint(value.storyPoints)
-        const missingActual = isMissingPoint(value.actualStoryPoints)
-        if (missingPoint || missingActual) summary.total += 1
-        if (missingPoint) summary.storyPointsMissing += 1
-        if (missingActual) summary.actualStoryPointsMissing += 1
+        const { storyPointsMissing, actualStoryPointsMissing } = missingPoints(pointsValues(fields, issue))
+        if (storyPointsMissing || actualStoryPointsMissing) summary.total += 1
+        if (storyPointsMissing) summary.storyPointsMissing += 1
+        if (actualStoryPointsMissing) summary.actualStoryPointsMissing += 1
       } else if (causeValues(fields, issue).length === 0) {
         summary.total += 1
       }
@@ -236,8 +249,9 @@ function baseUrl() {
   }
 }
 
-async function liveIssue(credentials: JiraCredentials, id: string, ids: string[]) {
-  const params = new URLSearchParams({ fields: [...new Set(["project", "summary", ...ids])].join(","), expand: "editmeta" })
+async function liveIssue(credentials: JiraCredentials, id: string, ids: string[], readOnly = false) {
+  const params = new URLSearchParams({ fields: [...new Set(["project", "summary", ...ids])].join(",") })
+  if (!readOnly) params.set("expand", "editmeta")
   const data = await responseJson(await jiraFetch(credentials, `/rest/api/3/issue/${encodeURIComponent(id)}?${params}`))
   const issue = parseIssue(data)
   if (issue.id !== id) throw invalidResponse()
@@ -269,39 +283,54 @@ function textField(candidates: JiraField[], issue: RawIssue, label: string, warn
   }
   return jiraText(issue.fields[field.id]).trim() || "—"
 }
-function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind, editmeta: RecordValue, warnings: Set<string>): MissingIssue | null {
+function parentIssueType(value: unknown): MissingIssue["parentIssueType"] {
+  if (value === null) return { status: "none" }
+  if (!record(value) || !record(value.fields) || !record(value.fields.issuetype)) return { status: "unknown" }
+  const name = value.fields.issuetype.name
+  return nonemptyString(name) && name.trim() ? { status: "known", name } : { status: "unknown" }
+}
+function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind, editmeta: RecordValue, warnings: Set<string>, readOnly = false): MissingIssue | null {
+  const assignee = issue.fields.assignee
   const row: MissingIssue = {
     id: issue.id, key: issue.key, summary: typeof issue.fields.summary === "string" ? issue.fields.summary : "未命名議題",
-    storyPoints: null, actualStoryPoints: null, storyPointsEditable: false, actualStoryPointsEditable: false,
+    assigneeDisplayName: record(assignee) && nonemptyString(assignee.displayName) && assignee.displayName.trim() ? assignee.displayName : null,
+    parentIssueType: parentIssueType(issue.fields.parent),
+    storyPoints: null, actualStoryPoints: null, storyPointsRequired: false, actualStoryPointsRequired: false,
+    storyPointsEditable: false, actualStoryPointsEditable: false,
     rootCause: "—", solution: "—", defectCause: [], defectCauseOptions: [], defectCauseEditable: false,
   }
   if (kind === "points") {
     const values = pointsValues(fields, issue)
-    if (!isMissingPoint(values.storyPoints) && !isMissingPoint(values.actualStoryPoints)) return null
+    const { storyPointsMissing, actualStoryPointsMissing } = missingPoints(values)
+    if (!storyPointsMissing && !actualStoryPointsMissing) return null
     row.storyPoints = values.storyPoints
     row.actualStoryPoints = values.actualStoryPoints
-    row.storyPointsEditable = isMissingPoint(row.storyPoints) && numericEditable(editmeta, STORY_POINTS_FIELD)
-    row.actualStoryPointsEditable = isMissingPoint(row.actualStoryPoints) && numericEditable(editmeta, ACTUAL_STORY_POINTS_FIELD)
-    if ((isMissingPoint(row.storyPoints) && !row.storyPointsEditable) || (isMissingPoint(row.actualStoryPoints) && !row.actualStoryPointsEditable)) row.unavailableReason = "部分缺失欄位無法編輯，請確認 Jira 權限與編輯畫面設定。"
+    row.storyPointsRequired = values.storyPointsRequired
+    row.actualStoryPointsRequired = values.actualStoryPointsRequired
+    row.storyPointsEditable = !readOnly && numericEditable(editmeta, STORY_POINTS_FIELD)
+    row.actualStoryPointsEditable = !readOnly && numericEditable(editmeta, ACTUAL_STORY_POINTS_FIELD)
+    if (!readOnly && ((storyPointsMissing && !row.storyPointsEditable) || (actualStoryPointsMissing && !row.actualStoryPointsEditable))) row.unavailableReason = "部分缺失欄位無法編輯，請確認 Jira 權限與編輯畫面設定。"
   } else {
     row.defectCause = causeValues(fields, issue)
     if (row.defectCause.length > 0) return null
     row.rootCause = textField(fields.rootCause, issue, JIRA_FIELDS.rootCause.name, warnings)
     row.solution = textField(fields.solution, issue, JIRA_FIELDS.solution.name, warnings)
     const cause = requireField(fields.defectCause, issue)
-    row.defectCauseOptions = causeOptions(editmeta, cause.id)
-    row.defectCauseEditable = row.defectCauseOptions.length > 0
-    if (!row.defectCauseEditable) row.unavailableReason = "Defect Cause 無可用編輯選項，請確認 Jira 權限與欄位設定。"
+    row.defectCauseOptions = readOnly ? [] : causeOptions(editmeta, cause.id)
+    row.defectCauseEditable = !readOnly && row.defectCauseOptions.length > 0
+    if (!readOnly && !row.defectCauseEditable) row.unavailableReason = "Defect Cause 無可用編輯選項，請確認 Jira 權限與欄位設定。"
   }
   return row
 }
 
-export async function getMissingDataPage(kind: MissingDataKind, pageToken?: string | null): Promise<MissingDataPage> {
+export async function getMissingDataPage(kind: MissingDataKind, pageToken?: string | null, filter: DashboardFilter = SELF_FILTER): Promise<MissingDataPage> {
   const session = await auth()
   if (!session?.user?.id) throw new JiraDashboardError("reauthorize", "登入狀態已失效，請重新登入。")
   const credentials = await getJiraToken()
-  const jql = `${missingDataJql(kind)} ORDER BY key ASC`
-  const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql }
+  const scope = await resolveDashboardScope(filter, credentials)
+  const readOnly = scope.mode !== "self"
+  const jql = `${missingDataReadJql(kind, scope)} ORDER BY key ASC`
+  const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql, filterKey: serializeDashboardFilter(filter) }
   const secret = process.env.AUTH_SECRET
   if (!secret) throw new JiraDashboardError("configuration", "分頁加密設定不完整。")
   let cursor = initialPageCursor()
@@ -322,11 +351,11 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
     if (seen.has(original.id)) throw invalidResponse()
     seen.add(original.id)
     try {
-      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields)
-      return toMissingIssue(fields, issue, kind, editmeta, warnings)
+      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, readOnly)
+      return toMissingIssue(fields, issue, kind, editmeta, warnings, readOnly)
     } catch (error) {
       if (!(error instanceof JiraDashboardError) || error.code === "configuration" || error.code === "reauthorize") throw error
-      const row = toMissingIssue(fields, original, kind, {}, warnings)
+      const row = toMissingIssue(fields, original, kind, {}, warnings, readOnly)
       if (row) row.unavailableReason = error.message
       return row
     }
@@ -335,6 +364,7 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   if (next && cursor.path.includes(next)) throw invalidResponse()
   if (next && cursor.path.length >= MISSING_DATA_LIMIT / MISSING_DATA_PAGE_SIZE) throw limitError()
   return {
+    readOnly,
     issues: issues.filter((issue): issue is MissingIssue => issue !== null),
     page: cursor.path.length,
     nextPageToken: next ? sealPageToken({ path: [...cursor.path, next], expiresAt: cursor.expiresAt }, context, secret) : null,
@@ -357,6 +387,8 @@ export async function updateMissingData(kind: MissingDataKind, changes: MissingD
       const updates: RecordValue = {}
       if (kind === "points") {
         const values = pointsValues(fields, issue)
+        const { storyPointsMissing, actualStoryPointsMissing } = missingPoints(values)
+        if (!storyPointsMissing && !actualStoryPointsMissing) throw new JiraDashboardError("retry", "此 Issue 的 Points 已完整或已不在缺失範圍，未覆寫；請重新載入。")
         for (const [property, expected, id] of [
           ["storyPoints", "expectedStoryPoints", STORY_POINTS_FIELD],
           ["actualStoryPoints", "expectedActualStoryPoints", ACTUAL_STORY_POINTS_FIELD],
@@ -364,7 +396,7 @@ export async function updateMissingData(kind: MissingDataKind, changes: MissingD
           const desired = change[property]
           if (desired === undefined) continue
           const current = values[property]
-          if (!isMissingPoint(current) || current !== change[expected]) throw new JiraDashboardError("retry", "Points 已在載入後變更，未覆寫；請重新載入後確認。")
+          if (current !== change[expected]) throw new JiraDashboardError("retry", "Points 已在載入後變更，未覆寫；請重新載入後確認。")
           if (!numericEditable(editmeta, id)) throw new JiraDashboardError("forbidden", "此 Issue 的 Points 欄位無法編輯。")
           updates[id] = desired
         }

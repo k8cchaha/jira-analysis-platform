@@ -1,6 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
+import { useNavigationBlocker } from "@/components/navigation-blocker"
+import { DashboardFilter as DashboardFilterControls } from "./dashboard-filter"
+import { SELF_FILTER, dashboardHref, serializeDashboardFilter, type DashboardFilter, type DashboardFilterResult } from "@/lib/jira-dashboard-filter"
 import { MissingDataDialog } from "./missing-data-dialog"
 import { reauthorizeDashboardAction } from "./actions"
 import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missing-data"
@@ -8,19 +12,31 @@ import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missi
 type CardState = { status: "loading" } | MissingDataSummaryResult
 const kinds: MissingDataKind[] = ["points", "defect-cause"]
 
-export function MissingDataPanel() {
+export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null }, viewerId = "" }: { applied?: DashboardFilterResult; viewerId?: string }) {
+  const router = useRouter()
+  const cardId = useId()
+  const { isBlocked } = useNavigationBlocker()
   const [cards, setCards] = useState<Record<MissingDataKind, CardState>>({
     points: { status: "loading" }, "defect-cause": { status: "loading" },
   })
-  const [activeKind, setActiveKind] = useState<MissingDataKind | null>(null)
+  const [activeDialog, setActiveDialog] = useState<{ kind: MissingDataKind; filter: DashboardFilter } | null>(null)
+  // Keep the entire accepted scope stable until an open editor explicitly closes.
+  const filter = activeDialog?.filter ?? applied.filter
+  const query = filter ? serializeDashboardFilter(filter) : null
+  const readOnly = filter?.mode !== "self"
+  const [cardsQuery, setCardsQuery] = useState<string | null>(query)
+  const scopeChanged = Boolean(activeDialog && (applied.filter ? serializeDashboardFilter(applied.filter) : null) !== query)
   const [reauthorizing, setReauthorizing] = useState(false)
   const requestSequence = useRef<Record<MissingDataKind, number>>({ points: 0, "defect-cause": 0 })
   const mounted = useRef(false)
 
   const loadSummary = useCallback(async (kind: MissingDataKind) => {
+    if (query === null) return
     const sequence = ++requestSequence.current[kind]
     try {
-      const params = new URLSearchParams({ kind, view: "summary" })
+      const params = new URLSearchParams(query)
+      params.set("kind", kind)
+      params.set("view", "summary")
       const response = await fetch(`/api/dashboard/missing-data?${params}`, { cache: "no-store" })
       const result: MissingDataSummaryResult = await response.json()
       if (!mounted.current || sequence !== requestSequence.current[kind]) return
@@ -31,7 +47,7 @@ export function MissingDataPanel() {
         setCards((current) => ({ ...current, [kind]: { status: "error", error: { code: "retry", message: "無法載入缺失筆數，請重試。" } } }))
       }
     }
-  }, [])
+  }, [query])
 
   useEffect(() => {
     mounted.current = true
@@ -39,14 +55,17 @@ export function MissingDataPanel() {
     let active = true
     // Independent GET requests: one slow/erroring category does not block the other.
     queueMicrotask(() => {
-      if (active) for (const kind of kinds) void loadSummary(kind)
+      if (!active) return
+      setCardsQuery(query)
+      setCards({ points: { status: "loading" }, "defect-cause": { status: "loading" } })
+      if (query !== null) for (const kind of kinds) void loadSummary(kind)
     })
     return () => {
       active = false
       mounted.current = false
       for (const kind of kinds) sequences[kind] += 1
     }
-  }, [loadSummary])
+  }, [loadSummary, query])
 
   function reloadSummary(kind: MissingDataKind) {
     setCards((current) => ({ ...current, [kind]: { status: "loading" } }))
@@ -56,7 +75,7 @@ export function MissingDataPanel() {
   async function reauthorize(kind: MissingDataKind) {
     if (reauthorizing) return
     setReauthorizing(true)
-    try { await reauthorizeDashboardAction() }
+    try { await reauthorizeDashboardAction(dashboardHref(filter ?? SELF_FILTER)) }
     catch {
       if (mounted.current) setCards((current) => ({ ...current, [kind]: { status: "error", error: { code: "reauthorize", message: "無法開始重新授權，請稍後再試。" } } }))
     } finally {
@@ -64,43 +83,56 @@ export function MissingDataPanel() {
     }
   }
 
+  function applyFilter(next: DashboardFilter) {
+    if (activeDialog || isBlocked) return
+    if (next.mode === "self" && filter?.mode === "self") return
+    router.push(dashboardHref(next))
+  }
+
   return (
-    <section aria-labelledby="missing-data-title">
+    <>
+    <DashboardFilterControls key={`${viewerId}:${query ?? "invalid"}`} filter={filter} viewerId={viewerId} onApply={applyFilter} />
+    {query === null ? <p role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">{applied.error} 請重新設定上方篩選條件。</p> : <section aria-labelledby="missing-data-title">
       <div className="mb-4">
         <h2 id="missing-data-title" className="text-lg font-semibold text-slate-950 dark:text-white">待補資料</h2>
-        <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400">查看目前缺失並直接補填 Jira。兩類獨立計算，筆數為 Issue 數量，而非欄位數量。</p>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {kinds.map((kind) => {
-          const card = cards[kind]
+          const card: CardState = cardsQuery === query ? cards[kind] : { status: "loading" }
           const title = kind === "points" ? "(Actual) Story Points 缺失" : "Defect Cause 缺失"
           return (
-            <article key={kind} aria-busy={card.status === "loading"} className="flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
+            <article key={kind} aria-busy={card.status === "loading"} className="relative flex min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+              <h3 id={`${cardId}-${kind}-title`} className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
               {card.status === "loading" ? <MissingDataCardSkeleton /> : card.status === "error" ? (
                 <div role="alert" className="mt-5 flex-1">
                   <p className="flex items-start gap-2 text-sm leading-6 text-slate-800 dark:text-slate-200"><WarningIcon /><span>無法取得精確筆數：{card.error.message}</span></p>
                   <div className="mt-4 flex flex-wrap gap-3">
                     <button type="button" onClick={() => reloadSummary(kind)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">重試</button>
-                    {card.error.code === "reauthorize" && <button type="button" disabled={reauthorizing} onClick={() => void reauthorize(kind)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50">{reauthorizing ? "處理中…" : "重新授權 Jira"}</button>}
+                    {(card.error.code === "reauthorize" || (readOnly && card.error.code === "forbidden")) && <button type="button" disabled={reauthorizing} onClick={() => void reauthorize(kind)} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50">{reauthorizing ? "處理中…" : "重新授權 Jira"}</button>}
                   </div>
                 </div>
               ) : (
                 <>
-                  <button type="button" aria-haspopup="dialog" onClick={() => setActiveKind(kind)} className="mt-5 flex flex-1 flex-col items-start rounded-xl p-1 text-left hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600 dark:hover:bg-slate-800/50">
-                    <span className="flex items-baseline gap-2"><span className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-white">{card.summary.total.toLocaleString("zh-TW")}</span><span className="text-sm text-slate-600 dark:text-slate-400">張 Issue</span></span>
-                    <span className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">{card.summary.total > 0 && <WarningIcon />}<span>{card.summary.total > 0 ? "資料缺失，待補填" : "目前沒有符合範圍的資料缺失"}</span></span>
-                    {kind === "points" && <span className="mt-4 space-y-1 text-xs leading-5 text-slate-600 dark:text-slate-400"><span className="block">Story Points 缺失：{card.summary.storyPointsMissing.toLocaleString("zh-TW")} 張</span><span className="block">Actual Story Points 缺失：{card.summary.actualStoryPointsMissing.toLocaleString("zh-TW")} 張</span><span className="block">兩欄皆缺失仍只算一張；上方總數為聯集，兩項不能直接相加。</span></span>}
-                    <span className="mt-5 text-sm font-semibold text-blue-700 dark:text-blue-300">查看明細與補填 <span aria-hidden="true">→</span></span>
-                  </button>
+                  <div className="mt-5 flex flex-1 flex-col items-start">
+                    <p id={`${cardId}-${kind}-count`} className="flex items-baseline gap-2"><span className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-white">{card.summary.total.toLocaleString("zh-TW")}</span><span className="text-sm text-slate-600 dark:text-slate-400">張 Issue</span></p>
+                    <div className="mt-auto w-full pt-5">
+                      {card.summary.total === 0 ? (
+                        <p className="flex items-center gap-2 text-sm font-semibold leading-6 text-green-600 dark:text-green-400"><svg aria-hidden="true" className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg><span>資料完整，太棒了！</span></p>
+                      ) : (
+                        <p id={`${cardId}-${kind}-action`} className="text-sm font-semibold leading-6 text-blue-700 dark:text-blue-300">{readOnly ? "查看明細" : "查看明細與補填"} <span aria-hidden="true">→</span></p>
+                      )}
+                    </div>
+                  </div>
+                  {card.summary.total > 0 && <button type="button" aria-haspopup="dialog" aria-labelledby={`${cardId}-${kind}-title ${cardId}-${kind}-action`} aria-describedby={`${cardId}-${kind}-count`} onClick={() => { if (filter) setActiveDialog({ kind, filter }) }} className="absolute inset-0 cursor-pointer rounded-2xl transition-colors hover:bg-blue-50/40 active:bg-blue-100/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:hover:bg-blue-950/20 dark:active:bg-blue-900/30" />}
                 </>
               )}
             </article>
           )
         })}
       </div>
-      {activeKind && <MissingDataDialog key={activeKind} kind={activeKind} onClose={() => setActiveKind(null)} onSaved={() => reloadSummary(activeKind)} />}
-    </section>
+      {activeDialog && <MissingDataDialog key={activeDialog.kind} kind={activeDialog.kind} filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary(activeDialog.kind)} />}
+    </section>}
+    </>
   )
 }
 

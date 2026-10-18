@@ -5,10 +5,10 @@ export default function DashboardLoading() {
     <>
       <PageHeader
         title="儀表板"
-        description="你的 Jira 資料工作區。查看指派給自己的缺失資料，並補填 Points 與 Defect Cause。"
         breadcrumbs={["總覽", "儀表板"]}
       />
       <section role="status" aria-label="正在載入儀表板">
+        <div aria-hidden="true" className="mb-4 h-28 animate-pulse sm:h-24 rounded-2xl border border-slate-200 bg-slate-100 motion-reduce:animate-none dark:border-slate-800 dark:bg-slate-800" />
         <h2 className="mb-4 text-lg font-semibold text-slate-950 dark:text-white">待補資料</h2>
         <div aria-hidden="true" className="grid gap-4 lg:grid-cols-2">
           {["points", "defect-cause"].map((kind) => (

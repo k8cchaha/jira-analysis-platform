@@ -10,6 +10,7 @@ import {
   STORY_POINTS_FIELD,
   isMissingPoint,
   isPointValue,
+  missingPoints,
   jiraText,
   missingDataJql,
   parseMissingDataChanges,
@@ -24,14 +25,14 @@ const parsePoints = (changes) => parseMissingDataChanges("points", JSON.stringif
 const parseDefects = (changes) => parseMissingDataChanges("defect-cause", JSON.stringify(changes))
 
 describe("missing-data JQL contract", () => {
-  it("keeps the fixed points population and sun/tkk resolution exception", () => {
+  it("uses the exact status-dependent Points union across all projects", () => {
     assert.equal(
       POINTS_SCOPE_JQL,
-      'issuetype in ("DEV-Task", "QA-Task") AND assignee = currentUser() AND status = Done AND (project not in (sun, tkk) OR resolution in (Done, Fixed))',
+      'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed)',
     )
     assert.equal(
       MISSING_POINTS_JQL,
-      `${POINTS_SCOPE_JQL} AND (cf[10005] is EMPTY OR cf[10005] = 0 OR cf[13736] is EMPTY OR cf[13736] = 0)`,
+      'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser()',
     )
     assert.equal(missingDataJql("points"), MISSING_POINTS_JQL)
     assert.equal(STORY_POINTS_FIELD, "customfield_10005")
@@ -41,7 +42,7 @@ describe("missing-data JQL contract", () => {
   it("preserves the exact defect-cause scope", () => {
     assert.equal(
       MISSING_DEFECT_CAUSE_JQL,
-      'project in (sun, tkk) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY',
+      'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY',
     )
     assert.equal(missingDataJql("defect-cause"), MISSING_DEFECT_CAUSE_JQL)
   })
@@ -75,6 +76,29 @@ describe("point validity and missingness", () => {
       assert.equal(isPointValue(value), false)
       assert.equal(isMissingPoint(value), false)
     }
+  })
+})
+
+describe("status-dependent Points missingness", () => {
+  for (const [name, storyPointsRequired, actualStoryPointsRequired] of [
+    ["In Progress", true, false], ["Done", true, true], ["To Do", false, false],
+    ["Closed with done category", true, false], ["Done with To Do category", false, true],
+  ]) {
+    for (const empty of [null, 0]) {
+      it(`${name}: applies independent branches to ${empty === null ? "null" : "zero"}`, () => {
+        const issue = { storyPoints: empty, actualStoryPoints: empty, storyPointsRequired, actualStoryPointsRequired }
+        assert.deepEqual(missingPoints(issue), { storyPointsMissing: storyPointsRequired, actualStoryPointsMissing: actualStoryPointsRequired })
+        assert.deepEqual(missingPoints({ ...issue, storyPoints: 2 }), { storyPointsMissing: false, actualStoryPointsMissing: actualStoryPointsRequired })
+        assert.deepEqual(missingPoints({ ...issue, actualStoryPoints: 3 }), { storyPointsMissing: storyPointsRequired, actualStoryPointsMissing: false })
+        assert.deepEqual(missingPoints({ ...issue, storyPoints: 2, actualStoryPoints: 3 }), { storyPointsMissing: false, actualStoryPointsMissing: false })
+      })
+    }
+  }
+  it("recomputes post-save missingness without mutating the loaded row", () => {
+    const loaded = { storyPoints: null, actualStoryPoints: 0, storyPointsRequired: true, actualStoryPointsRequired: false }
+    assert.deepEqual(missingPoints({ ...loaded, storyPoints: 2 }), { storyPointsMissing: false, actualStoryPointsMissing: false })
+    assert.deepEqual(missingPoints({ ...loaded, actualStoryPointsRequired: true, storyPoints: 2 }), { storyPointsMissing: false, actualStoryPointsMissing: true })
+    assert.equal(loaded.storyPoints, null)
   })
 })
 
@@ -132,10 +156,28 @@ describe("parseMissingDataChanges points", () => {
     assert.throws(() => parseMissingDataChanges("points", '[{"issueId":"101","storyPoints":NaN,"expectedStoryPoints":null}]'))
   })
 
-  it("requires a missing original value, never a positive, negative, string, or absent original", () => {
-    for (const expected of [1, -1, "0", false, {}, [], undefined]) {
+  it("accepts existing nonnegative finite original values for either points field", () => {
+    for (const expected of [null, 0, 0.125, 1, 3.75, Number.MAX_VALUE]) {
+      const story = { ...pointsChange, expectedStoryPoints: expected }
+      const actual = { issueId: "101", actualStoryPoints: 2, expectedActualStoryPoints: expected }
+      assert.deepEqual(parsePoints([story]), [story])
+      assert.deepEqual(parsePoints([actual]), [actual])
+    }
+  })
+
+  it("rejects negative, nonnumeric, and absent original values", () => {
+    for (const expected of [-1, -0.1, "0", false, {}, [], undefined]) {
       assert.throws(() => parsePoints([{ ...pointsChange, expectedStoryPoints: expected }]))
       assert.throws(() => parsePoints([{ issueId: "101", actualStoryPoints: 2, expectedActualStoryPoints: expected }]))
+    }
+  })
+
+  it("rejects nonfinite original values encoded as overflowing JSON exponents", () => {
+    for (const field of ["storyPoints", "actualStoryPoints"]) {
+      const expected = field === "storyPoints" ? "expectedStoryPoints" : "expectedActualStoryPoints"
+      for (const value of ["1e309", "-1e309"]) {
+        assert.throws(() => parseMissingDataChanges("points", `[{"issueId":"101","${field}":2,"${expected}":${value}}]`))
+      }
     }
   })
 

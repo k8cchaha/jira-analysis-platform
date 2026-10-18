@@ -1,16 +1,19 @@
 import { GuardedLink } from "@/components/navigation-blocker"
 import { PageHeader } from "@/components/page-header"
 import { MissingDataPanel } from "./missing-data-panel"
+import { auth } from "@/auth"
+import { dashboardFilterResult, dashboardSearchParams } from "@/lib/jira-dashboard-filter"
 
-export default function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const applied = dashboardFilterResult(dashboardSearchParams(await searchParams))
+  const session = await auth()
   return (
     <>
       <PageHeader
         title="儀表板"
-        description="你的 Jira 資料工作區。查看指派給自己的缺失資料，並補填 Points 與 Defect Cause。"
         breadcrumbs={["總覽", "儀表板"]}
       />
-      <MissingDataPanel />
+      <MissingDataPanel applied={applied} viewerId={session?.user?.id ?? ""} />
       <div className="mt-6">
         <GuardedLink
           href="/issues/assigned/list"

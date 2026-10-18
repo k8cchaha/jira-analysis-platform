@@ -5,6 +5,7 @@ interface PageTokenContext {
   cloudId: string
   kind: string
   jql: string
+  filterKey?: string
 }
 
 export interface PageCursor {
@@ -18,6 +19,7 @@ const MAX_TOKEN_LENGTH = 250_000
 function binding(context: PageTokenContext) {
   return createHash("sha256").update(JSON.stringify([
     "dashboard/missing-data", context.userId, context.cloudId, context.kind, context.jql,
+    ...(context.filterKey ? [context.filterKey] : []),
   ])).digest()
 }
 

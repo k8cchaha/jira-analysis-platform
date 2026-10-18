@@ -2,6 +2,7 @@
 
 import { auth, signIn } from "@/auth"
 import { dashboardError, updateMissingData } from "@/lib/jira-dashboard"
+import { dashboardReturnPath } from "@/lib/jira-dashboard-filter"
 import {
   parseMissingDataChanges,
   type MissingDataActionState,
@@ -18,6 +19,7 @@ export async function updateMissingDataAction(
   const errorState = (message: string): MissingDataActionState => ({
     submissionId, status: "error", message, succeededIssueIds: [], failures: [],
   })
+  if (formData.getAll("mode").length > 1 || (formData.has("mode") && formData.get("mode") !== "self") || ["accountId", "group", "project", "exclude", "days"].some((key) => formData.has(key))) return errorState("只有自己模式可以補填資料。")
   if (kind !== "points" && kind !== "defect-cause") return errorState("不支援此更新類型。")
   const session = await auth()
   if (!session?.user?.id) return errorState("登入狀態已失效，請重新登入。")
@@ -44,6 +46,7 @@ export async function updateMissingDataAction(
   }
 }
 
-export async function reauthorizeDashboardAction() {
-  await signIn("atlassian", { redirectTo: "/dashboard" })
+export async function reauthorizeDashboardAction(returnPath = "/dashboard") {
+  const redirectTo = dashboardReturnPath(returnPath)
+  await signIn("atlassian", { redirectTo })
 }
