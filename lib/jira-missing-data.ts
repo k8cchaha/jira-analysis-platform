@@ -1,18 +1,23 @@
+import { JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
+
+export { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "./jira-fields.ts"
+
 export type MissingDataKind = "points" | "defect-cause"
 
-export const STORY_POINTS_FIELD = "customfield_10005"
-export const ACTUAL_STORY_POINTS_FIELD = "customfield_13736"
 export const MISSING_DATA_LIMIT = 5_000
 export const MISSING_DATA_PAGE_SIZE = 50
 
 export const POINTS_SCOPE_JQL =
   'issuetype in ("DEV-Task", "QA-Task") AND assignee = currentUser() AND status = Done AND (project not in (sun, tkk) OR resolution in (Done, Fixed))'
 
+const storyPointsJql = customFieldJql(JIRA_FIELDS.storyPoints.id)
+const actualStoryPointsJql = customFieldJql(JIRA_FIELDS.actualStoryPoints.id)
+
 export const MISSING_POINTS_JQL =
-  `${POINTS_SCOPE_JQL} AND (cf[10005] is EMPTY OR cf[10005] = 0 OR cf[13736] is EMPTY OR cf[13736] = 0)`
+  `${POINTS_SCOPE_JQL} AND (${storyPointsJql} is EMPTY OR ${storyPointsJql} = 0 OR ${actualStoryPointsJql} is EMPTY OR ${actualStoryPointsJql} = 0)`
 
 export const MISSING_DEFECT_CAUSE_JQL =
-  'project in (sun, tkk) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY'
+  `project in (sun, tkk) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
 
 export function missingDataJql(kind: MissingDataKind) {
   return kind === "points" ? MISSING_POINTS_JQL : MISSING_DEFECT_CAUSE_JQL

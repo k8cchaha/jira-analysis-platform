@@ -79,10 +79,15 @@ function harness(t, options = {}) {
       if (path === "/rest/api/3/field" && method === "GET") {
         data = options.fields ?? pointFields
       } else if (path === "/rest/api/3/search/jql" && method === "POST") {
-        const rules = load("lib/jira-missing-data.ts")
-        const scope = rules.missingDataJql(options.kind ?? "points")
-        if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${scope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
-        if (/\b(created|updated|resolved|resolutiondate|startOfDay|now)\b|\b30d\b/i.test(body.jql)) return fail("A date restriction leaked into missing-data JQL")
+        if (options.assigned) {
+          const ids = (options.issues ?? []).map((issue) => issue.id).join(", ")
+          if (body.jql !== `id in (${ids}) AND assignee = currentUser() AND created >= -30d`) return fail(`Unexpected assigned query: ${body.jql}`)
+        } else {
+          const rules = load("lib/jira-missing-data.ts")
+          const scope = rules.missingDataJql(options.kind ?? "points")
+          if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${scope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
+          if (/\b(created|updated|resolved|resolutiondate|startOfDay|now)\b|\b30d\b/i.test(body.jql)) return fail("A date restriction leaked into missing-data JQL")
+        }
         data = options.search ? options.search(body, searches++) : { issues: options.issues ?? [], isLast: true }
       } else if (/^\/rest\/api\/3\/issue\/\d+\?/.test(path) && method === "GET") {
         const urlObject = new URL(url)
@@ -102,7 +107,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-dashboard.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "app/(app)/dashboard/actions.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-dashboard.ts", "lib/jira-fields.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts", "app/(app)/dashboard/actions.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -126,18 +131,61 @@ function harness(t, options = {}) {
           return { cloudId: "fixture-cloud", accessToken: "fixture-token-not-real" }
         },
       }
-      if (["@/lib/jira-dashboard", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
+      if (specifier === "./jira-fields.ts") return load("lib/jira-fields.ts")
+      if (["@/lib/jira-dashboard", "@/lib/jira-fields", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
       return fail(`Unexpected require: ${specifier}`)
     }
     vm.runInContext(`(function(require,module,exports) {\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)
     return loadedModule.exports
   }
   t.after(() => assert.deepEqual(violations, []))
-  return { service: load("lib/jira-dashboard.ts"), actions: () => load("app/(app)/dashboard/actions.ts"), calls, tokenCalls }
+  return { service: load("lib/jira-dashboard.ts"), assigned: () => load("lib/jira-story-points.ts"), actions: () => load("app/(app)/dashboard/actions.ts"), calls, tokenCalls }
 }
 const rejectsCode = (operation, code) => assert.rejects(operation, (error) => error.code === code)
 const puts = (h) => h.calls.filter((call) => call.method === "PUT")
 const liveReads = (h) => h.calls.filter((call) => call.method === "GET" && call.path.includes("/issue/"))
+
+describe("shared field definitions in assigned Story Points", () => {
+  it("discovers numeric fields by fixed ID even when renamed", async (t) => {
+    const h = harness(t, { fields: [
+      { id: SP, name: "Renamed estimate", schema: { type: "number", customId: 10005 } },
+      { id: "customfield_99999", name: "Story Points", schema: { type: "number" } },
+      { id: SP, name: "Wrong schema", schema: { type: "string" } },
+      { id: SP, name: "", schema: { type: "number" } },
+    ] })
+    assert.deepEqual(plain(await h.assigned().getJiraStoryPointsFields({ cloudId: "fixture-cloud", accessToken: "fixture-token-not-real" })), [{ id: SP, projectId: null }])
+  })
+
+  it("preserves project-scoped precedence and ambiguity handling", (t) => {
+    const service = harness(t).assigned()
+    const candidates = [{ id: SP, projectId: null }, { id: "scoped-fixture", projectId: "10" }]
+    const fields = { [SP]: 0, "scoped-fixture": 2.5 }
+    assert.deepEqual(plain(service.getIssueStoryPoints(fields, "10", candidates)), { value: 2.5, supported: true })
+    assert.deepEqual(plain(service.getIssueStoryPoints(fields, "20", candidates)), { value: 0, supported: true })
+    assert.equal(service.getIssueStoryPoints(fields, "10", [...candidates, { id: "duplicate-fixture", projectId: "10" }]).supported, false)
+  })
+
+  it("uses numeric editmeta to write the shared ID, still allowing zero", async (t) => {
+    const issue = pointIssue(1, 3)
+    issue.editmeta.fields[SP].schema.customId = 10005
+    const h = harness(t, { assigned: true, issues: [issue] })
+    const result = await h.assigned().updateJiraStoryPoints([{ issueId: "1", value: 0 }])
+    assert.deepEqual(plain(result), { succeededIssueIds: ["1"], failures: [], updatedCount: 1, unchangedCount: 0 })
+    assert.deepEqual(puts(h).map((call) => call.body), [{ fields: { customfield_10005: 0 } }])
+    assert.deepEqual(h.tokenCalls, [true])
+  })
+
+  for (const schema of [null, { type: "string" }]) {
+    it(`rejects invalid assigned editmeta schema: ${JSON.stringify(schema)}`, async (t) => {
+      const issue = pointIssue(1, 3)
+      issue.editmeta.fields[SP].schema = schema
+      const h = harness(t, { assigned: true, issues: [issue] })
+      const result = await h.assigned().updateJiraStoryPoints([{ issueId: "1", value: 2 }])
+      assert.equal(result.failures.length, 1)
+      assert.equal(puts(h).length, 0)
+    })
+  }
+})
 
 describe("exact missing-data summary against fixture Jira", () => {
   it("counts the cross-page null/zero union once per issue and each missing field separately", async (t) => {
@@ -250,6 +298,37 @@ describe("exact missing-data summary against fixture Jira", () => {
       await rejectsCode(() => h.service.getMissingDataSummary("points"), value === undefined ? "configuration" : "retry")
     }
   })
+})
+
+describe("shared field discovery in dashboard", () => {
+  it("keeps numeric matching ID-based rather than name-based", async (t) => {
+    const fields = pointFields.map((field) => ({ ...field, name: "Renamed estimate", schema: { ...field.schema, customId: 10005 } }))
+    const h = harness(t, { fields, issues: [pointIssue(1)] })
+    assert.equal((await h.service.getMissingDataSummary("points")).total, 1)
+  })
+
+  it("normalizes dynamic names and prefers project-scoped supporting text", async (t) => {
+    const scopedRoot = "customfield_20003"
+    const fields = defectFields.map((field) => ({ ...field, name: ` ${field.name.toUpperCase()} ` }))
+    fields.push({ id: scopedRoot, name: "root cause", schema: { type: "string" }, scope: { type: "PROJECT", project: { id: "10" } } })
+    const issue = defectIssue(1)
+    issue.fields[scopedRoot] = "Scoped root cause text"
+    const h = harness(t, { kind: "defect-cause", fields, issues: [issue] })
+    const page = await h.service.getMissingDataPage("defect-cause")
+    assert.equal(page.issues[0].rootCause, "Scoped root cause text")
+    assert.equal(page.issues[0].solution, "Solution text")
+    assert.equal(page.issues[0].defectCauseEditable, true)
+  })
+
+  for (const custom of [undefined, "wrong-multiselect-plugin"]) {
+    it(`rejects missing or wrong Defect Cause custom schema: ${custom}`, async (t) => {
+      const fields = plain(defectFields)
+      if (custom === undefined) delete fields[0].schema.custom
+      else fields[0].schema.custom = custom
+      const h = harness(t, { kind: "defect-cause", fields })
+      await rejectsCode(() => h.service.getMissingDataSummary("defect-cause"), "configuration")
+    })
+  }
 })
 
 describe("missing-data detail pages", () => {

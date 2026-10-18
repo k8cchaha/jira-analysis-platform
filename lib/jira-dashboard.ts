@@ -2,9 +2,8 @@ import "server-only"
 
 import { auth } from "@/auth"
 import { getJiraToken, JiraAuthorizationError, type JiraCredentials } from "@/lib/jira-token"
+import { JIRA_FIELDS, STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD, matchesJiraFieldSchema } from "@/lib/jira-fields"
 import {
-  ACTUAL_STORY_POINTS_FIELD,
-  STORY_POINTS_FIELD,
   MISSING_DATA_LIMIT,
   MISSING_DATA_PAGE_SIZE,
   isMissingPoint,
@@ -122,11 +121,11 @@ async function getFields(credentials: JiraCredentials, kind: MissingDataKind): P
   }
   const named = (name: string) => all.filter((field) => field.name.trim().toLowerCase() === name.toLowerCase())
   const fields: FieldSet = {
-    points: all.filter((field) => field.id === STORY_POINTS_FIELD && field.schema.type === "number"),
-    actualPoints: all.filter((field) => field.id === ACTUAL_STORY_POINTS_FIELD && field.schema.type === "number"),
-    defectCause: named("Defect Cause").filter((field) => isMultiSelect(field.schema)),
-    rootCause: named("Root Cause").filter((field) => field.schema.type === "string"),
-    solution: named("Solution").filter((field) => field.schema.type === "string"),
+    points: all.filter((field) => field.id === STORY_POINTS_FIELD && matchesJiraFieldSchema(field.schema, JIRA_FIELDS.storyPoints.schema)),
+    actualPoints: all.filter((field) => field.id === ACTUAL_STORY_POINTS_FIELD && matchesJiraFieldSchema(field.schema, JIRA_FIELDS.actualStoryPoints.schema)),
+    defectCause: named(JIRA_FIELDS.defectCause.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.defectCause.schema)),
+    rootCause: named(JIRA_FIELDS.rootCause.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.rootCause.schema)),
+    solution: named(JIRA_FIELDS.solution.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.solution.schema)),
   }
   if (kind === "points" && (!fields.points.length || !fields.actualPoints.length)) {
     throw new JiraDashboardError("configuration", "找不到可用的 Story Points 或 Actual Story Points 數值欄位。")
@@ -138,10 +137,6 @@ async function getFields(credentials: JiraCredentials, kind: MissingDataKind): P
     throw new JiraDashboardError("configuration", "有多個同名 Defect Cause 欄位，無法確認查詢對應的欄位。")
   }
   return fields
-}
-function isMultiSelect(schema: RecordValue) {
-  return schema.type === "array" && schema.items === "option" &&
-    schema.custom === "com.atlassian.jira.plugin.system.customfieldtypes:multiselect"
 }
 function resolveField(candidates: JiraField[], projectId: string): JiraField | null {
   const scoped = candidates.filter((field) => field.projectId === projectId)
@@ -251,11 +246,12 @@ async function liveIssue(credentials: JiraCredentials, id: string, ids: string[]
 }
 function numericEditable(editmeta: RecordValue, id: string) {
   const meta = editmeta[id]
-  return record(meta) && record(meta.schema) && meta.schema.type === "number" && Array.isArray(meta.operations) && meta.operations.includes("set")
+  const schema = id === ACTUAL_STORY_POINTS_FIELD ? JIRA_FIELDS.actualStoryPoints.schema : JIRA_FIELDS.storyPoints.schema
+  return record(meta) && matchesJiraFieldSchema(meta.schema, schema) && Array.isArray(meta.operations) && meta.operations.includes("set")
 }
 function causeOptions(editmeta: RecordValue, id: string) {
   const meta = editmeta[id]
-  if (!record(meta) || !record(meta.schema) || !isMultiSelect(meta.schema) || !Array.isArray(meta.operations) || !meta.operations.includes("set") || !Array.isArray(meta.allowedValues)) return []
+  if (!record(meta) || !matchesJiraFieldSchema(meta.schema, JIRA_FIELDS.defectCause.schema) || !Array.isArray(meta.operations) || !meta.operations.includes("set") || !Array.isArray(meta.allowedValues)) return []
   if (meta.allowedValues.some((option) => !record(option) || !nonemptyString(option.id) || !/^\d{1,30}$/.test(option.id) || !nonemptyString(option.value))) throw invalidResponse("Defect Cause 選項格式無法識別。")
   return meta.allowedValues.filter((option) => option.disabled !== true).map((option) => ({ id: option.id as string, value: option.value as string }))
 }
@@ -290,8 +286,8 @@ function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind
   } else {
     row.defectCause = causeValues(fields, issue)
     if (row.defectCause.length > 0) return null
-    row.rootCause = textField(fields.rootCause, issue, "Root Cause", warnings)
-    row.solution = textField(fields.solution, issue, "Solution", warnings)
+    row.rootCause = textField(fields.rootCause, issue, JIRA_FIELDS.rootCause.name, warnings)
+    row.solution = textField(fields.solution, issue, JIRA_FIELDS.solution.name, warnings)
     const cause = requireField(fields.defectCause, issue)
     row.defectCauseOptions = causeOptions(editmeta, cause.id)
     row.defectCauseEditable = row.defectCauseOptions.length > 0

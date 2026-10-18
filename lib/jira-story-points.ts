@@ -1,5 +1,6 @@
 import "server-only"
 
+import { JIRA_FIELDS, STORY_POINTS_FIELD, matchesJiraFieldSchema } from "@/lib/jira-fields"
 import {
   getJiraToken,
   type JiraCredentials,
@@ -9,7 +10,6 @@ export const RECENT_ASSIGNED_ISSUES_JQL =
   "assignee = currentUser() AND created >= -30d ORDER BY created DESC"
 
 const JIRA_API_ROOT = "https://api.atlassian.com/ex/jira"
-const STORY_POINTS_FIELD_ID = "customfield_10005"
 const UPDATE_CONCURRENCY = 4
 
 export interface JiraStoryPointsField {
@@ -93,9 +93,9 @@ export async function getJiraStoryPointsFields(
     const name = getString(value.name)
     const schema = isRecord(value.schema) ? value.schema : null
     if (
-      id !== STORY_POINTS_FIELD_ID ||
+      id !== STORY_POINTS_FIELD ||
       !name ||
-      schema?.type !== "number"
+      !matchesJiraFieldSchema(schema, JIRA_FIELDS.storyPoints.schema)
     ) {
       continue
     }
@@ -298,7 +298,7 @@ async function updateOneIssue(
   const operations = Array.isArray(metadata.operations)
     ? metadata.operations.filter((value): value is string => typeof value === "string")
     : []
-  if (schema?.type !== "number" || !operations.includes("set")) {
+  if (!matchesJiraFieldSchema(schema, JIRA_FIELDS.storyPoints.schema) || !operations.includes("set")) {
     return failure(issue.id, "這張 Issue 的 Story Points 無法編輯")
   }
   if (change.value === null && metadata.required === true) {

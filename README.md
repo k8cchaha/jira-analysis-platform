@@ -62,6 +62,8 @@ assignee = currentUser() AND created >= -30d ORDER BY created DESC
 
 The Assigned Issues page uses Jira field `customfield_10005` for Story Points. You can edit non-negative integer or decimal values, clear a value, and submit only the issues that changed. In JQL this field can also be referenced as `cf[10005]`; Jira REST request and response bodies use `customfield_10005`.
 
+Custom field mappings are centralized in `lib/jira-fields.ts`: Story Points and Actual Story Points have fixed IDs; Defect Cause, Root Cause, and Solution are resolved from Jira metadata by name and required schema. Both the Assigned Issues editor and dashboard use these shared definitions. Project-scoped resolution and per-issue edit permissions/options are still checked at runtime.
+
 Reading issues requires `read:jira-work`; saving fields also requires `write:jira-work`.
 
 ## Dashboard missing-data completion
