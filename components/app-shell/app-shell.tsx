@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react"
-import { MenuIcon, NavigationIconGlyph } from "@/components/app-shell/icons"
+import { SidebarToggleIcon, NavigationIconGlyph } from "@/components/app-shell/icons"
 import {
   dashboardNavigation,
   getNavigationState,
@@ -188,19 +188,22 @@ export function AppShell({ children, user }: AppShellProps) {
             ref={mobileTriggerRef}
             type="button"
             aria-label="開啟導覽選單"
+            title="展開導覽選單"
             aria-expanded={mobileOpen}
             className="app-icon-button lg:hidden"
             onClick={() => setMobileOpen(true)}
           >
-            <MenuIcon />
+            <SidebarToggleIcon action="expand" />
           </button>
           <button
             type="button"
             aria-label={collapsed ? "展開側邊欄" : "收合側邊欄"}
+            title={collapsed ? "展開側邊欄" : "收合側邊欄"}
+            aria-expanded={!collapsed}
             className="app-icon-button hidden lg:inline-flex"
             onClick={toggleCollapsed}
           >
-            <MenuIcon open={!collapsed} />
+            <SidebarToggleIcon action={collapsed ? "expand" : "collapse"} />
           </button>
           <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
             {navigationState.title}
@@ -307,9 +310,10 @@ function SidebarContent({
             type="button"
             className="app-icon-button shrink-0"
             aria-label="關閉導覽選單"
+            title="收合導覽選單"
             onClick={() => onClose()}
           >
-            <MenuIcon open />
+            <SidebarToggleIcon action="collapse" />
           </button>
         ) : null}
       </div>

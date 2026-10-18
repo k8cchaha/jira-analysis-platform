@@ -43,10 +43,12 @@ export function NavigationIconGlyph({ name, className = "h-5 w-5" }: IconProps) 
   }
 }
 
-export function MenuIcon({ open = false }: { open?: boolean }) {
+export function SidebarToggleIcon({ action }: { action: "expand" | "collapse" }) {
   return (
-    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      {open ? <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></> : <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>}
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+      {action === "collapse" ? <path d="m17 9-3 3 3 3M14 12h4" /> : <path d="m14 9 3 3-3 3M13 12h4" />}
     </svg>
   )
 }
