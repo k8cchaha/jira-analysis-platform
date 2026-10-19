@@ -297,7 +297,7 @@ function SidebarContent({
             </svg>
           </span>
           {!collapsed ? (
-            <span className="truncate text-sm font-semibold tracking-tight text-slate-950 dark:text-white">
+            <span className="truncate text-base font-semibold tracking-tight text-slate-950 dark:text-white">
               Jira Analysis Platform
             </span>
           ) : null}

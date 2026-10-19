@@ -2,6 +2,13 @@ import { JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
 import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 import type { MissingDataKind } from "./jira-missing-data.ts"
 
+export const SPRINT_PROJECTS = [
+  { label: "Saku", key: "SUN" },
+  { label: "Telasa", key: "TKK" },
+  { label: "Pride", key: "PRIDE" },
+] as const
+export type SprintProjectKey = (typeof SPRINT_PROJECTS)[number]["key"]
+
 export const RECENT_ASSIGNED_ISSUES_SCOPE_JQL =
   "assignee = currentUser() AND created >= -30d"
 export const RECENT_ASSIGNED_ISSUES_JQL =

@@ -15,5 +15,6 @@ export const config = {
     "/analytics/:path*",
     "/reports/:path*",
     "/settings/:path*",
+    "/sprint/:path*",
   ],
 }

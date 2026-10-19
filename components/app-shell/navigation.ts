@@ -1,5 +1,6 @@
 export type AppRoute =
   | "/dashboard"
+  | "/sprint/burndown"
   | "/issues/assigned/list"
   | "/issues/assigned/summary"
   | "/issues/search/filter"
@@ -32,6 +33,7 @@ export type NavigationIcon =
   | "saved"
   | "export"
   | "settings"
+  | "burndown"
 
 export type NavigationRoute = Readonly<{
   href: AppRoute
@@ -58,6 +60,18 @@ export const dashboardNavigation = {
 } as const satisfies NavigationRoute & { icon: NavigationIcon }
 
 export const navigationCategories = [
+  {
+    id: "sprint",
+    label: "Sprint 管理",
+    features: [
+      {
+        id: "burndown",
+        label: "Burn Down Chart",
+        icon: "burndown",
+        routes: [{ href: "/sprint/burndown", label: "Burn Down Chart" }],
+      },
+    ],
+  },
   {
     id: "issues",
     label: "Issue 管理",

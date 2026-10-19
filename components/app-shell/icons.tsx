@@ -20,6 +20,8 @@ export function NavigationIconGlyph({ name, className = "h-5 w-5" }: IconProps) 
   switch (name) {
     case "dashboard":
       return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="4" rx="1" /><rect x="14" y="11" width="7" height="10" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></svg>
+    case "burndown":
+      return <svg {...common}><path d="m3 20 5-6 4 3 4-7 5 5" /><path d="M15 8h6v6" /></svg>
     case "issues":
       return <svg {...common}><path d="M8 6h11M8 12h11M8 18h7" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></svg>
     case "search":
