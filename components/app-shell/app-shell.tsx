@@ -408,21 +408,6 @@ function FeatureNavigation({
         <NavigationIconGlyph name={feature.icon} />
         {!collapsed ? <span className="truncate">{feature.label}</span> : null}
       </GuardedLink>
-      {!collapsed && feature.routes.length > 1 && active ? (
-        <div className="ml-6 mt-1 space-y-1 border-l border-slate-200 pl-3 dark:border-slate-700">
-          {feature.routes.map((route) => (
-            <GuardedLink
-              key={route.href}
-              href={route.href}
-              aria-current={pathname === route.href ? "page" : undefined}
-              className={`block rounded-md px-2 py-1.5 text-xs transition-colors ${pathname === route.href ? "bg-blue-50 font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-200" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"}`}
-              onNavigate={onNavigate}
-            >
-              {route.label}
-            </GuardedLink>
-          ))}
-        </div>
-      ) : null}
     </div>
   )
 }

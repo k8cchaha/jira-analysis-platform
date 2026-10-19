@@ -4,7 +4,6 @@ export type AppRoute =
   | "/issues/assigned/summary"
   | "/issues/search/filter"
   | "/issues/search/jql"
-  | "/issues/bulk-edit/list"
   | "/analytics/workload/summary"
   | "/analytics/workload/breakdown"
   | "/analytics/workload/detail"
@@ -81,12 +80,6 @@ export const navigationCategories = [
           { href: "/issues/search/jql", label: "JQL 查詢" },
         ],
       },
-      {
-        id: "bulk-edit",
-        label: "批次編輯",
-        icon: "edit",
-        routes: [{ href: "/issues/bulk-edit/list", label: "Issue 清單" }],
-      },
     ],
   },
   {
@@ -153,18 +146,6 @@ export const navigationCategories = [
       },
     ],
   },
-  {
-    id: "settings",
-    label: "系統",
-    features: [
-      {
-        id: "jira-settings",
-        label: "Jira 連線資訊",
-        icon: "settings",
-        routes: [{ href: "/settings/jira", label: "Jira 連線資訊" }],
-      },
-    ],
-  },
 ] as const satisfies readonly NavigationCategory[]
 
 export function getNavigationState(pathname: string) {
@@ -175,7 +156,7 @@ export function getNavigationState(pathname: string) {
   for (const category of navigationCategories) {
     for (const feature of category.features) {
       const route = feature.routes.find((item) => item.href === pathname)
-      if (route) return { title: route.label, categoryId: category.id }
+      if (route) return { title: feature.label, categoryId: category.id }
     }
   }
 
