@@ -453,7 +453,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
               <span aria-hidden="true">天</span>
             </label>
           </div>
-          <button type="submit" disabled={personLoading || (mode === "team-project" && (!allGroupsLoaded || memberCount === 0))} aria-describedby={mode === "team-project" ? `${id}-team-help` : `${id}-help`} className="h-10 rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50">{personLoading ? "查詢中…" : "查詢"}</button>
+          <button type="submit" disabled={personLoading || (mode === "team-project" && (!allGroupsLoaded || memberCount === 0))} aria-describedby={mode === "team-project" ? `${id}-team-help` : `${id}-help`} className="h-10 cursor-pointer rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50">{personLoading ? "查詢中…" : "查詢"}</button>
         </div>}
         {mode !== "self" && <p id={`${id}-help`} className="sr-only">{mode === "person" ? "按「查詢」或 Enter 搜尋；多人時選擇後再查詢。近 X 天須為正整數，預設 30 天。" : "按「查詢」套用團隊與專案；近 X 天須為正整數，預設 30 天。"}</p>}
 

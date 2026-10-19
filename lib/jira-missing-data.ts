@@ -30,7 +30,7 @@ export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboa
   if (!scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT || scope.accountIds.some((id) => !isDashboardAccountId(id)) || scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))) throw new DashboardFilterError()
   const assignees = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`).join(", ")
   const base = missingDataJql(kind).replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
-  const date = kind === "points" ? `status CHANGED TO Done AFTER -${scope.days}d` : `created >= -${scope.days}d`
+  const date = `created >= -${scope.days}d`
   const projects = scope.projects.length ? ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})` : ""
   const jql = `${base} AND ${date}${projects}`
   if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")

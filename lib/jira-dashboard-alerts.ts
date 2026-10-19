@@ -1,4 +1,4 @@
-import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
+import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 import { MISSING_DATA_LIMIT, type MissingDataError } from "./jira-missing-data.ts"
 
 export type DashboardAlertKind = "bugs" | "pending" | "due"
@@ -50,6 +50,25 @@ export type DueReminderDetailsResult =
   | { status: "success"; data: DueReminderDetails }
   | { status: "error"; error: MissingDataError }
 
+export interface PendingIssueDetail {
+  id: string
+  key: string
+  issueType: string
+  summary: string
+  status: string
+  updated: string
+  assigneeDisplayName?: string | null
+}
+export interface PendingIssueDetails {
+  inReview: PendingIssueDetail[]
+  requestInfo: PendingIssueDetail[]
+  jiraBaseUrl: string | null
+  readOnly: true
+}
+export type PendingIssueDetailsResult =
+  | { status: "success"; data: PendingIssueDetails }
+  | { status: "error"; error: MissingDataError }
+
 export function isJiraDueDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00.000Z`)
@@ -73,7 +92,10 @@ export function dashboardAlertJql(key: DashboardAlertKey, scope: ResolvedDashboa
   if (!Object.hasOwn(DASHBOARD_ALERT_JQL, key)) throw new DashboardFilterError()
   let assignee = "assignee = currentUser()"
   let projects = ""
+  let date = ""
   if (scope.mode !== "self") {
+    dashboardDays(String(scope.days))
+    date = ` AND created >= -${scope.days}d`
     if (
       !["person", "team-project"].includes(scope.mode) ||
       !scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT ||
@@ -85,7 +107,7 @@ export function dashboardAlertJql(key: DashboardAlertKey, scope: ResolvedDashboa
     assignee = scope.mode === "person" ? `assignee = ${ids[0]}` : `assignee in (${ids.join(", ")})`
     if (scope.projects.length) projects = ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})`
   }
-  const jql = `(${DASHBOARD_ALERT_JQL[key]}) AND ${assignee}${projects} ORDER BY key ASC`
+  const jql = `(${DASHBOARD_ALERT_JQL[key]}) AND ${assignee}${date}${projects} ORDER BY key ASC`
   if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
   return jql
 }
@@ -170,6 +192,43 @@ export function parseDueReminderDetailsResult(value: unknown): DueReminderDetail
     })
   }
   return { status: "success", data: { overdue: issues(data.overdue), upcoming: issues(data.upcoming), jiraBaseUrl, readOnly: true } }
+}
+
+export function parsePendingIssueDetailsResult(value: unknown): PendingIssueDetailsResult {
+  if (!record(value)) invalidResult()
+  if (value.status === "error") {
+    const result = parseDashboardAlertResult("pending", value)
+    if (result.status !== "error") invalidResult()
+    return result
+  }
+  if (value.status !== "success" || !record(value.data) || value.data.readOnly !== true) invalidResult()
+  const data = value.data
+  let jiraBaseUrl: string | null = null
+  if (data.jiraBaseUrl !== null) {
+    if (typeof data.jiraBaseUrl !== "string") invalidResult()
+    const url = new URL(data.jiraBaseUrl)
+    if (url.protocol !== "https:" || url.origin !== data.jiraBaseUrl) invalidResult()
+    jiraBaseUrl = url.origin
+  }
+  const ids = new Set<string>()
+  function issues(value: unknown): PendingIssueDetail[] {
+    if (!Array.isArray(value) || value.length > MISSING_DATA_LIMIT) invalidResult()
+    return value.map((issue) => {
+      if (!record(issue) || typeof issue.id !== "string" || !/^\d{1,30}$/.test(issue.id) || ids.has(issue.id)) invalidResult()
+      for (const field of ["key", "issueType", "summary", "status", "updated"] as const) {
+        if (typeof issue[field] !== "string" || !issue[field].trim()) invalidResult()
+      }
+      if (!Number.isFinite(Date.parse(issue.updated as string))) invalidResult()
+      if (issue.assigneeDisplayName !== undefined && issue.assigneeDisplayName !== null && typeof issue.assigneeDisplayName !== "string") invalidResult()
+      ids.add(issue.id)
+      return {
+        id: issue.id, key: issue.key as string, issueType: issue.issueType as string, summary: issue.summary as string,
+        status: issue.status as string, updated: issue.updated as string,
+        ...(issue.assigneeDisplayName !== undefined ? { assigneeDisplayName: issue.assigneeDisplayName as string | null } : {}),
+      }
+    })
+  }
+  return { status: "success", data: { inReview: issues(data.inReview), requestInfo: issues(data.requestInfo), jiraBaseUrl, readOnly: true } }
 }
 
 export function parseDashboardAlertResult(kind: "bugs", value: unknown): Extract<DashboardAlertResult, { kind: "bugs" } | { status: "error" }>

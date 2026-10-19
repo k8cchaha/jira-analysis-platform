@@ -5,7 +5,7 @@ import { getJiraToken } from "@/lib/jira-token"
 import { countJiraIssues, searchJiraIssues, dashboardJiraBaseUrl, JiraDashboardError } from "@/lib/jira-dashboard"
 import { resolveDashboardScope } from "@/lib/jira-dashboard-lookups"
 import { SELF_FILTER, type DashboardFilter } from "@/lib/jira-dashboard-filter"
-import { DASHBOARD_ALERT_KEYS, dashboardAlertJql, type DashboardAlertCountsByKind, type DashboardAlertKind, type DashboardAlertKey, type BugAlertDetails, type BugAlertIssue, isJiraDueDate, type DueReminderDetails, type DueReminderIssue } from "@/lib/jira-dashboard-alerts"
+import { DASHBOARD_ALERT_KEYS, dashboardAlertJql, type DashboardAlertCountsByKind, type DashboardAlertKind, type DashboardAlertKey, type BugAlertDetails, type BugAlertIssue, isJiraDueDate, type DueReminderDetails, type DueReminderIssue, type PendingIssueDetails, type PendingIssueDetail } from "@/lib/jira-dashboard-alerts"
 
 export async function getDashboardAlertCounts<K extends DashboardAlertKind>(kind: K, filter: DashboardFilter = SELF_FILTER): Promise<DashboardAlertCountsByKind[K]> {
   if (kind !== "bugs" && kind !== "pending" && kind !== "due") throw new JiraDashboardError("configuration", "查詢參數無效。")
@@ -118,4 +118,45 @@ export async function getDueReminderDetails(filter: DashboardFilter = SELF_FILTE
   const ids = new Set(overdue.map((issue) => issue.id))
   if (upcoming.some((issue) => ids.has(issue.id))) throw new JiraDashboardError("retry", "Issue 在查詢期間已變更，請重新載入。")
   return { overdue, upcoming, jiraBaseUrl: dashboardJiraBaseUrl(), readOnly: true }
+}
+
+export async function getPendingIssueDetails(filter: DashboardFilter = SELF_FILTER): Promise<PendingIssueDetails> {
+  const session = await auth()
+  if (!session?.user?.id) throw new JiraDashboardError("reauthorize", "登入狀態已失效，請重新登入。")
+  const credentials = await getJiraToken()
+  const scope = await resolveDashboardScope(filter, credentials)
+  const showAssignee = scope.mode !== "self"
+  function text(value: unknown): string {
+    if (typeof value !== "string" || !value.trim()) throw new JiraDashboardError("retry", "Issue 待處理明細資料不完整，請重新載入。")
+    return value
+  }
+  function named(value: unknown): string {
+    if (typeof value !== "object" || value === null || !("name" in value)) throw new JiraDashboardError("retry", "Issue 待處理明細資料不完整，請重新載入。")
+    return text(value.name)
+  }
+  async function read(key: "inReview" | "requestInfo"): Promise<PendingIssueDetail[]> {
+    const issues: PendingIssueDetail[] = []
+    const fields = ["summary", "issuetype", "status", "updated", ...(showAssignee ? ["assignee"] : [])]
+    for await (const page of searchJiraIssues(credentials, dashboardAlertJql(key, scope), fields)) {
+      for (const issue of page) {
+        const updated = text(issue.fields.updated)
+        if (!Number.isFinite(Date.parse(updated))) throw new JiraDashboardError("retry", "Issue Updated 日期無效，請重新載入。")
+        let assigneeDisplayName: string | null = null
+        const assignee = issue.fields.assignee
+        if (showAssignee && assignee !== null) {
+          if (typeof assignee !== "object" || !("displayName" in assignee)) throw new JiraDashboardError("retry", "Issue Assignee 資料不完整，請重新載入。")
+          assigneeDisplayName = text(assignee.displayName)
+        }
+        issues.push({
+          id: issue.id, key: issue.key, issueType: named(issue.fields.issuetype), summary: text(issue.fields.summary),
+          status: named(issue.fields.status), updated, ...(showAssignee ? { assigneeDisplayName } : {}),
+        })
+      }
+    }
+    return issues
+  }
+  const [inReview, requestInfo] = await Promise.all([read("inReview"), read("requestInfo")])
+  const ids = new Set(inReview.map((issue) => issue.id))
+  if (requestInfo.some((issue) => ids.has(issue.id))) throw new JiraDashboardError("retry", "Issue 在查詢期間已變更，請重新載入。")
+  return { inReview, requestInfo, jiraBaseUrl: dashboardJiraBaseUrl(), readOnly: true }
 }

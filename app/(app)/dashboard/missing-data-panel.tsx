@@ -9,6 +9,7 @@ import { MissingDataDialog } from "./missing-data-dialog"
 import { DashboardAlertCards } from "./dashboard-alert-cards"
 import { BugAlertDialog } from "./bug-alert-dialog"
 import { DueReminderDialog } from "./due-reminder-dialog"
+import { PendingIssueDialog } from "./pending-issue-dialog"
 import { reauthorizeDashboardAction } from "./actions"
 import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missing-data"
 
@@ -25,12 +26,13 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
   const [activeDialog, setActiveDialog] = useState<{ kind: MissingDataKind; filter: DashboardFilter } | null>(null)
   const [bugDialogFilter, setBugDialogFilter] = useState<DashboardFilter | null>(null)
   const [dueDialogFilter, setDueDialogFilter] = useState<DashboardFilter | null>(null)
+  const [pendingDialogFilter, setPendingDialogFilter] = useState<DashboardFilter | null>(null)
   // Keep the entire accepted scope stable until an open dialog explicitly closes.
-  const filter = activeDialog?.filter ?? bugDialogFilter ?? dueDialogFilter ?? applied.filter
+  const filter = activeDialog?.filter ?? bugDialogFilter ?? dueDialogFilter ?? pendingDialogFilter ?? applied.filter
   const query = filter ? serializeDashboardFilter(filter) : null
   const readOnly = filter?.mode !== "self"
   const [cardsQuery, setCardsQuery] = useState<string | null>(query)
-  const scopeChanged = Boolean((activeDialog || bugDialogFilter || dueDialogFilter) && (applied.filter ? serializeDashboardFilter(applied.filter) : null) !== query)
+  const scopeChanged = Boolean((activeDialog || bugDialogFilter || dueDialogFilter || pendingDialogFilter) && (applied.filter ? serializeDashboardFilter(applied.filter) : null) !== query)
   const [reauthorizing, setReauthorizing] = useState(false)
   const requestSequence = useRef<Record<MissingDataKind, number>>({ points: 0, "defect-cause": 0 })
   const mounted = useRef(false)
@@ -89,7 +91,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
   }
 
   function applyFilter(next: DashboardFilter) {
-    if (activeDialog || bugDialogFilter || dueDialogFilter || isBlocked) return
+    if (activeDialog || bugDialogFilter || dueDialogFilter || pendingDialogFilter || isBlocked) return
     if (next.mode === "self" && filter?.mode === "self") return
     router.push(dashboardHref(next))
   }
@@ -100,8 +102,9 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
     {query === null ? <p role="alert" className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">{applied.error} 請重新設定上方篩選條件。</p> : <section aria-label="儀表板檢查">
       <div className="mb-4 grid gap-4 lg:grid-cols-3">
         <DashboardAlertCards query={query}
-          onOpenBugs={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !isBlocked) setBugDialogFilter(filter) }}
-          onOpenDue={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !isBlocked) setDueDialogFilter(filter) }}
+          onOpenBugs={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !pendingDialogFilter && !isBlocked) setBugDialogFilter(filter) }}
+          onOpenDue={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !pendingDialogFilter && !isBlocked) setDueDialogFilter(filter) }}
+          onOpenPending={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !pendingDialogFilter && !isBlocked) setPendingDialogFilter(filter) }}
         />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -131,13 +134,14 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
                       )}
                     </div>
                   </div>
-                  {card.summary.total > 0 && <button type="button" aria-haspopup="dialog" aria-labelledby={`${cardId}-${kind}-title ${cardId}-${kind}-action`} aria-describedby={`${cardId}-${kind}-count`} onClick={() => { if (filter && !bugDialogFilter && !dueDialogFilter && !activeDialog) setActiveDialog({ kind, filter }) }} className="absolute inset-0 cursor-pointer rounded-2xl transition-colors hover:bg-blue-50/40 active:bg-blue-100/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:hover:bg-blue-950/20 dark:active:bg-blue-900/30" />}
+                  {card.summary.total > 0 && <button type="button" aria-haspopup="dialog" aria-labelledby={`${cardId}-${kind}-title ${cardId}-${kind}-action`} aria-describedby={`${cardId}-${kind}-count`} onClick={() => { if (filter && !bugDialogFilter && !dueDialogFilter && !pendingDialogFilter && !activeDialog) setActiveDialog({ kind, filter }) }} className="absolute inset-0 cursor-pointer rounded-2xl transition-colors hover:bg-blue-50/40 active:bg-blue-100/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:hover:bg-blue-950/20 dark:active:bg-blue-900/30" />}
                 </>
               )}
             </article>
           )
         })}
       </div>
+      {pendingDialogFilter && <PendingIssueDialog filter={pendingDialogFilter} scopeChanged={scopeChanged} onClose={() => setPendingDialogFilter(null)} />}
       {dueDialogFilter && <DueReminderDialog filter={dueDialogFilter} scopeChanged={scopeChanged} onClose={() => setDueDialogFilter(null)} />}
       {bugDialogFilter && <BugAlertDialog filter={bugDialogFilter} scopeChanged={scopeChanged} onClose={() => setBugDialogFilter(null)} />}
       {activeDialog && <MissingDataDialog key={activeDialog.kind} kind={activeDialog.kind} filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary(activeDialog.kind)} />}

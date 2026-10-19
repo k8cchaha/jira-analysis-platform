@@ -23,7 +23,7 @@ export function BugAlertCard({ s0s1Count = null, s2Count = null, loading = false
           <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{s2Count === null || loading ? "載入中…" : `${s2Count.toLocaleString("zh-TW")} 張 Issue`}</p>
         </li>
       </ul>}
-      {clickable && <button type="button" aria-label="查看 Bug 警示明細" aria-haspopup="dialog" onClick={onOpen} className="absolute inset-0 cursor-pointer rounded-2xl transition-colors hover:bg-blue-50/40 active:bg-blue-100/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:hover:bg-blue-950/20 dark:active:bg-blue-900/30" />}
+      {clickable && <button type="button" aria-label="查看 Bug 警示明細" aria-haspopup="dialog" onClick={onOpen} className="absolute inset-0 cursor-pointer rounded-2xl transition-colors hover:bg-red-50/40 active:bg-red-100/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 dark:hover:bg-red-950/20 dark:active:bg-red-900/30" />}
     </article>
   )
 }
