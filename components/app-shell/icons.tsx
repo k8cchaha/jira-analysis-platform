@@ -52,3 +52,11 @@ export function SidebarToggleIcon({ action }: { action: "expand" | "collapse" })
     </svg>
   )
 }
+
+export function MenuIcon() {
+  return (
+    <svg aria-hidden="true" className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  )
+}

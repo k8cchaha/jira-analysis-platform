@@ -40,7 +40,6 @@ export default async function AssignedIssuesPage() {
       <PageHeader
         title="指派給我的 Issues"
         description="最近 30 天建立並指派給你的 Issues，可直接更新 Story Points。"
-        breadcrumbs={["Issue 管理", "指派給我的 Issues"]}
       />
       <p className="mb-6 text-sm text-gray-500 dark:text-gray-400">
         JQL：{RECENT_ASSIGNED_ISSUES_JQL}

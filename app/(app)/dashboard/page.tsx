@@ -11,7 +11,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <>
       <PageHeader
         title="儀表板"
-        breadcrumbs={["總覽", "儀表板"]}
       />
       <MissingDataPanel applied={applied} viewerId={session?.user?.id ?? ""} />
       <div className="mt-6">

@@ -4,7 +4,6 @@ import { PageHeader } from "@/components/page-header"
 type ComingSoonProps = {
   title: string
   description: string
-  breadcrumbs?: readonly string[]
   plannedCapabilities?: readonly string[]
   unavailableReason?: string
   relatedLinks?: readonly { href: string; label: string }[]
@@ -13,7 +12,6 @@ type ComingSoonProps = {
 export function ComingSoon({
   title,
   description,
-  breadcrumbs,
   plannedCapabilities = [description],
   unavailableReason = "相關資料與操作功能仍在開發中，因此本次版本尚未開放。",
   relatedLinks = [
@@ -28,7 +26,6 @@ export function ComingSoon({
       <PageHeader
         title={title}
         description={description}
-        breadcrumbs={breadcrumbs}
       />
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="h-1 bg-blue-600" />

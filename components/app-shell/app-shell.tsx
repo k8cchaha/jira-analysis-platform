@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react"
-import { SidebarToggleIcon, NavigationIconGlyph } from "@/components/app-shell/icons"
+import { MenuIcon, SidebarToggleIcon, NavigationIconGlyph } from "@/components/app-shell/icons"
 import {
   dashboardNavigation,
   getNavigationState,
@@ -193,7 +193,7 @@ export function AppShell({ children, user }: AppShellProps) {
             className="app-icon-button lg:hidden"
             onClick={() => setMobileOpen(true)}
           >
-            <SidebarToggleIcon action="expand" />
+            <MenuIcon />
           </button>
           <button
             type="button"
@@ -205,10 +205,7 @@ export function AppShell({ children, user }: AppShellProps) {
           >
             <SidebarToggleIcon action={collapsed ? "expand" : "collapse"} />
           </button>
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">
-            {navigationState.title}
-          </p>
-          <div className="flex items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700">
+          <div className="ml-auto flex items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700">
             <div className="hidden min-w-0 text-right sm:block">
               <p className="max-w-40 truncate text-sm font-medium text-slate-900 dark:text-white">
                 {user.name}
@@ -283,8 +280,8 @@ function SidebarContent({
       >
         <GuardedLink
           href="/dashboard"
-          className="flex min-w-0 flex-1 items-center gap-3"
-          title="Jira Analysis"
+          className={`flex min-w-0 flex-1 items-center gap-3 ${collapsed ? "justify-center" : ""}`}
+          title="Jira Analysis Platform"
           onNavigate={onNavigate}
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
@@ -301,7 +298,7 @@ function SidebarContent({
           </span>
           {!collapsed ? (
             <span className="truncate text-sm font-semibold tracking-tight text-slate-950 dark:text-white">
-              Jira Analysis
+              Jira Analysis Platform
             </span>
           ) : null}
         </GuardedLink>

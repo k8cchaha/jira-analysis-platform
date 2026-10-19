@@ -6,7 +6,6 @@ export default function AssignedIssuesLoading() {
       <PageHeader
         title="指派給我的 Issues"
         description="正在載入最近指派給你的 Issues。"
-        breadcrumbs={["Issue 管理", "指派給我的 Issues"]}
       />
       <div
         aria-label="正在載入 Issues"

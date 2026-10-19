@@ -8,7 +8,6 @@ export default function DashboardLoading() {
     <>
       <PageHeader
         title="儀表板"
-        breadcrumbs={["總覽", "儀表板"]}
       />
       <section role="status" aria-label="正在載入儀表板">
         <div aria-hidden="true" className="mb-4 h-28 animate-pulse sm:h-24 rounded-2xl border border-slate-200 bg-slate-100 motion-reduce:animate-none dark:border-slate-800 dark:bg-slate-800" />
