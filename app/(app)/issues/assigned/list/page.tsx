@@ -8,6 +8,7 @@ import {
   type JiraIssueSearchResult,
 } from "@/lib/jira-issues"
 import { JiraAuthorizationError } from "@/lib/jira-token"
+import { RECENT_ASSIGNED_ISSUES_JQL } from "@/lib/jira-jql"
 
 export default async function AssignedIssuesPage() {
   const jiraBaseUrl = getJiraBaseUrl()
@@ -42,7 +43,7 @@ export default async function AssignedIssuesPage() {
         breadcrumbs={["Issue 管理", "指派給我的 Issues"]}
       />
       <p className="mb-6 text-sm text-gray-500 dark:text-gray-400">
-        JQL：assignee = currentUser() AND created &gt;= -30d ORDER BY created DESC
+        JQL：{RECENT_ASSIGNED_ISSUES_JQL}
       </p>
 
       {errorState ? (

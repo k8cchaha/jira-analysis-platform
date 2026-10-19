@@ -55,7 +55,7 @@ function harness(t, options = {}) {
     },
   }
   const sandbox = vm.createContext(globals)
-  const allowed = ["lib/jira-dashboard.ts", "lib/jira-dashboard-alerts.ts", "lib/jira-dashboard-alerts-server.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "app/api/dashboard/alerts/route.ts"]
+  const allowed = ["lib/jira-dashboard.ts", "lib/jira-dashboard-alerts.ts", "lib/jira-dashboard-alerts-server.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "app/api/dashboard/alerts/route.ts"]
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
     if (!allowed.includes(path)) return fail(`Unexpected module ${path}`)

@@ -9,8 +9,6 @@ import {
   isPointValue,
   missingPoints,
   jiraText,
-  missingDataJql,
-  missingDataReadJql,
   type MissingDataChange,
   type MissingDataError,
   type MissingDataKind,
@@ -18,6 +16,7 @@ import {
   type MissingDataSummary,
   type MissingIssue,
 } from "@/lib/jira-missing-data"
+import { missingDataListJql, missingDataUpdateJql } from "@/lib/jira-jql"
 import { initialPageCursor, openPageToken, sealPageToken } from "@/lib/jira-page-token"
 import { DashboardFilterError, SELF_FILTER, serializeDashboardFilter, type DashboardFilter } from "@/lib/jira-dashboard-filter"
 import { resolveDashboardScope, JiraDashboardLookupError, lookupError } from "@/lib/jira-dashboard-lookups"
@@ -236,7 +235,7 @@ function causeValues(fields: FieldSet, issue: RawIssue): string[] {
 export async function getMissingDataSummary(kind: MissingDataKind, filter: DashboardFilter = SELF_FILTER): Promise<MissingDataSummary> {
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
-  const jql = `${missingDataReadJql(kind, scope)} ORDER BY key ASC`
+  const jql = missingDataListJql(kind, scope)
   const fields = await getFields(credentials, kind)
   const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0 }
   const seen = new Set<string>()
@@ -358,7 +357,7 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
   const readOnly = scope.mode !== "self"
-  const jql = `${missingDataReadJql(kind, scope)} ORDER BY key ASC`
+  const jql = missingDataListJql(kind, scope)
   const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql, filterKey: serializeDashboardFilter(filter) }
   const secret = process.env.AUTH_SECRET
   if (!secret) throw new JiraDashboardError("configuration", "分頁加密設定不完整。")
@@ -405,8 +404,8 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
 export async function updateMissingData(kind: MissingDataKind, changes: MissingDataChange[]) {
   const credentials = await getJiraToken(true)
   const fields = await getFields(credentials, kind)
-  const ids = changes.map((change) => change.issueId).join(",")
-  const eligible = await search(credentials, `(${missingDataJql(kind)}) AND id in (${ids})`, fieldIds(fields, kind, false), MISSING_DATA_PAGE_SIZE)
+  const ids = changes.map((change) => change.issueId)
+  const eligible = await search(credentials, missingDataUpdateJql(kind, ids), fieldIds(fields, kind, false), MISSING_DATA_PAGE_SIZE)
   if (eligible.nextPageToken) throw invalidResponse()
   const eligibleIds = new Set(eligible.issues.map((issue) => issue.id))
   const results = await mapConcurrent(changes, async (change) => {

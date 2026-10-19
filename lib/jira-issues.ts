@@ -9,9 +9,9 @@ import {
   getIssueStoryPoints,
   getJiraStoryPointsFields,
   JiraStoryPointsError,
-  RECENT_ASSIGNED_ISSUES_JQL,
   type JiraStoryPointsField,
 } from "@/lib/jira-story-points"
+import { RECENT_ASSIGNED_ISSUES_JQL } from "@/lib/jira-jql"
 
 export interface JiraIssueSummary {
   id: string

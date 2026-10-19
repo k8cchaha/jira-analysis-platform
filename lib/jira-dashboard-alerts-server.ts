@@ -5,7 +5,8 @@ import { getJiraToken } from "@/lib/jira-token"
 import { countJiraIssues, searchJiraIssues, dashboardJiraBaseUrl, JiraDashboardError } from "@/lib/jira-dashboard"
 import { resolveDashboardScope } from "@/lib/jira-dashboard-lookups"
 import { SELF_FILTER, type DashboardFilter } from "@/lib/jira-dashboard-filter"
-import { DASHBOARD_ALERT_KEYS, dashboardAlertJql, type DashboardAlertCountsByKind, type DashboardAlertKind, type DashboardAlertKey, type BugAlertDetails, type BugAlertIssue, isJiraDueDate, type DueReminderDetails, type DueReminderIssue, type PendingIssueDetails, type PendingIssueDetail } from "@/lib/jira-dashboard-alerts"
+import { type DashboardAlertCountsByKind, type DashboardAlertKind, type BugAlertDetails, type BugAlertIssue, isJiraDueDate, type DueReminderDetails, type DueReminderIssue, type PendingIssueDetails, type PendingIssueDetail } from "@/lib/jira-dashboard-alerts"
+import { DASHBOARD_ALERT_KEYS, dashboardAlertJql, type DashboardAlertKey } from "@/lib/jira-jql"
 
 export async function getDashboardAlertCounts<K extends DashboardAlertKind>(kind: K, filter: DashboardFilter = SELF_FILTER): Promise<DashboardAlertCountsByKind[K]> {
   if (kind !== "bugs" && kind !== "pending" && kind !== "due") throw new JiraDashboardError("configuration", "查詢參數無效。")

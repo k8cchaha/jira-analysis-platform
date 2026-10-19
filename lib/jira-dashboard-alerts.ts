@@ -1,4 +1,4 @@
-import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
+export { DASHBOARD_ALERT_JQL, DASHBOARD_ALERT_KEYS, dashboardAlertJql, type DashboardAlertKey } from "./jira-jql.ts"
 import { MISSING_DATA_LIMIT, type MissingDataError } from "./jira-missing-data.ts"
 
 export type DashboardAlertKind = "bugs" | "pending" | "due"
@@ -73,43 +73,6 @@ export function isJiraDueDate(value: unknown): value is string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const date = new Date(`${value}T00:00:00.000Z`)
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
-}
-
-export const DASHBOARD_ALERT_JQL = {
-  s0s1: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")',
-  s2: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d',
-  inReview: 'issuetype in (DEV-Task, QA-Task) and status = "In Review"',
-  requestInfo: 'status = "Request Info"',
-  overdue: 'duedate < startOfDay() AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
-  upcoming: 'duedate >= startOfDay() AND duedate < startOfDay("+3d") AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
-} as const
-export type DashboardAlertKey = keyof typeof DASHBOARD_ALERT_JQL
-export const DASHBOARD_ALERT_KEYS = {
-  bugs: ["s0s1", "s2"], pending: ["inReview", "requestInfo"], due: ["overdue", "upcoming"],
-} as const
-
-export function dashboardAlertJql(key: DashboardAlertKey, scope: ResolvedDashboardScope): string {
-  if (!Object.hasOwn(DASHBOARD_ALERT_JQL, key)) throw new DashboardFilterError()
-  let assignee = "assignee = currentUser()"
-  let projects = ""
-  let date = ""
-  if (scope.mode !== "self") {
-    dashboardDays(String(scope.days))
-    date = ` AND created >= -${scope.days}d`
-    if (
-      !["person", "team-project"].includes(scope.mode) ||
-      !scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT ||
-      scope.accountIds.some((id) => !isDashboardAccountId(id)) ||
-      (scope.mode === "person" && (scope.accountIds.length !== 1 || scope.projects.length !== 0)) ||
-      scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))
-    ) throw new DashboardFilterError()
-    const ids = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`)
-    assignee = scope.mode === "person" ? `assignee = ${ids[0]}` : `assignee in (${ids.join(", ")})`
-    if (scope.projects.length) projects = ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})`
-  }
-  const jql = `(${DASHBOARD_ALERT_JQL[key]}) AND ${assignee}${date}${projects} ORDER BY key ASC`
-  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
-  return jql
 }
 
 function record(value: unknown): value is Record<string, unknown> {

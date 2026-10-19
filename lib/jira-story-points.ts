@@ -5,9 +5,9 @@ import {
   getJiraToken,
   type JiraCredentials,
 } from "@/lib/jira-token"
+import { recentAssignedIssuesUpdateJql } from "@/lib/jira-jql"
 
-export const RECENT_ASSIGNED_ISSUES_JQL =
-  "assignee = currentUser() AND created >= -30d ORDER BY created DESC"
+export { RECENT_ASSIGNED_ISSUES_JQL } from "@/lib/jira-jql"
 
 const JIRA_API_ROOT = "https://api.atlassian.com/ex/jira"
 const UPDATE_CONCURRENCY = 4
@@ -199,12 +199,12 @@ async function getEligibleIssues(
   changes: StoryPointsChange[],
   candidates: JiraStoryPointsField[]
 ) {
-  const issueIds = changes.map((change) => change.issueId).join(", ")
+  const issueIds = changes.map((change) => change.issueId)
   const response = await jiraFetch(credentials, "/rest/api/3/search/jql", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jql: `id in (${issueIds}) AND assignee = currentUser() AND created >= -30d`,
+      jql: recentAssignedIssuesUpdateJql(issueIds),
       fields: ["project", ...candidates.map((field) => field.id)],
       maxResults: changes.length,
     }),
