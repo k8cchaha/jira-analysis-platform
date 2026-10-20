@@ -167,9 +167,13 @@ describe("burndown aggregation against fixture Jira", () => {
     // 母票 type 已投影（彈窗每列左側 icon）。
     assert.deepEqual(JSON.parse(JSON.stringify(byKey.get("SUN-101").parentIssueType)), { status: "known", name: "Story" })
 
-    // 天數 = start..end 的每一天。
-    assert.equal(data.days.length, 13) // 2026-10-13 ~ 2026-10-25
+    // 天數 = 空起點格 + start..end 的每一天。
+    assert.equal(data.days.length, 14) // 起點格 + 2026-10-13 ~ 2026-10-25
     const byDate = new Map(data.days.map((day) => [day.date, day]))
+    // 空起點格：startDate 前一天，remaining=total 讓兩線從初始值對齊。
+    assert.equal(data.days[0].date, "2026-10-12")
+    assert.equal(data.days[0].remainingPoints, 18)
+    assert.equal(data.days[0].donePoints, 0)
 
     // 每天完成點數（只計已估計）。
     assert.equal(byDate.get("2026-10-13").donePoints, 2)
@@ -196,8 +200,9 @@ describe("burndown aggregation against fixture Jira", () => {
       }
     }
 
-    // 理想線：起點=total、終點=0（不受 today 影響，全程有值）。
-    assert.equal(byDate.get("2026-10-13").idealPoints, 18)
+    // 理想線：從空起點格（10-12）的 total 開始全程傾斜，終點(10-25)=0。
+    // 第一天(10-13)已走 1/13，18 × (12/13) → 16.6。
+    assert.equal(byDate.get("2026-10-13").idealPoints, 16.6)
     assert.equal(byDate.get("2026-10-25").idealPoints, 0)
   })
 

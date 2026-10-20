@@ -43,26 +43,39 @@ export function BurndownChart({
   const plotW = W - PAD_L - PAD_R
   const plotH = H - PAD_T - PAD_B
   const yMax = niceCeil(Math.max(totalPoints, 1))
+
+  // x 軸起點（0 位置）就是 days 最前面的「空起點格」（remaining＝total），
+  // 兩條線都從此格的 total 起步，與理想線初始值對齊。
   const step = (index: number) => (index / (days.length - 1)) * plotW
   const y = (points: number) => PAD_T + plotH - (points / yMax) * plotH
 
+  // 理想線：從起點格（total）出發，逐日等速下降到 endDate 的 0。
   const idealPath = days
-    .map((day, index) => `${index === 0 ? "M" : "L"}${PAD_L + step(index)},${y(day.idealPoints)}`)
+    .map(
+      (day, index) =>
+        `${index === 0 ? "M" : "L"}${PAD_L + step(index)},${y(day.idealPoints)}`
+    )
     .join(" ")
 
-  // 實際剩餘線：只有在 remainingPoints 非 null 的連續日期才連線；
-  // null（尚未到當天）處斷開，不跨空白連畫。
+  // 實際剩餘線：只有 remainingPoints 非 null 的連續日期才連線；
+  // null（尚未到當天）處斷開，不跨空白連畫。起點格非 null（total），
+  // 所以第一段天然從 total 起步，與理想線對齊。
   const actualPaths: string[] = []
-  let penDown = false
+  let commands: string[] = []
+  const flush = () => {
+    if (commands.length === 0) return
+    actualPaths.push(commands.join(" "))
+    commands = []
+  }
   days.forEach((day, index) => {
     if (day.remainingPoints === null) {
-      penDown = false
+      flush()
       return
     }
-    const command = penDown ? "L" : "M"
-    actualPaths.push(`${command}${PAD_L + step(index)},${y(day.remainingPoints)}`)
-    penDown = true
+    const move = `${PAD_L + step(index)},${y(day.remainingPoints)}`
+    commands.push(commands.length === 0 ? `M${move}` : `L${move}`)
   })
+  flush()
   const actualPath = actualPaths.join(" ")
 
   const yTicks: number[] = []
@@ -71,6 +84,8 @@ export function BurndownChart({
 
   return (
     <div>
+      {/* 逐日長條的進場動畫：因 client 依日新增重繪、React 重用既有 key，只有新到當天才觸發。 */}
+      <style>{`@keyframes burndown-bar-rise { from { transform: scaleY(0); } to { transform: scaleY(1); } } .burndown-bar-enter { transform-origin: bottom; animation: burndown-bar-rise 220ms ease-out; }`}</style>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="img"
@@ -103,9 +118,9 @@ export function BurndownChart({
           )
         })}
 
-        {/* X 軸日期標籤 */}
+        {/* X 軸日期標籤 */}{/* index 0 是空起點格（非真實 sprint 日），不標日期。 */}
         {days.map((day, index) =>
-          index % xLabelStep === 0 ? (
+          index > 0 && index % xLabelStep === 0 ? (
             <text
               key={day.date}
               x={PAD_L + step(index)}
@@ -137,14 +152,14 @@ export function BurndownChart({
                 <title>{`${day.date}：完成 ${day.donePoints} 點`}</title>
               </rect>
             )
-            if (!onBarClick) return <g key={day.date}>{rect}</g>
+            if (!onBarClick) return <g key={day.date} className="burndown-bar-enter">{rect}</g>
             return (
               <g
                 key={day.date}
                 role="button"
                 tabIndex={0}
                 aria-label={`${day.date} 完成 ${day.donePoints} 點，檢視當天 Dev-Task 清單`}
-                className="cursor-pointer outline-none focus-visible:opacity-80"
+                className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
                 onClick={() => onBarClick(day.date)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {

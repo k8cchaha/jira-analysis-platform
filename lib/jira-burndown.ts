@@ -1,6 +1,10 @@
 import "server-only"
 
-import { getJiraToken, JiraAuthorizationError } from "@/lib/jira-token"
+import {
+  getJiraToken,
+  JiraAuthorizationError,
+  type JiraCredentials,
+} from "@/lib/jira-token"
 import { searchJiraIssues, dashboardJiraBaseUrl } from "@/lib/jira-dashboard"
 import {
   sprintParentIssuesJql,
@@ -66,23 +70,31 @@ function pointValue(value: unknown): number | null {
   return value
 }
 
-export async function getBurndownData(
-  sprint: SprintRecord,
-  today = new Date().toISOString().slice(0, 10)
-): Promise<BurndownData> {
-  let credentials
-  try {
-    credentials = await getJiraToken()
-  } catch (error) {
-    if (error instanceof JiraAuthorizationError) {
-      throw new JiraBurndownError(
-        error.code === "invalid_configuration" ? "request_failed" : "reauthorize",
-        "無法讀取 Jira 登入狀態，請重新授權。"
-      )
-    }
-    throw new JiraBurndownError("request_failed", "無法取得 Jira 登入資料。")
-  }
+/**
+ * 燃盡圖的「基底」資料（步驟 1+2 的結果，尚未做逐日 done-at 標記）。
+ * SSE 路由先把這一塊送給 client 畫出圖表骨架；逐日資料以 `iterateDoneDays`
+ * 流式補上。以 `YYYY-MM-DD` `today` 與 credential 注入，維持純、可測。
+ */
+export interface BurndownBase {
+  sprint: Pick<SprintRecord, "id" | "name" | "startDate" | "endDate">
+  today: string
+  empty: boolean
+  parentKeys: string[]
+  totalPoints: number
+  /** 已估計 Dev-Task，`doneDate` 全為 null（尚未標記）。 */
+  tasks: BurndownTask[]
+  unestimated: BurndownUnestimated[]
+}
 
+/**
+ * 步驟 1+2：撈此 sprint 的母票再撈全部 Dev-Task，算出 `totalPoints` 與
+ * tasks / unestimated。不發逐日查詢。`empty` 時回空白基底。
+ */
+export async function getBurndownBase(
+  sprint: SprintRecord,
+  today: string,
+  credentials: JiraCredentials
+): Promise<BurndownBase> {
   // 1. 撈此 sprint 的母票（Story / Task / Bug）。
   const parentKeys = new Set<string>()
   let parents = 0
@@ -102,12 +114,12 @@ export async function getBurndownData(
 
   const empty = parentKeys.size === 0
   const unestimated: BurndownUnestimated[] = []
+  const tasks: BurndownTask[] = []
   const keys = [...parentKeys]
+  let total = 0
 
   if (!empty) {
-    // 2. 撈全部 Dev-Task：給 totalTasks 填上 points / assignee，未估計進清單。
-    const tasks: BurndownTask[] = []
-    const byKey = new Map<string, BurndownTask>()
+    // 2. 撈全部 Dev-Task：給 tasks 填上 points / assignee，未估計進清單。
     for await (const issues of searchJiraIssues(
       credentials,
       sprintDevTasksJql(keys),
@@ -126,7 +138,7 @@ export async function getBurndownData(
           })
           continue
         }
-        const task: BurndownTask = {
+        tasks.push({
           key: issue.key,
           summary:
             typeof issue.fields.summary === "string" ? issue.fields.summary : null,
@@ -135,56 +147,111 @@ export async function getBurndownData(
           assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
           assigneeAccountId: assigneeAccountId(issue.fields.assignee),
           parentIssueType: parentIssueTypeOf(issue.fields.parent),
-        }
-        tasks.push(task)
-        byKey.set(task.key, task)
+        })
+        total += points
       }
-    }
-
-    // 3. 逐日撈「當天切到 Done」的 Dev-Task，把 doneDate 刻回對應 task。
-    //    未來（超過今天）尚未發生，不發查詢。
-    for (const date of eachDayUpTo(sprint.startDate, sprint.endDate, today)) {
-      for await (const issues of searchJiraIssues(
-        credentials,
-        sprintDevTasksDoneOnJql(keys, date),
-        [STORY_POINTS_FIELD]
-      )) {
-        for (const issue of issues) {
-          const task = byKey.get(issue.key)
-          if (task) task.doneDate = date
-        }
-      }
-    }
-
-    const series = computeBurndownSeries({
-      startDate: sprint.startDate,
-      endDate: sprint.endDate,
-      today,
-      tasks,
-      unestimated,
-      accountIds: null, // 全體（站內團隊過濾由 client 重算）
-    })
-
-    return {
-      sprint: { id: sprint.id, name: sprint.name, startDate: sprint.startDate, endDate: sprint.endDate },
-      today,
-      totalPoints: series.totalPoints,
-      tasks: series.tasks,
-      unestimated: series.unestimated,
-      days: series.days,
-      empty,
     }
   }
 
-  // 無母票：回傳空白、不含任何內容，不發 Dev-Task / 每日查詢。
+  const roundedTotal = Math.round(total * 10) / 10
   return {
     sprint: { id: sprint.id, name: sprint.name, startDate: sprint.startDate, endDate: sprint.endDate },
     today,
-    totalPoints: 0,
-    tasks: [],
-    unestimated,
-    days: [],
     empty,
+    parentKeys: keys,
+    totalPoints: roundedTotal,
+    tasks,
+    unestimated,
+  }
+}
+
+/**
+ * 步驟 3：逐日撈「當天切到 Done」的 Dev-Task，逐日 `yield { date, keys }`。
+ * 以 key 傳遞最小化 payload，client 端自對應到 task。錯誤（limit /
+ * invalid_response / reauthorize）直接往上拋，由呼叫端（`getBurndownData`
+ * 或 SSE 路由）決定如何處理。
+ */
+export async function* iterateDoneDays(
+  sprint: Pick<SprintRecord, "id" | "startDate" | "endDate">,
+  today: string,
+  credentials: JiraCredentials,
+  parentKeys: string[]
+): AsyncGenerator<{ date: string; keys: string[] }> {
+  // 未來（超過今天）尚未發生，不發查詢。
+  for (const date of eachDayUpTo(sprint.startDate, sprint.endDate, today)) {
+    const keys: string[] = []
+    for await (const issues of searchJiraIssues(
+      credentials,
+      sprintDevTasksDoneOnJql(parentKeys, date),
+      [STORY_POINTS_FIELD]
+    )) {
+      for (const issue of issues) keys.push(issue.key)
+    }
+    yield { date, keys }
+  }
+}
+
+export async function getBurndownData(
+  sprint: SprintRecord,
+  today = new Date().toISOString().slice(0, 10)
+): Promise<BurndownData> {
+  let credentials
+  try {
+    credentials = await getJiraToken()
+  } catch (error) {
+    if (error instanceof JiraAuthorizationError) {
+      throw new JiraBurndownError(
+        error.code === "invalid_configuration" ? "request_failed" : "reauthorize",
+        "無法讀取 Jira 登入狀態，請重新授權。"
+      )
+    }
+    throw new JiraBurndownError("request_failed", "無法取得 Jira 登入資料。")
+  }
+
+  const base = await getBurndownBase(sprint, today, credentials)
+  if (base.empty) {
+    return {
+      sprint: base.sprint,
+      today,
+      totalPoints: 0,
+      tasks: [],
+      unestimated: base.unestimated,
+      days: [],
+      empty: true,
+    }
+  }
+
+  // 3. 逐日把 doneDate 刻回對應 task，再算完整系列（維持既有行為）。
+  const byKey = new Map(base.tasks.map((task) => [task.key, task]))
+  for await (const { date, keys } of iterateDoneDays(
+    sprint,
+    today,
+    credentials,
+    base.parentKeys
+  )) {
+    for (const key of keys) {
+      const task = byKey.get(key)
+      if (task) task.doneDate = date
+    }
+  }
+
+  const series = computeBurndownSeries({
+    startDate: sprint.startDate,
+    endDate: sprint.endDate,
+    today,
+    tasks: base.tasks,
+    unestimated: base.unestimated,
+    accountIds: null, // 全體（站內團隊過濾由 client 重算）
+  })
+
+  return {
+    sprint: base.sprint,
+    today,
+    totalPoints: series.totalPoints,
+    tasks: series.tasks,
+    unestimated: series.unestimated,
+    days: series.days,
+    empty: false,
   }
 }
 

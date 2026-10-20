@@ -29,15 +29,21 @@ describe("computeBurndownSeries", () => {
       accountIds: null,
     })
     assert.equal(series.totalPoints, 16)
-    assert.equal(series.days.length, 13) // 2026-10-13..2026-10-25
+    // 含最前面的空起點格（startDate 前一天），共 1 + 13 天。
+    assert.equal(series.days.length, 14)
+    assert.equal(series.days[0].date, "2026-10-12")
+    assert.equal(series.days[0].remainingPoints, 16)
+    assert.equal(series.days[0].idealPoints, 16)
+    assert.equal(series.days[0].donePoints, 0)
     const byDate = new Map(series.days.map((day) => [day.date, day]))
     assert.equal(byDate.get("2026-10-13").remainingPoints, 16)
     assert.equal(byDate.get("2026-10-16").remainingPoints, 11) // T-1(5) 已 done
     assert.equal(byDate.get("2026-10-19").remainingPoints, 8) // 16 - 5 - 3，T-3 未完成
     assert.equal(byDate.get("2026-10-19").donePoints, 3) // T-2 當天 done
     assert.equal(byDate.get("2026-10-20").remainingPoints, null) // 未來
-    // 理想線起點 = total、終點 = 0。
-    assert.equal(byDate.get("2026-10-13").idealPoints, 16)
+    // 理想線：從空起點格（10-12）的 total 開始全程傾斜，到終點(10-25) = 0。
+    // 第一天(10-13)已走 1/13，16 × (12/13) → 14.8。
+    assert.equal(byDate.get("2026-10-13").idealPoints, 14.8)
     assert.equal(byDate.get("2026-10-25").idealPoints, 0)
   })
 
@@ -90,18 +96,23 @@ describe("computeBurndownSeries", () => {
     })
     assert.equal(scoped.totalPoints, 0)
     assert.equal(scoped.days[0].idealPoints, 0) // 未指派不屬任何被選成員。
-    assert.equal(scoped.days[0].remainingPoints, 0)
+    // scoped 內無任務、也無任何完成記錄 → 實際線不畫（remaining 全 null）。
+    assert.equal(scoped.days[0].remainingPoints, null)
+    assert.equal(all.days[0].remainingPoints, null) // 全體也無完成記錄 → 不畫。
   })
 
   it("does not count future done dates toward remaining", () => {
     const series = computeBurndownSeries({
       startDate: SPRINT.startDate, endDate: SPRINT.endDate, today: TODAY,
-      tasks: [task("T-1", 6, "2026-10-25", "u-a")], // doneDate 在未來
+      tasks: [
+        task("T-1", 6, "2026-10-25", "u-a"), // doneDate 在未來：不計入剩餘
+        task("T-2", 4, "2026-10-14", "u-a"), // 已完成的記錄 → 實際線可畫
+      ],
       unestimated: [], accountIds: null,
     })
-    assert.equal(series.totalPoints, 6)
+    assert.equal(series.totalPoints, 10)
     const byDate = new Map(series.days.map((day) => [day.date, day]))
-    assert.equal(byDate.get("2026-10-19").remainingPoints, 6) // 尚未被計為完成
+    assert.equal(byDate.get("2026-10-19").remainingPoints, 6) // 10 - 4，未來 T-1 未計
     assert.equal(byDate.get("2026-10-20").remainingPoints, null)
   })
 
@@ -137,14 +148,15 @@ describe("computeBurndownSeries", () => {
     const series = computeBurndownSeries({
       startDate: SPRINT.startDate, endDate: SPRINT.endDate, today: TODAY,
       tasks: [
-        task("T-1", 0.1, null, "u-a"),
+        task("T-1", 0.1, "2026-10-14", "u-a"),
         task("T-2", 0.2, null, "u-a"),
         task("T-3", 259.9, null, "u-a"),
       ],
       unestimated: [], accountIds: null,
     })
     assert.equal(series.totalPoints, 260.2) // 非 260.19999999999993
-    assert.equal(series.days[0].remainingPoints, 260.2) // 理想線起點同值
+    // 有完成記錄 → 起點格 remaining = 四捨五入後的總點數。
+    assert.equal(series.days[0].remainingPoints, 260.2)
     assert.equal(series.days[0].idealPoints, 260.2)
   })
 })

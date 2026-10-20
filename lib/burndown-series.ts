@@ -72,6 +72,13 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
+/** 把 `YYYY-MM-DD` 往後（正）或往前（負）偏移 `days` 天（純函數）。 */
+function shiftDate(date: string, days: number): string {
+  const value = parseDate(date)
+  value.setUTCDate(value.getUTCDate() + days)
+  return toIsoDate(value)
+}
+
 /** 產生 [start, end] 每天的 `YYYY-MM-DD`（上限 60 天）。 */
 function* eachDay(start: string, end: string): IterableIterator<string> {
   const current = parseDate(start)
@@ -111,11 +118,17 @@ function matchesScope(
  *   assignee ∈ accountIds 的未估計任務。
  * - 每天 done 點數只累計 `task.doneDate === date` 的命中任務；`date > today`
  *   的 `remainingPoints` 為 null（未到、不畫）。
+ * - `throughDate`（可選）：串流已逐日掃描到的最新日期。實際剩餘線只畫到
+ *   `date <= throughDate`，之後還未掃描的天一律 null（不一次畫完、逐日長出）；
+ *   未提供（一次算完）時等同 `today`，畫到今天為止。
+ * - `days` 最前面含一個「空起點格」（`startDate` 前一天，remaining＝total），
+ *   x=0 的初始值讓實際線與理想線對齊；其 `donePoints` 恆為 0、不累計。
  */
 export function computeBurndownSeries({
   startDate,
   endDate,
   today,
+  throughDate,
   tasks,
   unestimated,
   accountIds,
@@ -123,6 +136,8 @@ export function computeBurndownSeries({
   startDate: string
   endDate: string
   today: string
+  /** 串流已掃描到的最新日期；省略＝一次算完（畫到今天）。 */
+  throughDate?: string | null
   tasks: readonly BurndownTask[]
   unestimated: readonly BurndownUnestimated[]
   accountIds: ReadonlySet<string> | null
@@ -148,19 +163,51 @@ export function computeBurndownSeries({
     matchesScope(task.assigneeAccountId, accountIds)
   )
 
-  const days: BurndownDay[] = []
+  // 理想線起點 = 空起點格日期：從起點格（total）開始全程等速傾斜到 endDate 的 0，
+  // 而非從 startDate 才開始下降（避免頂端一段水平停在 total）。
+  const idealStart = shiftDate(startDate, -1)
+
+  // 只要有任何一筆「今天以前已完成」的記錄，實際剩餘線才有可信的下降資料；
+  // 否則（例如串流初期資料未到、或 sprint 至今全未完成）所有天的 remainingPoints
+  // 都為 null，實際線不畫——不先畫一條還沒有資料支持的平線。
+  const hasDoneRecord = tasks.some(
+    (task) =>
+      matchesScope(task.assigneeAccountId, accountIds) &&
+      task.doneDate !== null &&
+      task.doneDate <= today
+  )
+
+  const days: BurndownDay[] = [
+    // x=0 的空起點格：sprint 開跑前一天，remaining = total，讓實際剩餘線與
+    // 理想線都從這個「初始值」起步並在 x 軸對齊。此格沒有任務、不累計 done。
+    {
+      date: idealStart,
+      donePoints: 0,
+      remainingPoints: hasDoneRecord ? roundedTotal : null,
+      idealPoints: roundedTotal,
+    },
+  ]
+
+  // 實際剩餘線的「畫到哪」：串流已逐日掃描到的最新日期；未提供＝畫到今天。
+  // 超過此限（串流尚未掃描到）的天 remaining 為 null，避免一收到第一筆完成
+  // 資料就把整段畫完。
+  const effectiveThrough = throughDate ?? today
   let runningDone = 0
   for (const date of eachDay(startDate, endDate)) {
     const donePoints = byDate.get(date) ?? 0
     const future = date > today
-    // 只有「今天以前（含）」的完成才往前累計剩餘點數。
+    const beyondStream = date > effectiveThrough
+    // 只有「今天以前（含）」且「串流已掃描到」的完成才往前累計剩餘點數。
     runningDone += donePoints
     days.push({
       date,
       donePoints,
-      remainingPoints: future ? null : roundedTotal - runningDone,
+      remainingPoints:
+        future || !hasDoneRecord || beyondStream
+          ? null
+          : roundedTotal - runningDone,
       idealPoints:
-        roundedTotal === 0 ? 0 : remainingAt(roundedTotal, date, startDate, endDate),
+        roundedTotal === 0 ? 0 : remainingAt(roundedTotal, date, idealStart, endDate),
     })
   }
 

@@ -1,9 +1,9 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { computeBurndownSeries } from "@/lib/burndown-series"
-import type { BurndownData } from "@/lib/jira-burndown"
+import type { BurndownTask, BurndownUnestimated } from "@/lib/jira-burndown"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
@@ -12,20 +12,41 @@ import { UnestimatedButton } from "@/app/(app)/sprint/burndown/unestimated-butto
 import { DayTasksDialog } from "@/app/(app)/sprint/burndown/day-tasks-dialog"
 import { TeamSelect } from "@/components/team-select"
 
+type StreamPhase =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "streaming" }
+  | { status: "complete" }
+  | { status: "error"; message: string }
+
+interface BasePayload {
+  today: string
+  empty: boolean
+  totalPoints: number
+  tasks: BurndownTask[]
+  unestimated: BurndownUnestimated[]
+}
+
+interface DayPayload {
+  date: string
+  keys: string[]
+}
+
 /**
- * Burn Down 的站內檢視。持有團隊選擇 state，把 server 已撈回的 Dev-Task 資料
- * 依所選團隊成員在站內重算（不重發 JQL），並渲染 selector 行＋燃盡圖＋未估計按鈕。
+ * Burn Down 的站內檢視。持有團隊選擇 state，並以 `EventSource` 訂閱
+ * `/api/sprint/burndown/stream`，把 server 漸進送回的 Dev-Task 資料依所選
+ * 團隊成員在站內重算（不重發 JQL）。
  *
- * 專案／Sprint 切換以 `useTransition` 包住 `router.push`，等待期間以全頁遮罩
- * 擋住反覆操作（避免疊發大量撈資料請求）。
+ * 串流順序：`base`（畫出骨架：總點數、理想線）→ `day` × N（逐日把實際線/
+ * 長條「長」上去）→ `done`。任一天收到 `error` ＝ 串流中止：已畫的部分保留，
+ * 顯示錯誤 banner，不偽裝成功。
  */
 export function BurndownClient({
   project,
   sprints,
   selectedSprintId,
   sprint,
-  data,
-  error,
+  endpoint,
   jiraBaseUrl,
 }: {
   project: SprintProjectKey | null
@@ -33,10 +54,8 @@ export function BurndownClient({
   selectedSprintId: number | null
   /** 已選取的 sprint；無專案或無已開始 sprint 時為 null。 */
   sprint: SprintRecord | null
-  /** 撈取成功時的燃盡資料；`error` 有值時可為 undefined。 */
-  data?: BurndownData
-  /** 撈取失敗訊息；`data` 有值時為 undefined。 */
-  error?: string
+  /** SSE 端點（server 依 project＋sprint 產生的開流 URL）；無 sprint 時為 null。 */
+  endpoint: string | null
   jiraBaseUrl: string | null
 }) {
   const router = useRouter()
@@ -46,6 +65,19 @@ export function BurndownClient({
   const [showLine, setShowLine] = useState(true)
   const [showBar, setShowBar] = useState(true)
   const [clickedDay, setClickedDay] = useState<string | null>(null)
+
+  // 串流資料（由 `base`／`day` 事件驅動）。
+  const [phase, setPhase] = useState<StreamPhase>({ status: "idle" })
+  const [today, setToday] = useState<string | null>(null)
+  const [empty, setEmpty] = useState(false)
+  const [tasks, setTasks] = useState<BurndownTask[]>([])
+  const [unestimated, setUnestimated] = useState<BurndownUnestimated[]>([])
+  /** 已接收的天數（供串流進度顯示）。 */
+  const [daysReceived, setDaysReceived] = useState(0)
+  /** 串流已逐日掃描到的最新日期（含空天）；收到第一個 day 前為 null。 */
+  const [lastStreamedDate, setLastStreamedDate] = useState<string | null>(null)
+  /** 手動「重新載入」用的 nonce，bump 會觸發 effect 重開串流。 */
+  const [retryNonce, setRetryNonce] = useState(0)
 
   function navigate(path: string) {
     startTransition(() => router.push(path))
@@ -57,17 +89,113 @@ export function BurndownClient({
     setMemberIds(nextGroups.length > 0 && ready && accountIds.length > 0 ? new Set(accountIds) : null)
   }
 
+  // 開啟／重開串流。endpoint 改變（切 sprint／專案）或手動重試時關舊開新；
+  // 每次開流帶 nonce，並停用 EventSource 自動重連（避免重送回 base 造成雙算天數）。
+  useEffect(() => {
+    if (!endpoint) {
+      setPhase({ status: "idle" })
+      setToday(null)
+      setTasks([])
+      setUnestimated([])
+      setEmpty(false)
+      setDaysReceived(0)
+      setLastStreamedDate(null)
+      return
+    }
+    let active = true
+    setPhase({ status: "loading" })
+    setToday(null)
+    setTasks([])
+    setUnestimated([])
+    setEmpty(false)
+    setDaysReceived(0)
+    setLastStreamedDate(null)
+    setClickedDay(null)
+
+    const url = `${endpoint}${endpoint.includes("?") ? "&" : "?"}t=${Date.now()}`
+    const es = new EventSource(url)
+    // 停用自動重連：指令碼不再重開相同 URL；連線結束／失敗由下方處理。
+    es.onerror = () => {
+      es.close()
+      // EventSource 在「server 正常 close（done 已送完）」與「真斷線」都會觸發
+      // 原生 error。我們只關心還沒收到 done 的異常中斷；已 complete 就保留成功。
+      if (active) {
+        setPhase((prev) =>
+          prev.status === "complete" ? prev : { status: "error", message: "連線已中斷，資料可能不完整，請重新整理頁面。" }
+        )
+      }
+    }
+
+    es.addEventListener("base", (event) => {
+      if (!active) return
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as BasePayload
+        setToday(payload.today)
+        setEmpty(payload.empty)
+        setTasks(payload.tasks)
+        setUnestimated(payload.unestimated)
+        setPhase({ status: "streaming" })
+      } catch {
+        setPhase({ status: "error", message: "串流資料無法辨識，請重新整理頁面。" })
+      }
+    })
+
+    es.addEventListener("day", (event) => {
+      if (!active) return
+      try {
+        const payload = JSON.parse((event as MessageEvent).data) as DayPayload
+        const stamp = new Set(payload.keys)
+        setTasks((prev) =>
+          prev.length > 0 && stamp.size > 0
+            ? prev.map((task) =>
+                stamp.has(task.key) ? { ...task, doneDate: payload.date } : task
+              )
+            : prev
+        )
+        setLastStreamedDate(payload.date)
+        setDaysReceived((count) => count + 1)
+      } catch {
+        setPhase({ status: "error", message: "串流資料無法辨識，請重新整理頁面。" })
+      }
+    })
+
+    es.addEventListener("done", () => {
+      if (active) setPhase({ status: "complete" })
+    })
+
+    // Server 明確送的 `event: error` frame（帶 JSON data）。未送 close 的連線中斷
+    // 交給 `es.onerror` 處理；這裡只認有實際 data 的致命錯誤。
+    es.addEventListener("error", (event) => {
+      if (!active) return
+      const raw = (event as MessageEvent).data
+      if (typeof raw !== "string" || raw.trim() === "") return
+      try {
+        const payload = JSON.parse(raw) as { code: string; message: string }
+        setPhase({ status: "error", message: payload.message ?? "串流發生錯誤。" })
+      } catch {
+        setPhase({ status: "error", message: "串流發生錯誤，請重新整理頁面。" })
+      }
+      es.close()
+    })
+
+    return () => {
+      active = false
+      es.close()
+    }
+  }, [endpoint, retryNonce])
+
   const filtered = useMemo(() => {
-    if (!data || !sprint) return null
+    if (!sprint || !today) return null
     return computeBurndownSeries({
       startDate: sprint.startDate,
       endDate: sprint.endDate,
-      today: data.today,
-      tasks: data.tasks,
-      unestimated: data.unestimated,
+      today,
+      throughDate: lastStreamedDate,
+      tasks,
+      unestimated,
       accountIds: memberIds,
     })
-  }, [sprint, data, memberIds])
+  }, [sprint, today, lastStreamedDate, tasks, unestimated, memberIds])
 
   return (
     <div className="relative">
@@ -144,7 +272,7 @@ export function BurndownClient({
                   </>
                 )}
               </p>
-              {data?.empty ? (
+              {empty ? (
                 <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
                   此 Sprint 尚未有對應的 Story / Task / Bug。
                 </p>
@@ -157,6 +285,23 @@ export function BurndownClient({
                     showBar={showBar}
                     onBarClick={setClickedDay}
                   />
+                  {phase.status === "streaming" && (
+                    <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                      串流中… 已接收 {daysReceived} 天
+                    </p>
+                  )}
+                  {phase.status === "error" && (
+                    <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-rose-600 dark:text-rose-400">
+                      <span>{phase.message}</span>
+                      <button
+                        type="button"
+                        onClick={() => setRetryNonce((n) => n + 1)}
+                        className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
+                      >
+                        重新載入
+                      </button>
+                    </p>
+                  )}
                   {clickedDay !== null && (
                     <DayTasksDialog
                       date={clickedDay}
@@ -171,8 +316,10 @@ export function BurndownClient({
           </>
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-sm text-rose-600 dark:text-rose-400">
-              {error ?? "暫時無法取得燃盡圖資料，請稍後重試。"}
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              {phase.status === "error"
+                ? phase.message
+                : "正在連線取得燃盡圖資料…"}
             </p>
           </div>
         )}
