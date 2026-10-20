@@ -5,8 +5,8 @@ import { computeBurndownSeries } from "../lib/burndown-series.ts"
 const SPRINT = { startDate: "2026-10-13", endDate: "2026-10-25" }
 const TODAY = "2026-10-19"
 
-const task = (key, points, doneDate, assigneeAccountId) => ({
-  key, summary: `Summary ${key}`, points, doneDate,
+const task = (key, points, doneDate, assigneeAccountId, actualPoints = null) => ({
+  key, summary: `Summary ${key}`, points, actualPoints, doneDate,
   assigneeDisplayName: `Name ${assigneeAccountId ?? "none"}`,
   assigneeAccountId,
   parentIssueType: { status: "known", name: "Story" },
@@ -120,9 +120,9 @@ describe("computeBurndownSeries", () => {
     const series = computeBurndownSeries({
       startDate: SPRINT.startDate, endDate: SPRINT.endDate, today: TODAY,
       tasks: [
-        task("T-1", 5, "2026-10-15", "u-a"),
-        task("T-2", 3, "2026-10-19", "u-b"),
-        task("T-3", 4, null, "u-c"),
+        task("T-1", 5, "2026-10-15", "u-a", 6),
+        task("T-2", 3, "2026-10-19", "u-b", null),
+        task("T-3", 4, null, "u-c", 4),
       ],
       unestimated: [], accountIds: new Set(["u-a", "u-b"]),
     })
@@ -131,6 +131,7 @@ describe("computeBurndownSeries", () => {
     const t1 = series.tasks.find((item) => item.key === "T-1")
     assert.equal(t1.summary, "Summary T-1")
     assert.equal(t1.points, 5)
+    assert.equal(t1.actualPoints, 6)
     assert.equal(t1.doneDate, "2026-10-15")
     assert.equal(t1.assigneeDisplayName, "Name u-a")
     assert.equal(t1.assigneeAccountId, "u-a")

@@ -10,6 +10,7 @@ const ts = require("typescript")
 const root = new URL("../", import.meta.url)
 const compiled = new Map()
 const SP = "customfield_10005"
+const ACTUAL_SP = "customfield_13736"
 
 const SPRINT = { id: 7517, name: "Sprint 70", startDate: "2026-10-13", endDate: "2026-10-25" }
 
@@ -19,11 +20,11 @@ const parentIssues = ["SUN-50", "SUN-51"].map((key, index) => ({
   fields: { project: { id: "10" }, summary: `Parent ${key}` },
 }))
 const devTasks = [
-  { id: "101", key: "SUN-101", summary: "Task A", points: 5, doneOn: "2026-10-15", accountId: "u-aaa-101" },
-  { id: "102", key: "SUN-102", summary: "Task B", points: 3, doneOn: "2026-10-18", accountId: "u-bbb-102" },
-  { id: "103", key: "SUN-103", summary: "Task C", points: 8, doneOn: "2026-10-19", accountId: "u-ccc-103" },
-  { id: "104", key: "SUN-104", summary: "Unestimated", points: null, doneOn: null, accountId: "u-aaa-104" },
-  { id: "105", key: "SUN-105", summary: "Task D", points: 2, doneOn: "2026-10-13", accountId: "u-bbb-105" },
+  { id: "101", key: "SUN-101", summary: "Task A", points: 5, actualPoints: 6, doneOn: "2026-10-15", accountId: "u-aaa-101" },
+  { id: "102", key: "SUN-102", summary: "Task B", points: 3, actualPoints: null, doneOn: "2026-10-18", accountId: "u-bbb-102" },
+  { id: "103", key: "SUN-103", summary: "Task C", points: 8, actualPoints: 7, doneOn: "2026-10-19", accountId: "u-ccc-103" },
+  { id: "104", key: "SUN-104", summary: "Unestimated", points: null, actualPoints: null, doneOn: null, accountId: "u-aaa-104" },
+  { id: "105", key: "SUN-105", summary: "Task D", points: 2, actualPoints: 2, doneOn: "2026-10-13", accountId: "u-bbb-105" },
 ]
 const makeIssue = (task) => ({
   id: task.id,
@@ -32,6 +33,7 @@ const makeIssue = (task) => ({
     project: { id: "10" },
     summary: task.summary,
     [SP]: task.points,
+    [ACTUAL_SP]: task.actualPoints,
     assignee: task.assignee ?? { accountId: task.accountId ?? "u-fixture-dev", displayName: task.assigneeName ?? "Fixture Dev" },
     parent: { id: "450", key: "SUN-50", fields: { issuetype: { name: task.parentType ?? "Story" } } },
   },
@@ -164,6 +166,9 @@ describe("burndown aggregation against fixture Jira", () => {
     // summary 與 assignee 顯示名稱已投影（供長條點擊彈窗顯示）。
     assert.equal(byKey.get("SUN-101").summary, "Task A")
     assert.equal(byKey.get("SUN-101").assigneeDisplayName, "Fixture Dev")
+    // Actual Story Points 已投影（未填為 null）。
+    assert.equal(byKey.get("SUN-101").actualPoints, 6)
+    assert.equal(byKey.get("SUN-102").actualPoints, null)
     // 母票 type 已投影（彈窗每列左側 icon）。
     assert.deepEqual(JSON.parse(JSON.stringify(byKey.get("SUN-101").parentIssueType)), { status: "known", name: "Story" })
 

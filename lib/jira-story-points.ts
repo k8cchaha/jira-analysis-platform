@@ -141,7 +141,8 @@ export function getIssueStoryPoints(
   const value = fields[candidate.id]
   if (value === null) return { value: null, supported: true }
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return { value, supported: true }
+    // 統一四捨五入到小數第一位，讓指派清單顯示一致。
+    return { value: Math.round(value * 10) / 10, supported: true }
   }
 
   return {

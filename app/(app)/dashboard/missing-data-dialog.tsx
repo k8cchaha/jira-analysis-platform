@@ -290,7 +290,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
               {data.warnings.map((warning, index) => <p key={index} className="m-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/30"><WarningIcon /><span>{warning}</span></p>)}
               {data.issues.length === 0 ? <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有待補資料。</p> : (
                 <>
-                  <div className="hidden overflow-x-auto md:block">
+                  <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
                     <table className={`w-full table-fixed text-left text-sm ${kind === "points" ? "min-w-[720px]" : "min-w-[1080px]"}`}>
                       <caption className="sr-only">{kind === "points" ? "Points 缺失 Issue" : "Defect Cause 缺失 Issue"}</caption>
                       <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">

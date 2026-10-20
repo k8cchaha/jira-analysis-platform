@@ -98,7 +98,7 @@ function DueGroup({ title, issues, showAssignee, jiraBaseUrl, today, overdue }: 
     <section className="py-4 sm:py-5" aria-label={title}>
       <h3 className="px-4 pb-3 text-sm font-semibold sm:px-6">{title} <span className="ml-2 text-slate-500 dark:text-slate-400">{issues.length.toLocaleString("zh-TW")} 張 Issue</span></h3>
       {issues.length === 0 ? <p className="px-4 py-4 text-sm text-slate-600 sm:px-6 dark:text-slate-400">目前沒有符合條件的 Issue。</p> : <>
-        <div className="hidden overflow-x-auto md:block">
+        <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
           <table className="w-full min-w-[800px] table-fixed text-left text-sm">
             <caption className="sr-only">{title} Issue 明細</caption>
             <thead className="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">

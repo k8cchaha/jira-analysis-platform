@@ -10,6 +10,8 @@ export interface BurndownTask {
   summary: string | null
   /** 已估計的 Story Points。 */
   points: number
+  /** Actual Story Points（實際花費）；未填（無法提供）為 null。 */
+  actualPoints: number | null
   /** 已移至 Done 的日期（`YYYY-MM-DD`）；尚未完成為 null。 */
   doneDate: string | null
   /** 指派人顯示名稱；未指派為 null。 */
@@ -194,7 +196,7 @@ export function computeBurndownSeries({
   const effectiveThrough = throughDate ?? today
   let runningDone = 0
   for (const date of eachDay(startDate, endDate)) {
-    const donePoints = byDate.get(date) ?? 0
+    const donePoints = Math.round((byDate.get(date) ?? 0) * 10) / 10
     const future = date > today
     const beyondStream = date > effectiveThrough
     // 只有「今天以前（含）」且「串流已掃描到」的完成才往前累計剩餘點數。

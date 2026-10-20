@@ -33,7 +33,7 @@ export function UnestimatedDialog({
           <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有未估計的 Dev-Task。</p>
         ) : (
           <>
-            <div className="hidden overflow-x-auto md:block">
+            <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
               <table className="w-full table-fixed text-left text-sm min-w-[560px]">
                 <caption className="sr-only">未估計的 Dev-Task</caption>
                 <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">

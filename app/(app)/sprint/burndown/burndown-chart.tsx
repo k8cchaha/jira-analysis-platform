@@ -1,3 +1,6 @@
+"use client"
+
+import { useState } from "react"
 import type { BurndownDay } from "@/lib/jira-burndown"
 
 const W = 720
@@ -16,6 +19,11 @@ function niceCeil(value: number): number {
   return factor * pow
 }
 
+/** 點數一律顯示到小數第一位（消除 0.1+0.2 等浮點誤差，如 20.599999… → 20.6）。 */
+function formatPoints(value: number): string {
+  return String(Math.round(value * 10) / 10)
+}
+
 export function BurndownChart({
   days,
   totalPoints,
@@ -32,6 +40,8 @@ export function BurndownChart({
   /** 長條被點擊（或鍵盤啟動）時的當天日期回呼；未提供時長條不具互動。 */
   onBarClick?: (date: string) => void
 }) {
+  // 滑鼠即時顯示的 hint（原生 <title> 有約 1 秒延遲，改用 React state 立即浮現）。
+  const [hover, setHover] = useState<{ date: string; x: number; y: number } | null>(null)
   if (days.length < 2) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-slate-500 dark:text-slate-400">
@@ -112,7 +122,7 @@ export function BurndownChart({
                 textAnchor="end"
                 className="fill-slate-500 text-[11px] dark:fill-slate-400"
               >
-                {Number.isInteger(tick) ? String(tick) : String(Math.round(tick * 10) / 10)}
+                {Number.isInteger(tick) ? String(tick) : formatPoints(tick)}
               </text>
             </g>
           )
@@ -148,17 +158,21 @@ export function BurndownChart({
                 width={barW}
                 height={Math.max(0, bottom - top)}
                 className="fill-blue-600/70 dark:fill-blue-400/70"
-              >
-                <title>{`${day.date}：完成 ${day.donePoints} 點`}</title>
-              </rect>
+              />
             )
-            if (!onBarClick) return <g key={day.date} className="burndown-bar-enter">{rect}</g>
+            const hintHandlers = {
+              onMouseMove: (event: React.MouseEvent) =>
+                setHover({ date: day.date, x: event.clientX, y: event.clientY }),
+              onMouseLeave: () =>
+                setHover((prev) => (prev?.date === day.date ? null : prev)),
+            }
+            if (!onBarClick) return <g key={day.date} className="burndown-bar-enter" {...hintHandlers}>{rect}</g>
             return (
               <g
                 key={day.date}
                 role="button"
                 tabIndex={0}
-                aria-label={`${day.date} 完成 ${day.donePoints} 點，檢視當天 Dev-Task 清單`}
+                aria-label={`${day.date} 完成 ${formatPoints(day.donePoints)} 點，檢視當天 Dev-Task 清單`}
                 className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
                 onClick={() => onBarClick(day.date)}
                 onKeyDown={(event) => {
@@ -167,6 +181,7 @@ export function BurndownChart({
                     onBarClick(day.date)
                   }
                 }}
+                {...hintHandlers}
               >
                 {rect}
               </g>
@@ -214,6 +229,22 @@ export function BurndownChart({
           </span>
         )}
       </div>
+
+      {/* 滑鼠即時 hint：原生 <title> 有約 1 秒延遲，改以 fixed 定位浮現於游標旁。 */}
+      {hover &&
+        (() => {
+          const day = days.find((item) => item.date === hover.date)
+          if (!day) return null
+          return (
+            <div
+              role="tooltip"
+              className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              style={{ left: hover.x, top: hover.y - 10 }}
+            >
+              {day.date}：完成 {formatPoints(day.donePoints)} 點
+            </div>
+          )
+        })()}
     </div>
   )
 }

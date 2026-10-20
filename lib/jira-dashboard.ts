@@ -219,7 +219,10 @@ function pointsValues(fields: FieldSet, issue: RawIssue) {
     throw new JiraDashboardError("configuration", `${issue.key} 未回傳有效狀態，無法判定 Points 缺失範圍。`)
   }
   return {
-    storyPoints, actualStoryPoints,
+    // 統一四捨五入到小數第一位，讓所有下游（missing-data 彈窗等）顯示一致。
+    // 注意：null（未填）保持 null，不能 round 成 0——寫回比較與缺失判定都仰賴這個原值。
+    storyPoints: storyPoints === null ? null : Math.round(storyPoints * 10) / 10,
+    actualStoryPoints: actualStoryPoints === null ? null : Math.round(actualStoryPoints * 10) / 10,
     storyPointsRequired: status.statusCategory.key !== "new",
     actualStoryPointsRequired: status.name.toLowerCase() === "done",
   }

@@ -11,7 +11,7 @@ import {
   sprintDevTasksJql,
   sprintDevTasksDoneOnJql,
 } from "@/lib/jira-jql"
-import { STORY_POINTS_FIELD } from "@/lib/jira-fields"
+import { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "@/lib/jira-fields"
 import {
   computeBurndownSeries,
   type BurndownDay,
@@ -67,7 +67,18 @@ function pointValue(value: unknown): number | null {
       "Jira 回傳了無法識別的 Story Points，無法提供精確結果。"
     )
   }
-  return value
+  // 統一四捨五入到小數第一位，讓所有下游顯示一致。
+  return Math.round(value * 10) / 10
+}
+
+/**
+ * Actual Story Points 的寬鬆解析：非負有限數字才採用，否則回 null（未填或不可用）。
+ * Actual 僅供彈窗/加總展示，不值得因格式異常中斷整個燃盡圖，故不像 `pointValue`
+ * 那樣對非法值拋錯。統一四捨五入到小數第一位。
+ */
+function actualPointValue(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null
+  return Math.round(value * 10) / 10
 }
 
 /**
@@ -119,11 +130,11 @@ export async function getBurndownBase(
   let total = 0
 
   if (!empty) {
-    // 2. 撈全部 Dev-Task：給 tasks 填上 points / assignee，未估計進清單。
+    // 2. 撈全部 Dev-Task：給 tasks 填上 points / actualPoints / assignee，未估計進清單。
     for await (const issues of searchJiraIssues(
       credentials,
       sprintDevTasksJql(keys),
-      ["summary", "assignee", "parent", STORY_POINTS_FIELD]
+      ["summary", "assignee", "parent", STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD]
     )) {
       for (const issue of issues) {
         const points = pointValue(issue.fields[STORY_POINTS_FIELD])
@@ -143,6 +154,7 @@ export async function getBurndownBase(
           summary:
             typeof issue.fields.summary === "string" ? issue.fields.summary : null,
           points,
+          actualPoints: actualPointValue(issue.fields[ACTUAL_STORY_POINTS_FIELD]),
           doneDate: null,
           assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
           assigneeAccountId: assigneeAccountId(issue.fields.assignee),
