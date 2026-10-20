@@ -9,6 +9,42 @@ export const SPRINT_PROJECTS = [
 ] as const
 export type SprintProjectKey = (typeof SPRINT_PROJECTS)[number]["key"]
 
+/**
+ * 燃盡圖的查詢（Dev-Task Story Points、以母票的 Sprint 為準）。
+ *
+ * 只有頂層票（Story / Task / Bug）能掛 Sprint，Dev-Task 是 sub-task、
+ * 無法直接進 Sprint，所以一律先以 `sprint = <id>` 撈母票、再以
+ * `parent in (...)` 取其下的 Dev-Task。完整查詢統一放這裡，consumer
+ * 不得自行組 JQL。
+ */
+
+/** 某 sprint 的母票（Story / Task / Bug）。 */
+export function sprintParentIssuesJql(sprintId: number): string {
+  return `sprint = ${sprintId} AND issuetype in (story, task, bug)`
+}
+
+/** 某組母票之下的全部 Dev-Task（用於總點數與「未估計」清單）。 */
+export function sprintDevTasksJql(parentKeys: readonly string[]): string {
+  const keys = enforcedSortedKeys(parentKeys)
+  return `parent in (${keys}) AND issuetype = "Dev-Task"`
+}
+
+/** 某組母票之下、在某一天切到 Done 的 Dev-Task（每日完成度）。 */
+export function sprintDevTasksDoneOnJql(
+  parentKeys: readonly string[],
+  date: string
+): string {
+  const keys = enforcedSortedKeys(parentKeys)
+  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "${date}"`
+}
+
+/** 驗證並轉成排序後、無重複的逗號分隔 key 字串，避免未驗證值直接進 JQL。 */
+function enforcedSortedKeys(parentKeys: readonly string[]): string {
+  const normalized = parentKeys.map((key) => key.trim()).filter((key) => key.length > 0)
+  const unique = [...new Set(normalized)]
+  return unique.sort().join(", ")
+}
+
 export const RECENT_ASSIGNED_ISSUES_SCOPE_JQL =
   "assignee = currentUser() AND created >= -30d"
 export const RECENT_ASSIGNED_ISSUES_JQL =

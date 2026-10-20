@@ -54,7 +54,7 @@ export function EditDialog({
       <header className={`flex shrink-0 justify-between gap-4 border-b border-slate-200 p-4 sm:px-6 dark:border-slate-800 ${compact ? "items-center sm:py-5" : "items-start sm:py-6"}`}>
         <div className="min-w-0">
           <h2 id={titleId} className="flex flex-wrap items-center gap-3 text-lg font-semibold sm:text-xl">{title}{count !== undefined && <span aria-label={count === null ? "正在載入張數" : `${count} 張 Issue`} className="rounded-full bg-amber-100 px-2.5 py-0.5 text-base font-semibold tabular-nums text-amber-800 dark:bg-amber-950 dark:text-amber-300">{count === null ? "…" : count.toLocaleString("zh-TW")}</span>}</h2>
-          <p id={descriptionId} className={compact ? "sr-only" : "mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400"}>{description}</p>
+          {description ? <p id={descriptionId} className={compact ? "sr-only" : "mt-1 text-sm leading-6 text-slate-600 dark:text-slate-400"}>{description}</p> : null}
         </div>
         <button
           type="button"
