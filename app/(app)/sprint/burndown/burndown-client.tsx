@@ -6,10 +6,12 @@ import { computeBurndownSeries } from "@/lib/burndown-series"
 import type { BurndownTask, BurndownUnestimated } from "@/lib/jira-burndown"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { SprintProjectKey } from "@/lib/jira-jql"
+import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { BurndownChart } from "@/app/(app)/sprint/burndown/burndown-chart"
 import { UnestimatedButton } from "@/app/(app)/sprint/burndown/unestimated-button"
 import { DayTasksDialog } from "@/app/(app)/sprint/burndown/day-tasks-dialog"
+import { DevelopmentStatus } from "@/app/(app)/sprint/burndown/development-status"
 import { TeamSelect } from "@/components/team-select"
 
 type StreamPhase =
@@ -62,6 +64,8 @@ export function BurndownClient({
   const [isPending, startTransition] = useTransition()
   const [groups, setGroups] = useState<string[]>([])
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
+  /** accountId → 團隊 label 映射（由團隊選單載入，供下方開發狀況分組）。 */
+  const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   const [showLine, setShowLine] = useState(true)
   const [showBar, setShowBar] = useState(true)
   const [clickedDay, setClickedDay] = useState<string | null>(null)
@@ -204,7 +208,13 @@ export function BurndownClient({
         sprints={sprints}
         selectedSprintId={selectedSprintId}
         onNavigate={navigate}
-        teamSlot={<TeamSelect groups={groups} onGroupsChange={onGroupsChange} />}
+        teamSlot={
+      <TeamSelect
+        groups={groups}
+        onGroupsChange={onGroupsChange}
+        onMembersReady={setTeamOf}
+      />
+    }
         trailing={
           filtered ? (
             <UnestimatedButton issues={filtered.unestimated} jiraBaseUrl={jiraBaseUrl} />
@@ -312,6 +322,16 @@ export function BurndownClient({
                   )}
                 </>
               )}
+            </div>
+
+            <div className="mt-6">
+              <DevelopmentStatus
+                teamOf={teamOf}
+                teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
+                tasks={filtered.tasks}
+                today={today}
+                jiraBaseUrl={jiraBaseUrl}
+              />
             </div>
           </>
         ) : (

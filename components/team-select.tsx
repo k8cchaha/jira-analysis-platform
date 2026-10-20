@@ -27,11 +27,14 @@ export function TeamSelect({
   groups,
   onGroupsChange,
   perMember = true,
+  onMembersReady,
 }: {
   groups: readonly string[]
   onGroupsChange: (groups: string[], memberAccountIds: string[], ready: boolean) => void
   /** false 時只顯示團隊層級的複選，不展開逐人勾選/排除。 */
   perMember?: boolean
+  /** 全部團隊的成員名單載入完成後回報一次（accountId → 團隊 label），供下方成員開發狀況分組。 */
+  onMembersReady?: (byAccountId: Record<string, string>) => void
 }) {
   const id = useId()
   const mounted = useRef(false)
@@ -155,6 +158,32 @@ export function TeamSelect({
       setError(failure instanceof Error ? failure.message : "團隊成員尚未完整載入。")
     }
   }
+
+  // 一次載入全部團隊的成員名單，供下方「成員開發狀況」以團隊分組顯示。
+  const reportedKeyRef = useRef("")
+  // 掛載時就預先載入所有團隊（不只已勾選的），否則「未選團隊＝顯示全體」時沒有可用的分組資料。
+  useEffect(() => {
+    if (!onMembersReady) return
+    for (const team of DASHBOARD_TEAMS) {
+      if (groupCache.current[team.group]?.status !== "success") void loadGroup(team.group)
+    }
+  }, [onMembersReady, loadGroup])
+  // 當所有團隊的成員都載入成功時，組出 accountId → label 映射並回報一次。
+  useEffect(() => {
+    if (!onMembersReady) return
+    const allReady = DASHBOARD_TEAMS.every((team) => groupStates[team.group]?.status === "success")
+    if (!allReady) return
+    const byAccountId: Record<string, string> = {}
+    for (const team of DASHBOARD_TEAMS) {
+      const state = groupStates[team.group]
+      if (state?.status !== "success") continue
+      for (const member of state.members) byAccountId[member.accountId] = team.label
+    }
+    const key = [...Object.keys(byAccountId)].sort().join("\u0000")
+    if (!key || reportedKeyRef.current === key) return
+    reportedKeyRef.current = key
+    onMembersReady(byAccountId)
+  }, [onMembersReady, groupStates])
 
   function toggleGroup(group: string, checked: boolean) {
     const next = checked ? [...new Set([...groups, group])] : groups.filter((item) => item !== group)
