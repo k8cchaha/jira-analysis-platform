@@ -141,88 +141,122 @@ function TeamCard({
     done: "done" | "notDone" | "all"
   ) => BurndownTask[]
 }) {
-  const allTasks = filterTaskCounts(team.teamKey, "all", "all")
   const doneTasks = filterTaskCounts(team.teamKey, "all", "done")
+  const notDoneTasks = filterTaskCounts(team.teamKey, "all", "notDone")
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-800 dark:bg-slate-900/40">
-      <header className="mb-2 flex items-center justify-between gap-2">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
+      <header className="flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-900/60">
         <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{team.label}</h3>
-        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+        <span
+          className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          title={`${team.label} 完成度`}
+        >
           完成度 {percent(team.completionPercent)}
         </span>
       </header>
       {team.completionPercent !== null && (
-        <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+        <div className="h-1 w-full bg-slate-200 dark:bg-slate-700">
           <div
-            className="h-full rounded-full bg-blue-500 dark:bg-blue-400"
+            className="h-full bg-blue-500 dark:bg-blue-400"
             style={{ width: `${Math.min(100, team.completionPercent)}%` }}
           />
         </div>
       )}
-      <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
-        已完成{" "}
-        <CountButton
-          count={team.doneTasks}
-          label="張"
-          title={`檢視 ${team.label} 已完成的 Dev-Task`}
-          onClick={() => onOpen({ title: `${team.label} 已完成`, tasks: doneTasks })}
-        />
-        <span className="mx-1">/</span>
-        <CountButton
-          count={team.totalTasks}
-          label="張"
-          title={`檢視 ${team.label} 的所有 Dev-Task`}
-          onClick={() => onOpen({ title: `${team.label} 的 Dev-Task`, tasks: allTasks })}
-        />
-        <span className="mx-1">· 共</span>
-        {formatPoints(team.donePoints)} / {formatPoints(team.donePoints + team.notDonePoints)} SP
-      </p>
       {team.assignees.length === 0 ? (
-        <p className="text-xs text-slate-400 dark:text-slate-500">此團隊沒有已估計的 Dev-Task。</p>
+        <p className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+          此團隊沒有已估計的 Dev-Task。
+        </p>
       ) : (
-        <ul className="space-y-2.5">
-          {team.assignees.map((assignee) => {
-            const assigneeDone = filterTaskCounts(team.teamKey, assignee.assigneeAccountId, "done")
-            const assigneeNotDone = filterTaskCounts(team.teamKey, assignee.assigneeAccountId, "notDone")
-            return (
-              <li
-                key={assignee.assigneeAccountId ?? "unassigned"}
-                className="border-t border-slate-200 pt-2.5 dark:border-slate-800"
-              >
-                <p className="text-sm font-medium text-slate-900 dark:text-white">
-                  {assignee.assigneeName}
-                  <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    完成度 {percent(assignee.completionPercent)}
+        <>
+          <table className="w-full text-left text-xs">
+            <caption className="sr-only">{team.label} 成員開發狀況</caption>
+            <thead>
+              <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
+                <th scope="col" className="py-2 pl-4 font-semibold">成員</th>
+                <th scope="col" className="py-2 pr-2 text-right font-semibold">已完成 (SP)</th>
+                <th scope="col" className="py-2 pr-2 text-right font-semibold">未完成 (SP)</th>
+                <th scope="col" className="py-2 pr-4 text-right font-semibold">完成度</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {team.assignees.map((assignee) => {
+                const assigneeDone = filterTaskCounts(team.teamKey, assignee.assigneeAccountId, "done")
+                const assigneeNotDone = filterTaskCounts(team.teamKey, assignee.assigneeAccountId, "notDone")
+                return (
+                  <tr key={assignee.assigneeAccountId ?? "unassigned"} className="align-top">
+                    <th scope="row" className="py-2.5 pl-4 pr-2 font-medium text-slate-900 dark:text-white">
+                      {assignee.assigneeName}
+                    </th>
+                    <td className="py-2.5 pr-2 text-right tabular-nums">
+                      <span className="whitespace-nowrap">
+                        <CountButton
+                          count={assignee.doneTasks}
+                          label="張"
+                          title={`檢視 ${assignee.assigneeName} 已完成的 Dev-Task`}
+                          onClick={() => onOpen({ title: `${assignee.assigneeName} 已完成`, tasks: assigneeDone })}
+                        />{" "}
+                        <span className="text-slate-500 dark:text-slate-400">({formatPoints(assignee.donePoints)})</span>
+                      </span>
+                      {assignee.doneActualPoints > 0 && (
+                        <div className="text-slate-400 dark:text-slate-500">Actual: {formatPoints(assignee.doneActualPoints)}</div>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-2 text-right tabular-nums">
+                      <span className="whitespace-nowrap">
+                        <CountButton
+                          count={assignee.notDoneTasks}
+                          label="張"
+                          title={`檢視 ${assignee.assigneeName} 未完成的 Dev-Task`}
+                          onClick={() => onOpen({ title: `${assignee.assigneeName} 未完成`, tasks: assigneeNotDone })}
+                        />{" "}
+                        <span className="text-slate-500 dark:text-slate-400">({formatPoints(assignee.notDonePoints)})</span>
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-4 text-right tabular-nums font-semibold text-slate-700 dark:text-slate-200">
+                      {percent(assignee.completionPercent)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-slate-200 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900/40">
+                <th scope="row" className="py-2 pl-4 pr-2 font-semibold text-slate-700 dark:text-slate-200">
+                  合計
+                </th>
+                <td className="py-2 pr-2 text-right tabular-nums">
+                  <span className="whitespace-nowrap">
+                    <CountButton
+                      count={team.doneTasks}
+                      label="張"
+                      title={`檢視 ${team.label} 已完成的 Dev-Task`}
+                      onClick={() => onOpen({ title: `${team.label} 已完成`, tasks: doneTasks })}
+                    />{" "}
+                    <span className="text-slate-500 dark:text-slate-400">({formatPoints(team.donePoints)})</span>
                   </span>
-                </p>
-                <div className="mt-0.5 space-y-0.5 text-xs text-slate-600 dark:text-slate-400">
-                  <p>
-                    已完成｜{" "}
+                  {team.doneActualPoints > 0 && (
+                    <div className="text-slate-400 dark:text-slate-500">Actual: {formatPoints(team.doneActualPoints)}</div>
+                  )}
+                </td>
+                <td className="py-2 pr-2 text-right tabular-nums">
+                  <span className="whitespace-nowrap">
                     <CountButton
-                      count={assignee.doneTasks}
+                      count={team.notDoneTasks}
                       label="張"
-                      title={`檢視 ${assignee.assigneeName} 已完成的 Dev-Task`}
-                      onClick={() => onOpen({ title: `${assignee.assigneeName} 已完成`, tasks: assigneeDone })}
-                    />
-                    <span className="mx-1">·</span> SP {formatPoints(assignee.donePoints)}
-                    {assignee.doneActualPoints > 0 && ` · Actual ${formatPoints(assignee.doneActualPoints)}`}
-                  </p>
-                  <p>
-                    未完成｜{" "}
-                    <CountButton
-                      count={assignee.notDoneTasks}
-                      label="張"
-                      title={`檢視 ${assignee.assigneeName} 未完成的 Dev-Task`}
-                      onClick={() => onOpen({ title: `${assignee.assigneeName} 未完成`, tasks: assigneeNotDone })}
-                    />
-                    <span className="mx-1">·</span> SP {formatPoints(assignee.notDonePoints)}
-                  </p>
-                </div>
-              </li>
-            )
-          })}
-        </ul>
+                      title={`檢視 ${team.label} 未完成的 Dev-Task`}
+                      onClick={() => onOpen({ title: `${team.label} 未完成`, tasks: notDoneTasks })}
+                    />{" "}
+                    <span className="text-slate-500 dark:text-slate-400">({formatPoints(team.notDonePoints)})</span>
+                  </span>
+                </td>
+                <td className="py-2 pr-4 text-right tabular-nums font-semibold text-slate-700 dark:text-slate-200">
+                  {percent(team.completionPercent)}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </>
       )}
     </section>
   )

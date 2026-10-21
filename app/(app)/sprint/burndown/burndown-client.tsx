@@ -250,7 +250,7 @@ export function BurndownClient({
                         type="checkbox"
                         checked={showLine}
                         onChange={(event) => setShowLine(event.target.checked)}
-                        className="h-4 w-4 shrink-0 accent-blue-600"
+                        className="h-4 w-4 shrink-0 accent-rose-600"
                       />
                       剩餘點數
                     </label>

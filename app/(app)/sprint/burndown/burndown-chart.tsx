@@ -203,7 +203,7 @@ export function BurndownChart({
             d={actualPath}
             fill="none"
             stroke="currentColor"
-            className="text-blue-600 dark:text-blue-400"
+            className="text-rose-600 dark:text-rose-400"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -218,7 +218,7 @@ export function BurndownChart({
         </span>
         {showLine && (
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-5 bg-blue-600 dark:bg-blue-400" />
+            <span className="inline-block h-0.5 w-5 bg-rose-600 dark:bg-rose-400" />
             剩餘點數
           </span>
         )}
