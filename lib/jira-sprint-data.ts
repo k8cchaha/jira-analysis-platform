@@ -113,3 +113,22 @@ export function currentSprint(
   }
   return match
 }
+
+/**
+ * Sprint 管理 → Planning 的下拉選項：只提供「當前 Sprint ＋ 下一個 Sprint」。
+ *
+ * 以「目前進行中的 sprint」為焦點，取它在 `getProjectSprints`（照 startDate
+ * 升序）之後緊接著的一棒為「下一個」。若目前沒有進行中的 sprint（例如專案
+ * 的 sprint 都還沒開始、或最後一個已結束於今天之前），回空陣列——不退回
+ * 顯示已過去的 sprint（使用者明確要求顯示空狀態）。
+ */
+export function getPlanningSprints(
+  projectKey: SprintProjectKey,
+  today = new Date().toISOString().slice(0, 10)
+): readonly SprintRecord[] {
+  const all = getProjectSprints(projectKey)
+  const current = currentSprint(all, today)
+  if (current === null) return []
+  const next = all.find((sprint) => sprint.startDate > current.startDate) ?? null
+  return next ? [current, next] : [current]
+}

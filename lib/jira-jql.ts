@@ -38,6 +38,16 @@ export function sprintDevTasksDoneOnJql(
   return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "${date}"`
 }
 
+/** 某組母票之下、尚未估計 Story Points 的 Dev-Task（Planning 彈窗顯示用）。 */
+export function sprintUnestimatedJql(parentKeys: readonly string[]): string {
+  return `${sprintDevTasksJql(parentKeys)} AND ${storyPointsJql} in (Empty, 0)`
+}
+
+/** 某組母票之下、未指派人的 Dev-Task（Planning 彈窗顯示用）。 */
+export function sprintUnassignedJql(parentKeys: readonly string[]): string {
+  return `${sprintDevTasksJql(parentKeys)} AND assignee is empty`
+}
+
 /** 驗證並轉成排序後、無重複的逗號分隔 key 字串，避免未驗證值直接進 JQL。 */
 function enforcedSortedKeys(parentKeys: readonly string[]): string {
   const normalized = parentKeys.map((key) => key.trim()).filter((key) => key.length > 0)

@@ -11,6 +11,7 @@ export function SprintSelector({
   selectedSprintId,
   teamSlot,
   trailing,
+  basePath = "/sprint/burndown",
   onNavigate,
 }: {
   project: SprintProjectKey | null
@@ -18,6 +19,8 @@ export function SprintSelector({
   selectedSprintId: number | null
   teamSlot?: ReactNode
   trailing?: ReactNode
+  /** 切換專案／Sprint 時跳轉的基底路徑（預設 Burn Down，供 Planning 等改指）。 */
+  basePath?: string
   /** navigation 由呼叫端以 transition 執行；省略時此元件不觸發導航。 */
   onNavigate?: (path: string) => void
 }) {
@@ -43,7 +46,7 @@ export function SprintSelector({
     const sprint = sprints.find((s) => s.id === sprintId)
     if (!sprint) return
     const params = new URLSearchParams({ project: project!, sprint: String(sprint.id) })
-    onNavigate?.(`/sprint/burndown?${params.toString()}`)
+    onNavigate?.(`${basePath}?${params.toString()}`)
   }
 
   return (
@@ -69,7 +72,7 @@ export function SprintSelector({
                   onClick={() => {
                     setOpen(false)
                     if (!active) {
-                      onNavigate?.(`/sprint/burndown?project=${option.key}`)
+                      onNavigate?.(`${basePath}?project=${option.key}`)
                     }
                   }}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"

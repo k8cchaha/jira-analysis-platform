@@ -15,6 +15,8 @@ import {
   dashboardNavigation,
   getNavigationState,
   navigationCategories,
+  visibleNavigationCategories,
+  type NavigationCategory,
   type NavigationFeature,
 } from "@/components/app-shell/navigation"
 import { logout } from "@/components/app-shell/logout-action"
@@ -42,6 +44,11 @@ type AppShellProps = {
 export function AppShell({ children, user }: AppShellProps) {
   const pathname = usePathname()
   const navigationState = useMemo(() => getNavigationState(pathname), [pathname])
+  // 依登入使用者權限過濾導覽：管理員看全部；否則只留 Sprint 管理。
+  const categories = useMemo(
+    () => visibleNavigationCategories(navigationCategories, user.email),
+    [user.email]
+  )
   const collapsed = useSyncExternalStore(
     subscribeToPreferences,
     readCollapsedPreference,
@@ -146,6 +153,7 @@ export function AppShell({ children, user }: AppShellProps) {
         <SidebarContent
           collapsed={collapsed}
           expandedGroups={expandedGroups}
+          categories={categories}
           pathname={pathname}
           currentCategoryId={navigationState.categoryId}
           toggleGroup={toggleGroup}
@@ -170,6 +178,7 @@ export function AppShell({ children, user }: AppShellProps) {
             <SidebarContent
               collapsed={false}
               expandedGroups={expandedGroups}
+              categories={categories}
               pathname={pathname}
               currentCategoryId={navigationState.categoryId}
               toggleGroup={toggleGroup}
@@ -259,6 +268,7 @@ export function AppShell({ children, user }: AppShellProps) {
 function SidebarContent({
   collapsed,
   expandedGroups,
+  categories,
   pathname,
   currentCategoryId,
   toggleGroup,
@@ -267,6 +277,7 @@ function SidebarContent({
 }: {
   collapsed: boolean
   expandedGroups: Set<string>
+  categories: readonly NavigationCategory[]
   pathname: string
   currentCategoryId: string | null
   toggleGroup: (groupId: string) => void
@@ -326,7 +337,7 @@ function SidebarContent({
           {!collapsed ? <span>{dashboardNavigation.label}</span> : null}
         </GuardedLink>
         <div className="mt-5 space-y-4">
-          {navigationCategories.map((category) => {
+          {categories.map((category) => {
             const open =
               currentCategoryId === category.id || expandedGroups.has(category.id)
             return (

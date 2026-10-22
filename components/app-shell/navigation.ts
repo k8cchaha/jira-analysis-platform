@@ -1,5 +1,6 @@
 export type AppRoute =
   | "/dashboard"
+  | "/sprint/planning"
   | "/sprint/burndown"
   | "/issues/assigned/list"
   | "/issues/assigned/summary"
@@ -34,6 +35,7 @@ export type NavigationIcon =
   | "export"
   | "settings"
   | "burndown"
+  | "planning"
 
 export type NavigationRoute = Readonly<{
   href: AppRoute
@@ -53,6 +55,23 @@ export type NavigationCategory = Readonly<{
   features: readonly NavigationFeature[]
 }>
 
+/** 擁有全部頁面權限的管理員 email 清單。非管理員僅能看到儀表板與 Sprint 管理。 */
+export const ADMIN_EMAILS = ["alexwcwang@kkcompany.com", "kennylin@kkcompany.com"]
+
+/** 依使用者權限回傳應顯示的導覽類別：在管理員清單內看全部，其餘只留「Sprint 管理」。 */
+export function visibleNavigationCategories(
+  categories: readonly NavigationCategory[],
+  email: string | undefined
+): readonly NavigationCategory[] {
+  const isAdmin =
+    email !== undefined &&
+    ADMIN_EMAILS.some(
+      (adminEmail) => adminEmail.toLowerCase() === email.trim().toLowerCase()
+    )
+  if (isAdmin) return categories
+  return categories.filter((category) => category.id === "sprint")
+}
+
 export const dashboardNavigation = {
   href: "/dashboard",
   label: "儀表板",
@@ -64,6 +83,12 @@ export const navigationCategories = [
     id: "sprint",
     label: "Sprint 管理",
     features: [
+      {
+        id: "planning",
+        label: "Planning",
+        icon: "planning",
+        routes: [{ href: "/sprint/planning", label: "Planning" }],
+      },
       {
         id: "burndown",
         label: "Burn Down Chart",

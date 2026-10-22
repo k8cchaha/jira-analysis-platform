@@ -1,6 +1,7 @@
 import { SPRINT_PROJECTS, type SprintProjectKey } from "./jira-jql"
 import {
   currentSprint,
+  getPlanningSprints,
   getProjectSprints,
   getVisibleSprints,
   type SprintRecord,
@@ -58,4 +59,25 @@ export function resolveSprint(
     if (match) return match
   }
   return currentSprint(visibleSprints, today)
+}
+
+/**
+ * 決定 Planning 頁面要顯示的 sprint（只允許「當前＋下一個」這對）：
+ * - `requestedSprintId` 是該專案 planning 對之一 → 選它；
+ * - 否則回 planning 對的第一個（當前 sprint）；
+ * - 無專案、或該專案沒有進行中／未來的 sprint（planning 對為空）→ `null`。
+ */
+export function resolvePlanningSprint(
+  projectKey: SprintProjectKey | null,
+  requestedSprintId: number | null,
+  today: string
+): SprintRecord | null {
+  if (!projectKey) return null
+  const planning = getPlanningSprints(projectKey, today)
+  if (planning.length === 0) return null
+  if (requestedSprintId !== null) {
+    const match = planning.find((sprint) => sprint.id === requestedSprintId)
+    if (match) return match
+  }
+  return planning[0]
 }
