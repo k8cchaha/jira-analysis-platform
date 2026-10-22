@@ -334,13 +334,32 @@ export function BurndownClient({
               />
             </div>
           </>
-        ) : (
+        ) : phase.status === "error" ? (
           <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              {phase.status === "error"
-                ? phase.message
-                : "正在連線取得燃盡圖資料…"}
-            </p>
+            <p className="text-sm text-rose-600 dark:text-rose-400">{phase.message}</p>
+            <button
+              type="button"
+              onClick={() => setRetryNonce((n) => n + 1)}
+              className="mt-3 rounded border border-slate-300 px-2 py-0.5 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
+            >
+              重新載入
+            </button>
+          </div>
+        ) : (
+          // 連線取得資料階段 = 與 Planning 的「更新中」相同的全頁遮罩。
+          <div
+            role="status"
+            aria-label="正在更新燃盡圖"
+            aria-live="polite"
+            className="fixed inset-0 z-50 flex cursor-wait items-center justify-center bg-slate-950/40 backdrop-blur-[1px]"
+            data-pending=""
+          >
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-medium text-slate-800 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              <svg aria-hidden="true" className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 3a9 9 0 1 0 9 9" />
+              </svg>
+              更新中…
+            </div>
           </div>
         )}
       </div>

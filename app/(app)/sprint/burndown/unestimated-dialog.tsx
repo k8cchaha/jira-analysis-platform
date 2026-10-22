@@ -18,8 +18,8 @@ export function UnestimatedDialog({
 
   return (
     <EditDialog
-      title="未估計的 Dev-Task"
-      description="這些 Dev-Task 尚未填寫 Story Points，未計入燃盡圖，請團隊補填。"
+      title="未估時的 Dev-Task"
+      description="這些 Dev-Task 尚未填寫 Story Points，未計入燃盡圖，請團隊確認是否需要補填。"
       count={issues.length}
       iconClose
       busy={busy}
@@ -30,12 +30,12 @@ export function UnestimatedDialog({
     >
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {issues.length === 0 ? (
-          <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有未估計的 Dev-Task。</p>
+          <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有未估時的 Dev-Task。</p>
         ) : (
           <>
             <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
               <table className="w-full table-fixed text-left text-sm min-w-[560px]">
-                <caption className="sr-only">未估計的 Dev-Task</caption>
+                <caption className="sr-only">未估時的 Dev-Task</caption>
                 <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   <tr>
                     <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>
