@@ -74,6 +74,11 @@ function harness(t, options = {}) {
         const done = devTasks.filter((task) => task.doneOn === date).map(makeIssue)
         return new Response(JSON.stringify({ issues: done, isLast: true }), { status: 200 })
       }
+      if (/\bstatus CHANGED TO "Done" BEFORE "(\d{4}-\d{2}-\d{2})"/.test(jql)) {
+        const before = /\bstatus CHANGED TO "Done" BEFORE "(\d{4}-\d{2}-\d{2})"/.exec(jql)[1]
+        const pre = devTasks.filter((task) => task.doneOn !== null && task.doneOn < before).map(makeIssue)
+        return new Response(JSON.stringify({ issues: pre, isLast: true }), { status: 200 })
+      }
       if (/^parent in \(SUN-50, SUN-51\) AND issuetype = "Dev-Task"$/.test(jql)) {
         return new Response(JSON.stringify({ issues: devTasks.map(makeIssue), isLast: true }), { status: 200 })
       }

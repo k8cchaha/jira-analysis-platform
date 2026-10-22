@@ -68,7 +68,8 @@ export function BurndownClient({
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   const [showLine, setShowLine] = useState(true)
   const [showBar, setShowBar] = useState(true)
-  const [clickedDay, setClickedDay] = useState<string | null>(null)
+  /** 被點擊的長條（一般日完成／開局前已完成）；null 表示未開啟彈窗。 */
+  const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean } | null>(null)
 
   // 串流資料（由 `base`／`day` 事件驅動）。
   const [phase, setPhase] = useState<StreamPhase>({ status: "idle" })
@@ -293,7 +294,7 @@ export function BurndownClient({
                     totalPoints={filtered.totalPoints}
                     showLine={showLine}
                     showBar={showBar}
-                    onBarClick={setClickedDay}
+                    onBarClick={(date, beforeStart) => setClickedDay({ date, beforeStart })}
                   />
                   {phase.status === "streaming" && (
                     <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
@@ -314,7 +315,8 @@ export function BurndownClient({
                   )}
                   {clickedDay !== null && (
                     <DayTasksDialog
-                      date={clickedDay}
+                      date={clickedDay.date}
+                      beforeStart={clickedDay.beforeStart}
                       tasks={filtered.tasks}
                       jiraBaseUrl={jiraBaseUrl}
                       onClose={() => setClickedDay(null)}

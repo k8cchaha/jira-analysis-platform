@@ -57,6 +57,8 @@ export interface BurndownStatusInput {
     points: number
     actualPoints: number | null
     doneDate: string | null
+    /** 在 sprint 開始日之前就已 Done（空起點格的綠色長條也視為已完成）。 */
+    doneBeforeStart: boolean
     assigneeDisplayName: string | null
     assigneeAccountId: string | null
   }[]
@@ -92,7 +94,9 @@ export function computeBurndownStatus(input: BurndownStatusInput): TeamStatus[] 
       byAssignee.set(key, status)
     }
     status.totalTasks += 1
-    const done = task.doneDate !== null && task.doneDate <= today
+    // 已完成：sprint 開始前就已 Done（doneBeforeStart，doneDate 為 null）或
+    // doneDate 在今天以前（含）——兩者都算已完成。
+    const done = task.doneBeforeStart || (task.doneDate !== null && task.doneDate <= today)
     if (done) {
       status.doneTasks += 1
       status.donePoints += task.points

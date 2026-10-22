@@ -37,8 +37,8 @@ export function BurndownChart({
   showLine: boolean
   /** 是否畫每日完成點數長條。 */
   showBar: boolean
-  /** 長條被點擊（或鍵盤啟動）時的當天日期回呼；未提供時長條不具互動。 */
-  onBarClick?: (date: string) => void
+  /** 長條被點擊（或鍵盤啟動）時的回呼：日期＋是否為「開局前已完成」的綠色長條；未提供時長條不具互動。 */
+  onBarClick?: (date: string, beforeStart?: boolean) => void
 }) {
   // 滑鼠即時顯示的 hint（原生 <title> 有約 1 秒延遲，改用 React state 立即浮現）。
   const [hover, setHover] = useState<{ date: string; x: number; y: number } | null>(null)
@@ -151,13 +151,20 @@ export function BurndownChart({
             const x = PAD_L + step(index) - barW / 2
             const top = y(day.donePoints)
             const bottom = y(0)
+            // 空起點格（index 0）顯示「sprint 開始前就已 Done」的點數，用綠色；
+            // 其餘 sprint 日維持藍色。
+            const openingCell = index === 0
             const rect = (
               <rect
                 x={x}
                 y={top}
                 width={barW}
                 height={Math.max(0, bottom - top)}
-                className="fill-blue-600/70 dark:fill-blue-400/70"
+                className={
+                  openingCell
+                    ? "fill-green-600/70 dark:fill-green-400/70"
+                    : "fill-blue-600/70 dark:fill-blue-400/70"
+                }
               />
             )
             const hintHandlers = {
@@ -165,6 +172,29 @@ export function BurndownChart({
                 setHover({ date: day.date, x: event.clientX, y: event.clientY }),
               onMouseLeave: () =>
                 setHover((prev) => (prev?.date === day.date ? null : prev)),
+            }
+            // 空起點格的綠色長條也可點，列出「開局前已完成」的 Dev-Task。
+            if (openingCell) {
+              const rectClickable = (
+                <g
+                  key={day.date}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`開局前已完成 ${formatPoints(day.donePoints)} 點，檢視開局前已完成的 Dev-Task 清單`}
+                  className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
+                  onClick={() => onBarClick?.(day.date, true)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault()
+                      onBarClick?.(day.date, true)
+                    }
+                  }}
+                  {...hintHandlers}
+                >
+                  {rect}
+                </g>
+              )
+              return rectClickable
             }
             if (!onBarClick) return <g key={day.date} className="burndown-bar-enter" {...hintHandlers}>{rect}</g>
             return (
@@ -223,10 +253,16 @@ export function BurndownChart({
           </span>
         )}
         {showBar && (
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 bg-blue-600/70 dark:bg-blue-400/70" />
-            已完成（點擊長條看當天）
-          </span>
+          <>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 bg-blue-600/70 dark:bg-blue-400/70" />
+              已完成
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 bg-green-600/70 dark:bg-green-400/70" />
+              開局已完成（sprint 開始前就 Done）
+            </span>
+          </>
         )}
       </div>
 

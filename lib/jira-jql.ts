@@ -38,6 +38,15 @@ export function sprintDevTasksDoneOnJql(
   return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "${date}"`
 }
 
+/** 某組母票之下、在 `beforeDate` 之前就已切到 Done 的 Dev-Task（空起點格的綠色已完成量）。 */
+export function sprintDevTasksDoneBeforeJql(
+  parentKeys: readonly string[],
+  beforeDate: string
+): string {
+  const keys = enforcedSortedKeys(parentKeys)
+  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "${beforeDate}"`
+}
+
 /** 某組母票之下、尚未估計 Story Points 的 Dev-Task（Planning 彈窗顯示用）。 */
 export function sprintUnestimatedJql(parentKeys: readonly string[]): string {
   return `${sprintDevTasksJql(parentKeys)} AND ${storyPointsJql} in (Empty, 0)`

@@ -4,12 +4,13 @@ import { computeBurndownStatus } from "../lib/burndown-status.ts"
 
 const TODAY = "2026-10-19"
 
-const task = (key, points, doneDate, assignee, actualPoints = null) => ({
+const task = (key, points, doneDate, assignee, actualPoints = null, doneBeforeStart = false) => ({
   key,
   summary: `Summary ${key}`,
   points,
   actualPoints,
   doneDate,
+  doneBeforeStart,
   assigneeDisplayName: assignee ? `Display ${assignee}` : null,
   assigneeAccountId: assignee,
 })
@@ -133,6 +134,30 @@ describe("computeBurndownStatus", () => {
       teamOrder: TEAM_ORDER,
     })
     assert.equal(result[0].assignees[0].completionPercent, null)
+  })
+
+  it("counts sprint-start-before Done tasks as completed (green opening cell work)", () => {
+    const result = computeBurndownStatus({
+      tasks: [
+        task("T-B", 4, null, "u-web-1", null, true), // 開局前完成 → 算已完成
+        task("T-1", 5, "2026-10-15", "u-web-1", 6),
+        task("T-2", 8, null, "u-web-1"), // 未完成
+      ],
+      today: TODAY,
+      teamOf,
+      teamOrder: TEAM_ORDER,
+    })
+    const web = result[0]
+    const web1 = web.assignees[0]
+    assert.equal(web1.totalTasks, 3)
+    assert.equal(web1.doneTasks, 2) // 開局前完成(T-B) + 10-15完成(T-1)
+    assert.equal(web1.notDoneTasks, 1)
+    assert.equal(web1.donePoints, 9) // 4 + 5
+    assert.equal(web1.notDonePoints, 8)
+    // 開局前完成也進團隊層級彙總。
+    assert.equal(web.doneTasks, 2)
+    assert.equal(web.donePoints, 9)
+    assert.equal(web.completionPercent, Math.round((9 / 17) * 1000) / 10)
   })
 
   it("orders teams by teamOrder and appends unknown teams last", () => {

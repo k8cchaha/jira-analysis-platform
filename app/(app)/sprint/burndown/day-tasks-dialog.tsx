@@ -6,18 +6,29 @@ import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-ico
 import { TeamSelect } from "@/components/team-select"
 import type { BurndownTask } from "@/lib/jira-burndown"
 
+/** 開局格（sprint 開始前已完成）的對話框標題。 */
+const OPENING_TITLE = "開局前已完成的 Dev-Task"
+
 /**
  * 指定日期完成的 Dev-Task 清單。由 `burndown-client` 在點擊長條時開啟；
  * `tasks` 為已依主圖團隊過濾的任務。彈窗內另有獨立團隊 Filter，只縮小此清單
  * （站內 state、不重發 JQL、不影響主圖）。預設「全部」。
+ *
+ * `beforeStart` 為 true 時代表本次點擊的是「空起點格」的綠色長條：列出
+ * sprint 開始前就已 Done（`doneBeforeStart`）的 Dev-Task；否則依 `date`
+ * 當天完成（`doneDate === date`）過濾。
  */
 export function DayTasksDialog({
   date,
+  beforeStart = false,
   tasks,
   jiraBaseUrl,
   onClose,
 }: {
+  /** 一般日期的完成日；`beforeStart` 時此值僅用於見標題/無關內容。 */
   date: string
+  /** 是否為「開局前已完成」檢視（綠色起點格）。 */
+  beforeStart?: boolean
   tasks: readonly BurndownTask[]
   jiraBaseUrl: string | null
   onClose: () => void
@@ -26,10 +37,12 @@ export function DayTasksDialog({
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
 
   const done = useMemo(() => {
-    const byDay = tasks.filter((task) => task.doneDate === date)
+    const byDay = beforeStart
+      ? tasks.filter((task) => task.doneBeforeStart)
+      : tasks.filter((task) => task.doneDate === date)
     if (memberIds === null) return byDay
     return byDay.filter((task) => task.assigneeAccountId !== null && memberIds.has(task.assigneeAccountId))
-  }, [tasks, date, memberIds])
+  }, [tasks, date, memberIds, beforeStart])
 
   // 依團隊 Filter 縮小後的清單加總（Actual SP 視有值者累計；無值是 null 不進總計）。
   const totalPoints = useMemo(
@@ -43,8 +56,12 @@ export function DayTasksDialog({
 
   return (
     <EditDialog
-      title={`${date} 完成的 Dev-Task`}
-      description=""
+      title={beforeStart ? OPENING_TITLE : `${date} 完成的 Dev-Task`}
+      description={
+        beforeStart
+          ? "這些 Dev-Task 在 sprint 開始日之前就已 Done，屬於空起點格的綠色長條，也已計入總點數與剩餘。"
+          : ""
+      }
       count={done.length}
       compact
       iconClose
@@ -77,13 +94,13 @@ export function DayTasksDialog({
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {done.length === 0 ? (
           <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">
-            當天沒有對應的 Dev-Task。
+            {beforeStart ? "目前沒有開局前已完成的 Dev-Task。" : "當天沒有對應的 Dev-Task。"}
           </p>
         ) : (
           <>
             <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
               <table className="w-full table-fixed text-left text-sm min-w-[560px]">
-                <caption className="sr-only">{date} 完成的 Dev-Task</caption>
+                <caption className="sr-only">{beforeStart ? OPENING_TITLE : `${date} 完成的 Dev-Task`}</caption>
                 <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   <tr>
                     <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>

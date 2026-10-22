@@ -47,6 +47,8 @@ function harness(t, options = {}) {
     violations.push(message)
     throw new Error(message)
   }
+  // 可注入覆寫的 Dev-Task 清單（用於「開局前 Done」等情境）。
+  const list = options.devTasks ?? devTasks
   class JiraAuthorizationError extends Error {
     constructor(code) { super("Fixture authorization error"); this.code = code }
   }
@@ -71,12 +73,18 @@ function harness(t, options = {}) {
       }
       if (/\bstatus CHANGED TO "Done" ON "(\d{4}-\d{2}-\d{2})"/.test(jql)) {
         const date = /\bstatus CHANGED TO "Done" ON "(\d{4}-\d{2}-\d{2})"/.exec(jql)[1]
-        const done = devTasks.filter((task) => task.doneOn === date).map(makeIssue)
+        const done = list.filter((task) => task.doneOn === date).map(makeIssue)
         return new Response(JSON.stringify({ issues: done, isLast: true }), { status: 200 })
+      }
+      if (/\bstatus CHANGED TO "Done" BEFORE "(\d{4}-\d{2}-\d{2})"/.test(jql)) {
+        // 開局前 Done：`doneOn` 早於給定日期的 Dev-Task。
+        const before = /\bstatus CHANGED TO "Done" BEFORE "(\d{4}-\d{2}-\d{2})"/.exec(jql)[1]
+        const pre = list.filter((task) => task.doneOn !== null && task.doneOn < before).map(makeIssue)
+        return new Response(JSON.stringify({ issues: pre, isLast: true }), { status: 200 })
       }
       if (/^parent in \(SUN-50, SUN-51\) AND issuetype = "Dev-Task"$/.test(jql)) {
         if (options.allTasksError) return new Response(null, { status: options.allTasksError })
-        return new Response(JSON.stringify({ issues: devTasks.map(makeIssue), isLast: true }), { status: 200 })
+        return new Response(JSON.stringify({ issues: list.map(makeIssue), isLast: true }), { status: 200 })
       }
       return fail(`Unexpected search/jql: ${jql}`)
     },
@@ -134,6 +142,10 @@ describe("burndown query builders", () => {
     assert.equal(
       h.jql.sprintDevTasksDoneOnJql(["SUN-51", "SUN-50"], "2026-10-19"),
       'parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "2026-10-19"'
+    )
+    assert.equal(
+      h.jql.sprintDevTasksDoneBeforeJql(["SUN-51", "SUN-50"], "2026-10-13"),
+      'parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "2026-10-13"'
     )
   })
 })
@@ -221,5 +233,27 @@ describe("burndown aggregation against fixture Jira", () => {
     // 只應有一次搜尋（撈母票），不得再查 Dev-Task 或每日。
     const searches = h.calls.filter((call) => call.path === "/rest/api/3/search/jql")
     assert.equal(searches.length, 1)
+  })
+
+  it("marks sprint-start-before Done tasks and shows them as the green opening cell", async (t) => {
+    // 自訂 fixture：SUN-P1 在 sprint 開始（10-13）之前（10-10）就已 Done。
+    const preDone = [
+      { id: "201", key: "SUN-P1", summary: "Pre done", points: 2, actualPoints: 2, doneOn: "2026-10-10", accountId: "u-pre-201" },
+    ]
+    const h = harness(t, { devTasks: [...preDone] })
+    const data = await h.service.getBurndownData(SPRINT, "2026-10-19")
+    assert.equal(data.totalPoints, 2)
+    // server 已把開局前 Done 標記在 task 上，供站內重算與長條使用。
+    const byKey = new Map(data.tasks.map((task) => [task.key, task]))
+    assert.equal(byKey.get("SUN-P1").doneBeforeStart, true)
+    assert.equal(byKey.get("SUN-P1").doneDate, null) // doneDate 不在 sprint 範圍內
+    // 空起點格：綠色長條 = 開局前 Done（2）；理想/剩餘起點 = 總點數 − 開局已完成 = 0。
+    assert.equal(data.days[0].date, "2026-10-12")
+    assert.equal(data.days[0].remainingPoints, 0)
+    assert.equal(data.days[0].idealPoints, 0)
+    assert.equal(data.days[0].donePoints, 2)
+    // 剩餘線自第一天起就維持 0（開局已完成已把剩餘扣光）。
+    const byDate = new Map(data.days.map((day) => [day.date, day]))
+    assert.equal(byDate.get("2026-10-13").remainingPoints, 0)
   })
 })

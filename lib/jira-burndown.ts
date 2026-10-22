@@ -10,6 +10,7 @@ import {
   sprintParentIssuesJql,
   sprintDevTasksJql,
   sprintDevTasksDoneOnJql,
+  sprintDevTasksDoneBeforeJql,
 } from "@/lib/jira-jql"
 import { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "@/lib/jira-fields"
 import {
@@ -156,11 +157,29 @@ export async function getBurndownBase(
           points,
           actualPoints: actualPointValue(issue.fields[ACTUAL_STORY_POINTS_FIELD]),
           doneDate: null,
+          doneBeforeStart: false,
           assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
           assigneeAccountId: assigneeAccountId(issue.fields.assignee),
           parentIssueType: parentIssueTypeOf(issue.fields.parent),
         })
         total += points
+      }
+    }
+
+    // 2b. 找出「sprint 開始日之前就已 Done」的 Dev-Task，標記 `doneBeforeStart`，
+    //     供空起點格顯示綠色已完成量（計入總點數與剩餘）。以母票範圍 + 完成
+    //     時點早於開跑日的查詢取得，標記在既有 task 上而非常新一份。
+    const before = new Set<string>()
+    for await (const issues of searchJiraIssues(
+      credentials,
+      sprintDevTasksDoneBeforeJql(keys, sprint.startDate),
+      []
+    )) {
+      for (const issue of issues) before.add(issue.key)
+    }
+    if (before.size > 0) {
+      for (const task of tasks) {
+        if (before.has(task.key)) task.doneBeforeStart = true
       }
     }
   }

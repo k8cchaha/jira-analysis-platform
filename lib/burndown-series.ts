@@ -14,6 +14,8 @@ export interface BurndownTask {
   actualPoints: number | null
   /** 已移至 Done 的日期（`YYYY-MM-DD`）；尚未完成為 null。 */
   doneDate: string | null
+  /** 在 sprint 開始日**之前**就已 Done（故 doneDate 在 sprint 範圍外、未經每日掃描標記）。 */
+  doneBeforeStart: boolean
   /** 指派人顯示名稱；未指派為 null。 */
   assigneeDisplayName: string | null
   /** 指派人 accountId；未指派為 null。 */
@@ -124,7 +126,8 @@ function matchesScope(
  *   `date <= throughDate`，之後還未掃描的天一律 null（不一次畫完、逐日長出）；
  *   未提供（一次算完）時等同 `today`，畫到今天為止。
  * - `days` 最前面含一個「空起點格」（`startDate` 前一天，remaining＝total），
- *   x=0 的初始值讓實際線與理想線對齊；其 `donePoints` 恆為 0、不累計。
+ *   x=0 的初始值讓實際線與理想線對齊。其 `donePoints` 顯示「sprint 開始前就
+ *   Done」的點數（client 以綠色長條呈現），不累計 sprint 內每日 done。
  */
 export function computeBurndownSeries({
   startDate,
@@ -146,9 +149,17 @@ export function computeBurndownSeries({
 }): BurndownSeries {
   let totalPoints = 0
   const byDate = new Map<string, number>()
+  // sprint 開始日前就已 Done 的點數（空起點格的綠色長條）：這批已完成、也計入
+  // 剩餘/總點數——它們在每日 `runningDone` 計算前就先從剩餘中扣掉，且總點數本身
+  // 已有含它們（`sprintDevTasksJql` 不限制完成日期）。
+  let preSprintDonePoints = 0
   for (const task of tasks) {
     if (!matchesScope(task.assigneeAccountId, accountIds)) continue
     totalPoints += task.points
+    if (task.doneBeforeStart) {
+      preSprintDonePoints += task.points
+      continue
+    }
     // 未來還沒到：完成尚未發生，累計剩餘點數暫不列入（原始 else 分支亦不會查 future）。
     if (task.doneDate !== null && !(task.doneDate > today)) {
       byDate.set(task.doneDate, (byDate.get(task.doneDate) ?? 0) + task.points)
@@ -165,28 +176,37 @@ export function computeBurndownSeries({
     matchesScope(task.assigneeAccountId, accountIds)
   )
 
-  // 理想線起點 = 空起點格日期：從起點格（total）開始全程等速傾斜到 endDate 的 0，
-  // 而非從 startDate 才開始下降（避免頂端一段水平停在 total）。
+  // 理想線起點 = 空起點格日期：從 remainingStart（總點數 − 開局已完成）開始
+  // 全程等速傾斜到 endDate 的 0，而非從 startDate 才開始下降（避免頂端一段
+  // 水平停在 total）。開局已完成的部分在 sprint 開始前就消耗，不列入理想範圍。
   const idealStart = shiftDate(startDate, -1)
 
   // 只要有任何一筆「今天以前已完成」的記錄，實際剩餘線才有可信的下降資料；
   // 否則（例如串流初期資料未到、或 sprint 至今全未完成）所有天的 remainingPoints
   // 都為 null，實際線不畫——不先畫一條還沒有資料支持的平線。
-  const hasDoneRecord = tasks.some(
-    (task) =>
-      matchesScope(task.assigneeAccountId, accountIds) &&
-      task.doneDate !== null &&
-      task.doneDate <= today
-  )
+  // sprint 開始前就 Done 的任務（preSprintDonePoints > 0）也算已完成的記錄。
+  const hasDoneRecord =
+    preSprintDonePoints > 0 ||
+    tasks.some(
+      (task) =>
+        matchesScope(task.assigneeAccountId, accountIds) &&
+        task.doneDate !== null &&
+        task.doneDate <= today
+    )
 
+  const roundedPreSprintDone = Math.round(preSprintDonePoints * 10) / 10
+  // 理想線／實際剩餘線的共同起點：總點數扣除「開局前就已 Done」的部分，因為
+  // 這些點數在 sprint 開始前就已消耗，不屬於 sprint 期間要「燃」的剩餘範圍。
+  const roundedRemainingStart = roundedTotal - roundedPreSprintDone
   const days: BurndownDay[] = [
-    // x=0 的空起點格：sprint 開跑前一天，remaining = total，讓實際剩餘線與
-    // 理想線都從這個「初始值」起步並在 x 軸對齊。此格沒有任務、不累計 done。
+    // x=0 的空起點格：sprint 開跑前一天。實際剩餘線與理想線都從
+    // remainingStart（＝總點數 − 開局已完成）出發並在 x 軸對齊。此格不累計
+    // sprint 內的每日 done，但顯示「sprint 開始前就已 Done」的點數（綠色長條）。
     {
       date: idealStart,
-      donePoints: 0,
-      remainingPoints: hasDoneRecord ? roundedTotal : null,
-      idealPoints: roundedTotal,
+      donePoints: roundedPreSprintDone,
+      remainingPoints: hasDoneRecord ? roundedRemainingStart : null,
+      idealPoints: roundedRemainingStart,
     },
   ]
 
@@ -194,7 +214,9 @@ export function computeBurndownSeries({
   // 超過此限（串流尚未掃描到）的天 remaining 為 null，避免一收到第一筆完成
   // 資料就把整段畫完。
   const effectiveThrough = throughDate ?? today
-  let runningDone = 0
+  // 剩餘＝總點數 − 已完成。sprint 開始前就 Done 的點數先扣（開局即已完成），
+  // 之後逐日再加扣當天完成的點數，讓剩餘線反映「第一天的實際點已落後理想線」。
+  let runningDone = roundedPreSprintDone
   for (const date of eachDay(startDate, endDate)) {
     const donePoints = Math.round((byDate.get(date) ?? 0) * 10) / 10
     const future = date > today
@@ -209,7 +231,7 @@ export function computeBurndownSeries({
           ? null
           : roundedTotal - runningDone,
       idealPoints:
-        roundedTotal === 0 ? 0 : remainingAt(roundedTotal, date, idealStart, endDate),
+        roundedTotal === 0 ? 0 : remainingAt(roundedRemainingStart, date, idealStart, endDate),
     })
   }
 
