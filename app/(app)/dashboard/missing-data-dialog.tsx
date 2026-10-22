@@ -291,15 +291,15 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
               {data.issues.length === 0 ? <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有待補資料。</p> : (
                 <>
                   <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
-                    <table className={`w-full table-fixed text-left text-sm ${kind === "points" ? "min-w-[720px]" : "min-w-[1080px]"}`}>
+                    <table className={`w-full table-fixed text-left text-sm ${kind === "points" ? "min-w-[720px]" : "min-w-[1040px]"}`}>
                       <caption className="sr-only">{kind === "points" ? "Points 缺失 Issue" : "Defect Cause 缺失 Issue"}</caption>
                       <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
                         <tr>
                           {kind === "points" && <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>}
-                          <th scope="col" className="w-32 px-3 py-3 font-medium">Ticket</th>
+                          <th scope="col" className="w-24 px-3 py-3 font-medium">Ticket</th>
                           {readOnly && <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>}
-                          <th scope="col" className="px-3 py-3 font-medium">Summary</th>
-                          {kind === "points" ? <><th scope="col" className="w-28 px-3 py-3 font-medium">SP</th><th scope="col" className="w-28 px-3 py-3 font-medium">Actual SP</th></> : <><th scope="col" className="w-40 px-3 py-3 font-medium">Root Cause</th><th scope="col" className="w-40 px-3 py-3 font-medium">Solution</th><th scope="col" className="w-44 px-3 py-3 font-medium">Defect Cause</th></>}
+                          <th scope="col" className={`px-3 py-3 font-medium ${kind === "points" ? "" : "w-48"}`}>Summary</th>
+                          {kind === "points" ? <><th scope="col" className="w-28 px-3 py-3 font-medium">SP</th><th scope="col" className="w-28 px-3 py-3 font-medium">Actual SP</th></> : <><th scope="col" className="w-56 px-3 py-3 font-medium">Root Cause</th><th scope="col" className="w-56 px-3 py-3 font-medium">Solution</th><th scope="col" className="w-44 px-3 py-3 font-medium">Defect Cause</th></>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
