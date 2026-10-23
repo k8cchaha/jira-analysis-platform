@@ -38,11 +38,11 @@ export function BurndownChart({
   /** 是否畫每日完成點數長條。 */
   showBar: boolean
   /** 長條被點擊（或鍵盤啟動）時的回呼：日期＋是否為「開局前已完成」的綠色長條＋
-   *  是否為「受阻母票」的深灰長條；未提供時長條不具互動。 */
+   *  是否為「受阻母票」的深黃長條；未提供時長條不具互動。 */
   onBarClick?: (date: string, beforeStart?: boolean, blocked?: boolean) => void
 }) {
   // 滑鼠即時顯示的 hint（原生 <title> 有約 1 秒延遲，改用 React state 立即浮現）。
-  // `blocked` 標記是哪一根長條（false=藍色已完成、true=受阻深灰），各自的
+  // `blocked` 標記是哪一根長條（false=藍色已完成、true=受阻深黃），各自的
   // tooltip 獨立顯示、互不覆蓋。
   const [hover, setHover] = useState<{ date: string; blocked: boolean; x: number; y: number } | null>(null)
   if (days.length < 2) {
@@ -56,7 +56,7 @@ export function BurndownChart({
   const plotW = W - PAD_L - PAD_R
   const plotH = H - PAD_T - PAD_B
   const yMax = niceCeil(Math.max(totalPoints, 1))
-  // 是否有受阻母票的深灰長條（決定是否顯示對應的圖例）。
+  // 是否有受阻母票的深黃長條（決定是否顯示對應的圖例）。
   const hasBlockedBar = days.some((day) => (day.blockedPoints ?? 0) > 0)
 
   // x 軸起點（0 位置）就是 days 最前面的「空起點格」（remaining＝total），
@@ -149,7 +149,7 @@ export function BurndownChart({
         )}
 
         {/* 每日完成點數長條（showBar 時）；點擊長條顯示當天完成的 Dev-Task。
-            「受阻母票」的點數（blockedPoints）以深灰長條疊在當天藍色長條之上。 */}
+            「受阻母票」的點數（blockedPoints）以深黃長條疊在當天藍色長條之上。 */}
         {showBar &&
           days.map((day, index) => {
             const barW = Math.max(2, step(1) * 0.6)
@@ -159,10 +159,10 @@ export function BurndownChart({
             const openingCell = index === 0
             const hasBlue = !openingCell && day.donePoints > 0
             const blocked = openingCell ? 0 : day.blockedPoints ?? 0
-            const hasGray = blocked > 0
-            if (!openingCell && !hasBlue && !hasGray) return null
+            const hasBlocked = blocked > 0
+            if (!openingCell && !hasBlue && !hasBlocked) return null
 
-            // 各長條的 hover 處理：以 `blocked` 區分是「已完成(藍/綠)」或「受阻(灰)」，
+            // 各長條的 hover 處理：以 `blocked` 區分是「已完成(藍/綠)」或「受阻(黃)」，
             // 讓滑到哪根就顯示哪根自己的 tooltip，彼此獨立、各自清除。
             const hintHandlers = (isBlockedBar: boolean) => ({
               onMouseMove: (event: React.MouseEvent) =>
@@ -192,14 +192,14 @@ export function BurndownChart({
               />
             )
 
-            // 受阻長條：深灰，疊在藍色長條**之上**（灰底＝藍頂，向上延伸到受阻高度）。
-            const grayRect = hasGray ? (
+            // 受阻長條：深黃，疊在藍色長條**之上**（黃底＝藍頂，向上延伸到受阻高度）。
+            const blockedRect = hasBlocked ? (
               <rect
                 x={x}
                 y={y(day.donePoints + blocked)}
                 width={barW}
                 height={Math.max(0, y(day.donePoints) - y(day.donePoints + blocked))}
-                className="fill-slate-500/70 dark:fill-slate-300/70"
+                className="fill-yellow-500/70 dark:fill-yellow-300/70"
               />
             ) : null
 
@@ -252,8 +252,8 @@ export function BurndownChart({
                 )
               )
             }
-            // 受阻深灰長條，疊在藍色之上；點擊列出受阻母票的 Dev-Task。
-            if (hasGray) {
+            // 受阻深黃長條，疊在藍色之上；點擊列出受阻母票的 Dev-Task。
+            if (hasBlocked) {
               bars.push(
                 onBarClick ? (
                   <g
@@ -271,10 +271,10 @@ export function BurndownChart({
                     }}
                     {...hintHandlers(true)}
                   >
-                    {grayRect}
+                    {blockedRect}
                   </g>
                 ) : (
-                  <g key={`${day.date}-blocked`} className="burndown-bar-enter" {...hintHandlers(true)}>{grayRect}</g>
+                  <g key={`${day.date}-blocked`} className="burndown-bar-enter" {...hintHandlers(true)}>{blockedRect}</g>
                 )
               )
             }
@@ -323,13 +323,13 @@ export function BurndownChart({
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="inline-block h-2.5 w-2.5 bg-green-600/70 dark:bg-green-400/70" />
-              開局已完成（sprint 開始前就 Done）
+              開局已完成（Sprint 開始前就 Done）
             </span>
           </>
         )}
         {showBar && hasBlockedBar && (
           <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2.5 w-2.5 bg-slate-500/70 dark:bg-slate-300/70" />
+            <span className="inline-block h-2.5 w-2.5 bg-yellow-500/70 dark:bg-yellow-300/70" />
             受阻母票（計為已完成）
           </span>
         )}

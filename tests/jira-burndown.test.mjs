@@ -27,11 +27,11 @@ const parentIssues = ["SUN-50", "SUN-51"].map((key, index) => ({
   },
 }))
 const devTasks = [
-  { id: "101", key: "SUN-101", summary: "Task A", points: 5, actualPoints: 6, doneOn: "2026-10-15", accountId: "u-aaa-101" },
-  { id: "102", key: "SUN-102", summary: "Task B", points: 3, actualPoints: null, doneOn: "2026-10-18", accountId: "u-bbb-102" },
-  { id: "103", key: "SUN-103", summary: "Task C", points: 8, actualPoints: 7, doneOn: "2026-10-19", accountId: "u-ccc-103" },
-  { id: "104", key: "SUN-104", summary: "Unestimated", points: null, actualPoints: null, doneOn: null, accountId: "u-aaa-104" },
-  { id: "105", key: "SUN-105", summary: "Task D", points: 2, actualPoints: 2, doneOn: "2026-10-13", accountId: "u-bbb-105" },
+  { id: "101", key: "SUN-101", summary: "Task A", points: 5, actualPoints: 6, doneOn: "2026-10-15", accountId: "u-aaa-101", status: "Done" },
+  { id: "102", key: "SUN-102", summary: "Task B", points: 3, actualPoints: null, doneOn: "2026-10-18", accountId: "u-bbb-102", status: "Done" },
+  { id: "103", key: "SUN-103", summary: "Task C", points: 8, actualPoints: 7, doneOn: "2026-10-19", accountId: "u-ccc-103", status: "In Progress" },
+  { id: "104", key: "SUN-104", summary: "Unestimated", points: null, actualPoints: null, doneOn: null, accountId: "u-aaa-104", status: "To Do" },
+  { id: "105", key: "SUN-105", summary: "Task D", points: 2, actualPoints: 2, doneOn: "2026-10-13", accountId: "u-bbb-105", status: "Done" },
 ]
 const makeIssue = (task) => ({
   id: task.id,
@@ -39,6 +39,7 @@ const makeIssue = (task) => ({
   fields: {
     project: { id: "10" },
     summary: task.summary,
+    status: task.status ? { name: task.status } : undefined,
     [SP]: task.points,
     [ACTUAL_SP]: task.actualPoints,
     assignee: task.assignee ?? { accountId: task.accountId ?? "u-fixture-dev", displayName: task.assigneeName ?? "Fixture Dev" },
@@ -199,6 +200,9 @@ describe("burndown aggregation against fixture Jira", () => {
     assert.deepEqual(JSON.parse(JSON.stringify(byKey.get("SUN-101").parentIssueType)), { status: "known", name: "Story" })
     // 母票目前狀態已投影（勾選「受阻母票計為已完成」用）；fixture 的母票 SUN-50 為 Request Info。
     assert.equal(byKey.get("SUN-101").parentStatus, "Request Info")
+    // Dev-Task 自身的 Jira status 已投影（開發狀況未完成彈窗的 Status 欄）。
+    assert.equal(byKey.get("SUN-103").status, "In Progress")
+    assert.equal(byKey.get("SUN-105").status, "Done")
     // 母票目前指派人已投影（受阻彈窗的「母票 Owner」欄）；SUN-50 為 Parent Owner。
     assert.equal(byKey.get("SUN-101").parentAssigneeDisplayName, "Parent Owner")
 

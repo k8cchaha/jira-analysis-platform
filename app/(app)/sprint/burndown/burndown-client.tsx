@@ -75,8 +75,8 @@ export function BurndownClient({
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   const [showLine, setShowLine] = useState(true)
   const [showBar, setShowBar] = useState(true)
-  /** 勾選「受阻母票計為已完成」：母票受阻的 Dev-Task 在圖表與開發狀況都視為完成。 */
-  const [countParentBlocked, setCountParentBlocked] = useState(false)
+  /** 勾選「受阻母票計為已完成」：母票受阻的 Dev-Task 在圖表與開發狀況都視為完成。預設勾選。 */
+  const [countParentBlocked, setCountParentBlocked] = useState(true)
   /** 被點擊的長條（一般日完成／開局前已完成／受阻母票）；null 表示未開啟彈窗。 */
   const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean; blocked?: boolean } | null>(null)
 
@@ -284,7 +284,7 @@ export function BurndownClient({
                         type="checkbox"
                         checked={countParentBlocked}
                         onChange={(event) => setCountParentBlocked(event.target.checked)}
-                        className="h-4 w-4 shrink-0 accent-slate-600"
+                        className="h-4 w-4 shrink-0 appearance-none rounded-sm border border-yellow-600 bg-white checked:border-yellow-600 checked:bg-yellow-600 checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2016%2016%27%20fill=%27none%27%20stroke=%27%23ffffff%27%20stroke-width=%272.4%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M3.5%208.5l3%203L12.5%205.5%27/%3E%3C/svg%3E')] checked:bg-[length:0.9rem_0.9rem] checked:bg-center checked:bg-no-repeat dark:bg-slate-900"
                       />
                       受阻母票計為已完成
                     </label>

@@ -65,7 +65,7 @@ export function DevelopmentStatus({
   /** 母票目前狀態 ∈ 此集合的 Dev-Task 視為已完成（與圖表共用勾選）。 */
   blockedParentStatuses?: ReadonlySet<string> | null
 }) {
-  const [list, setList] = useState<{ title: string; tasks: BurndownTask[] } | null>(null)
+  const [list, setList] = useState<{ title: string; tasks: BurndownTask[]; showStatus?: boolean } | null>(null)
 
   const teams = useMemo(
     () => (today ? computeBurndownStatus({ tasks, today, teamOf: (accountId) => (accountId === null ? undefined : teamOf[accountId]), teamOrder, blockedParentStatuses }) : []),
@@ -131,6 +131,7 @@ export function DevelopmentStatus({
           title={list.title}
           tasks={list.tasks}
           jiraBaseUrl={jiraBaseUrl}
+          showStatus={list.showStatus}
           onClose={() => setList(null)}
         />
       )}
@@ -144,7 +145,7 @@ function TeamCard({
   filterTaskCounts,
 }: {
   team: TeamStatus
-  onOpen: (list: { title: string; tasks: BurndownTask[] }) => void
+  onOpen: (list: { title: string; tasks: BurndownTask[]; showStatus?: boolean }) => void
   filterTaskCounts: (
     teamKey: string,
     assigneeAccountId: string | null | "all",
@@ -218,7 +219,7 @@ function TeamCard({
                           count={assignee.notDoneTasks}
                           label="張"
                           title={`檢視 ${assignee.assigneeName} 未完成的 Dev-Task`}
-                          onClick={() => onOpen({ title: `${assignee.assigneeName} 未完成`, tasks: assigneeNotDone })}
+                          onClick={() => onOpen({ title: `${assignee.assigneeName} 未完成`, tasks: assigneeNotDone, showStatus: true })}
                         />{" "}
                         <span className="text-slate-500 dark:text-slate-400">({formatPoints(assignee.notDonePoints)})</span>
                       </span>
@@ -255,7 +256,7 @@ function TeamCard({
                       count={team.notDoneTasks}
                       label="張"
                       title={`檢視 ${team.label} 未完成的 Dev-Task`}
-                      onClick={() => onOpen({ title: `${team.label} 未完成`, tasks: notDoneTasks })}
+                      onClick={() => onOpen({ title: `${team.label} 未完成`, tasks: notDoneTasks, showStatus: true })}
                     />{" "}
                     <span className="text-slate-500 dark:text-slate-400">({formatPoints(team.notDonePoints)})</span>
                   </span>

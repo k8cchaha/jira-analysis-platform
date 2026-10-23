@@ -11,6 +11,7 @@ const task = (key, points, doneDate, assignee, actualPoints = null, doneBeforeSt
   actualPoints,
   doneDate,
   doneBeforeStart,
+  status: null,
   parentStatus,
   assigneeDisplayName: assignee ? `Display ${assignee}` : null,
   assigneeAccountId: assignee,

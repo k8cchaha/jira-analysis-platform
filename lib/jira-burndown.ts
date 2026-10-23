@@ -141,7 +141,7 @@ export async function getBurndownBase(
     for await (const issues of searchJiraIssues(
       credentials,
       sprintDevTasksJql(keys),
-      ["summary", "assignee", "parent", STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD]
+      ["summary", "status", "assignee", "parent", STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD]
     )) {
       for (const issue of issues) {
         const points = pointValue(issue.fields[STORY_POINTS_FIELD])
@@ -164,6 +164,7 @@ export async function getBurndownBase(
           actualPoints: actualPointValue(issue.fields[ACTUAL_STORY_POINTS_FIELD]),
           doneDate: null,
           doneBeforeStart: false,
+          status: statusName(issue.fields.status),
           parentStatus: parentStatusOf(issue.fields.parent, parentInfo),
           parentAssigneeDisplayName: parentAssigneeOf(issue.fields.parent, parentInfo),
           assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),

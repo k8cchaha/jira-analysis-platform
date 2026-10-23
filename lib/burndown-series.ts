@@ -16,6 +16,8 @@ export interface BurndownTask {
   doneDate: string | null
   /** 在 sprint 開始日**之前**就已 Done（故 doneDate 在 sprint 範圍外、未經每日掃描標記）。 */
   doneBeforeStart: boolean
+  /** Dev-Task 目前的 Jira 狀態名稱（如 "In Progress"）；未知為 null。 */
+  status: string | null
   /** 母票目前狀態名稱（如 "Request Info"）；無母票或未知為 null。 */
   parentStatus: string | null
   /** 母票目前指派人顯示名稱；無母票或未指派為 null。 */

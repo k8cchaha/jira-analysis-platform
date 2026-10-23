@@ -7,6 +7,7 @@ const TODAY = "2026-10-19"
 
 const task = (key, points, doneDate, assigneeAccountId, actualPoints = null, doneBeforeStart = false, parentStatus = null) => ({
   key, summary: `Summary ${key}`, points, actualPoints, doneDate, doneBeforeStart, parentStatus,
+  status: null,
   parentAssigneeDisplayName: null,
   assigneeDisplayName: `Name ${assigneeAccountId ?? "none"}`,
   assigneeAccountId,
