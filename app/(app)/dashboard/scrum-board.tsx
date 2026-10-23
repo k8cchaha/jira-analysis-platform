@@ -90,7 +90,7 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
     <section aria-label="開發任務看板" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-950 dark:text-white">
-          開發任務看板 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">共 {total} 張 Dev-Task</span>
+          開發任務看板 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">（共 {total} 張 Dev-Task）</span>
         </h2>
         <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
           <input
