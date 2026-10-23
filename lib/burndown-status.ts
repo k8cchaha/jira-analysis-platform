@@ -59,6 +59,8 @@ export interface BurndownStatusInput {
     doneDate: string | null
     /** 在 sprint 開始日之前就已 Done（空起點格的綠色長條也視為已完成）。 */
     doneBeforeStart: boolean
+    /** 母票目前狀態名稱（如 "Request Info"）；無母票或未知為 null。 */
+    parentStatus: string | null
     assigneeDisplayName: string | null
     assigneeAccountId: string | null
   }[]
@@ -68,10 +70,18 @@ export interface BurndownStatusInput {
   teamOf: (accountId: string | null) => string | undefined
   /** 團隊的顯示順序（label）；越靠前越前面，未在此清單者排最後。 */
   teamOrder: readonly string[]
+  /** 母票目前狀態 ∈ 此集合的 Dev-Task 視為已完成（受限取樣，無「切換時點」）。 */
+  blockedParentStatuses?: ReadonlySet<string> | null
 }
 
 export function computeBurndownStatus(input: BurndownStatusInput): TeamStatus[] {
   const { tasks, today, teamOf, teamOrder } = input
+  const blocked = input.blockedParentStatuses
+  const isBlocked =
+    blocked === null || blocked === undefined
+      ? () => false
+      : (parentStatus: string | null) =>
+          parentStatus !== null && blocked.has(parentStatus)
 
   // 依指派人彙整。
   const byAssignee = new Map<string, AssigneeStatus>()
@@ -94,9 +104,12 @@ export function computeBurndownStatus(input: BurndownStatusInput): TeamStatus[] 
       byAssignee.set(key, status)
     }
     status.totalTasks += 1
-    // 已完成：sprint 開始前就已 Done（doneBeforeStart，doneDate 為 null）或
-    // doneDate 在今天以前（含）——兩者都算已完成。
-    const done = task.doneBeforeStart || (task.doneDate !== null && task.doneDate <= today)
+    // 已完成：sprint 開始前就已 Done（doneBeforeStart，doneDate 為 null）、
+    // doneDate 在今天以前（含）、或母票受阻視為完成（blockedParentStatuses）。
+    const done =
+      task.doneBeforeStart ||
+      (task.doneDate !== null && task.doneDate <= today) ||
+      isBlocked(task.parentStatus)
     if (done) {
       status.doneTasks += 1
       status.donePoints += task.points

@@ -17,7 +17,14 @@ const SPRINT = { id: 7517, name: "Sprint 70", startDate: "2026-10-13", endDate: 
 const parentIssues = ["SUN-50", "SUN-51"].map((key, index) => ({
   id: String(400 + index),
   key,
-  fields: { project: { id: "10" }, summary: `Parent ${key}` },
+  // status / assignee 由撈母票時 request 取得，供「受阻母票計為已完成」與受阻彈窗
+  // （母票狀態／母票 Owner）投影到各 Dev-Task。
+  fields: {
+    project: { id: "10" },
+    summary: `Parent ${key}`,
+    status: { name: index === 0 ? "Request Info" : "In Progress" },
+    assignee: { accountId: index === 0 ? "u-parent-owner" : undefined, displayName: index === 0 ? "Parent Owner" : undefined },
+  },
 }))
 const devTasks = [
   { id: "101", key: "SUN-101", summary: "Task A", points: 5, actualPoints: 6, doneOn: "2026-10-15", accountId: "u-aaa-101" },
@@ -166,6 +173,13 @@ describe("burndown aggregation against fixture Jira", () => {
     assert.equal(data.unestimated[0].assigneeAccountId, "u-aaa-104")
     assert.deepEqual(JSON.parse(JSON.stringify(data.unestimated[0].parentIssueType)), { status: "known", name: "Story" })
 
+    // 撈母票的查詢有 request「status」與「assignee」欄位，才能取母票狀態與 Owner。
+    const parentQuery = h.calls.find((call) =>
+      call.body && call.body.jql === "sprint = 7517 AND issuetype in (story, task, bug)"
+    )
+    assert.ok(parentQuery, "parent query should be issued")
+    assert.deepEqual(parentQuery.body.fields, ["project", "status", "assignee"])
+
     // tasks：只含已估計、依 key 排序的 Dev-Task，並刻好 doneDate 與 assignee。
     assert.equal(data.tasks.length, 4)
     const byKey = new Map(data.tasks.map((task) => [task.key, task]))
@@ -183,6 +197,10 @@ describe("burndown aggregation against fixture Jira", () => {
     assert.equal(byKey.get("SUN-102").actualPoints, null)
     // 母票 type 已投影（彈窗每列左側 icon）。
     assert.deepEqual(JSON.parse(JSON.stringify(byKey.get("SUN-101").parentIssueType)), { status: "known", name: "Story" })
+    // 母票目前狀態已投影（勾選「受阻母票計為已完成」用）；fixture 的母票 SUN-50 為 Request Info。
+    assert.equal(byKey.get("SUN-101").parentStatus, "Request Info")
+    // 母票目前指派人已投影（受阻彈窗的「母票 Owner」欄）；SUN-50 為 Parent Owner。
+    assert.equal(byKey.get("SUN-101").parentAssigneeDisplayName, "Parent Owner")
 
     // 天數 = 空起點格 + start..end 的每一天。
     assert.equal(data.days.length, 14) // 起點格 + 2026-10-13 ~ 2026-10-25

@@ -5,8 +5,9 @@ import { computeBurndownSeries } from "../lib/burndown-series.ts"
 const SPRINT = { startDate: "2026-10-13", endDate: "2026-10-25" }
 const TODAY = "2026-10-19"
 
-const task = (key, points, doneDate, assigneeAccountId, actualPoints = null, doneBeforeStart = false) => ({
-  key, summary: `Summary ${key}`, points, actualPoints, doneDate, doneBeforeStart,
+const task = (key, points, doneDate, assigneeAccountId, actualPoints = null, doneBeforeStart = false, parentStatus = null) => ({
+  key, summary: `Summary ${key}`, points, actualPoints, doneDate, doneBeforeStart, parentStatus,
+  parentAssigneeDisplayName: null,
   assigneeDisplayName: `Name ${assigneeAccountId ?? "none"}`,
   assigneeAccountId,
   parentIssueType: { status: "known", name: "Story" },
@@ -215,5 +216,49 @@ describe("computeBurndownSeries", () => {
     assert.equal(preAll.days[0].donePoints, 3)
     assert.equal(preAll.days[0].remainingPoints, 0)
     assert.equal(preAll.days[0].idealPoints, 0)
+  })
+
+  it("collects parent-blocked Dev-Tasks into a dark-gray bar on the last available day only", () => {
+    // T-B 開局前 Done（3）；T-P 母票受阻（5）；T-1 於 10-15 done（2）；T-2 未完成（4）。
+    const blocked = new Set(["Request Info", "Pending", "Reproduce"])
+    const series = computeBurndownSeries({
+      startDate: SPRINT.startDate, endDate: SPRINT.endDate, today: TODAY,
+      tasks: [
+        task("T-B", 3, null, "u-a", null, true, null),
+        task("T-P", 5, null, "u-a", null, false, "Request Info"),
+        task("T-1", 2, "2026-10-15", "u-a"),
+        task("T-2", 4, null, "u-b"),
+      ],
+      unestimated: [], accountIds: null, blockedParentStatuses: blocked,
+    })
+    assert.equal(series.totalPoints, 14) // 受阻仍計入總點數
+    const byDate = new Map(series.days.map((day) => [day.date, day]))
+    // 所有受阻點數歸到「目前最後一天」= today（2026-10-19）這個節點：deep-gray 5 點。
+    assert.equal(byDate.get("2026-10-19").blockedPoints, 5)
+    // 之前每一天：長條不因受阻而變、也無受阻長條；實際剩餘線不受影響。
+    for (const dayKey of ["2026-10-13", "2026-10-16"]) {
+      assert.equal(byDate.get(dayKey).blockedPoints, undefined)
+    }
+    // 剩餘：10-13 開局已扣開局前完成(3) → 14 − 3 = 11；10-16 再扣 T-1(2) → 9。
+    assert.equal(byDate.get("2026-10-13").remainingPoints, 11)
+    assert.equal(byDate.get("2026-10-16").remainingPoints, 9)
+    // 10-19 節點：剩餘再扣受阻(5) → 9 − 5 = 4；T-2 仍未完成。
+    assert.equal(byDate.get("2026-10-19").remainingPoints, 4)
+    // 10-13 未受旁邊受阻滞影響，理想線照舊從開局起點 11 傾斜（四捨五入到小數第一位）。
+    assert.equal(byDate.get("2026-10-13").idealPoints, 10.2)
+    // 未勾選（集合 null）時，受阻照樣算未完成：10-19 無受阻長條、剩餘 = 9。
+    const off = computeBurndownSeries({
+      startDate: SPRINT.startDate, endDate: SPRINT.endDate, today: TODAY,
+      tasks: [
+        task("T-B", 3, null, "u-a", null, true, null),
+        task("T-P", 5, null, "u-a", null, false, "Request Info"),
+        task("T-1", 2, "2026-10-15", "u-a"),
+        task("T-2", 4, null, "u-b"),
+      ],
+      unestimated: [], accountIds: null,
+    })
+    const offByDate = new Map(off.days.map((day) => [day.date, day]))
+    assert.equal(offByDate.get("2026-10-19").blockedPoints, undefined)
+    assert.equal(offByDate.get("2026-10-19").remainingPoints, 9)
   })
 })

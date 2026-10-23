@@ -37,11 +37,14 @@ export function BurndownChart({
   showLine: boolean
   /** 是否畫每日完成點數長條。 */
   showBar: boolean
-  /** 長條被點擊（或鍵盤啟動）時的回呼：日期＋是否為「開局前已完成」的綠色長條；未提供時長條不具互動。 */
-  onBarClick?: (date: string, beforeStart?: boolean) => void
+  /** 長條被點擊（或鍵盤啟動）時的回呼：日期＋是否為「開局前已完成」的綠色長條＋
+   *  是否為「受阻母票」的深灰長條；未提供時長條不具互動。 */
+  onBarClick?: (date: string, beforeStart?: boolean, blocked?: boolean) => void
 }) {
   // 滑鼠即時顯示的 hint（原生 <title> 有約 1 秒延遲，改用 React state 立即浮現）。
-  const [hover, setHover] = useState<{ date: string; x: number; y: number } | null>(null)
+  // `blocked` 標記是哪一根長條（false=藍色已完成、true=受阻深灰），各自的
+  // tooltip 獨立顯示、互不覆蓋。
+  const [hover, setHover] = useState<{ date: string; blocked: boolean; x: number; y: number } | null>(null)
   if (days.length < 2) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-slate-500 dark:text-slate-400">
@@ -53,6 +56,8 @@ export function BurndownChart({
   const plotW = W - PAD_L - PAD_R
   const plotH = H - PAD_T - PAD_B
   const yMax = niceCeil(Math.max(totalPoints, 1))
+  // 是否有受阻母票的深灰長條（決定是否顯示對應的圖例）。
+  const hasBlockedBar = days.some((day) => (day.blockedPoints ?? 0) > 0)
 
   // x 軸起點（0 位置）就是 days 最前面的「空起點格」（remaining＝total），
   // 兩條線都從此格的 total 起步，與理想線初始值對齊。
@@ -143,39 +148,64 @@ export function BurndownChart({
           ) : null
         )}
 
-        {/* 每日完成點數長條（showBar 時）；點擊長條顯示當天完成的 Dev-Task */}
+        {/* 每日完成點數長條（showBar 時）；點擊長條顯示當天完成的 Dev-Task。
+            「受阻母票」的點數（blockedPoints）以深灰長條疊在當天藍色長條之上。 */}
         {showBar &&
           days.map((day, index) => {
-            if (day.donePoints <= 0) return null
             const barW = Math.max(2, step(1) * 0.6)
             const x = PAD_L + step(index) - barW / 2
-            const top = y(day.donePoints)
             const bottom = y(0)
-            // 空起點格（index 0）顯示「sprint 開始前就已 Done」的點數，用綠色；
-            // 其餘 sprint 日維持藍色。
+            // 空起點格（index 0）顯示「sprint 開始前就已 Done」的點數，用綠色。
             const openingCell = index === 0
-            const rect = (
+            const hasBlue = !openingCell && day.donePoints > 0
+            const blocked = openingCell ? 0 : day.blockedPoints ?? 0
+            const hasGray = blocked > 0
+            if (!openingCell && !hasBlue && !hasGray) return null
+
+            // 各長條的 hover 處理：以 `blocked` 區分是「已完成(藍/綠)」或「受阻(灰)」，
+            // 讓滑到哪根就顯示哪根自己的 tooltip，彼此獨立、各自清除。
+            const hintHandlers = (isBlockedBar: boolean) => ({
+              onMouseMove: (event: React.MouseEvent) =>
+                setHover({ date: day.date, blocked: isBlockedBar, x: event.clientX, y: event.clientY }),
+              onMouseLeave: () =>
+                setHover((prev) =>
+                  prev && prev.date === day.date && prev.blocked === isBlockedBar ? null : prev
+                ),
+            })
+
+            // 主長條：空起點格＝綠色（開局前已完成）；其餘 sprint 日＝藍色（當天完成）。
+            const mainRect = openingCell ? (
               <rect
                 x={x}
-                y={top}
+                y={y(day.donePoints)}
                 width={barW}
-                height={Math.max(0, bottom - top)}
-                className={
-                  openingCell
-                    ? "fill-green-600/70 dark:fill-green-400/70"
-                    : "fill-blue-600/70 dark:fill-blue-400/70"
-                }
+                height={Math.max(0, bottom - y(day.donePoints))}
+                className="fill-green-600/70 dark:fill-green-400/70"
+              />
+            ) : (
+              <rect
+                x={x}
+                y={y(day.donePoints)}
+                width={barW}
+                height={Math.max(0, bottom - y(day.donePoints))}
+                className="fill-blue-600/70 dark:fill-blue-400/70"
               />
             )
-            const hintHandlers = {
-              onMouseMove: (event: React.MouseEvent) =>
-                setHover({ date: day.date, x: event.clientX, y: event.clientY }),
-              onMouseLeave: () =>
-                setHover((prev) => (prev?.date === day.date ? null : prev)),
-            }
-            // 空起點格的綠色長條也可點，列出「開局前已完成」的 Dev-Task。
+
+            // 受阻長條：深灰，疊在藍色長條**之上**（灰底＝藍頂，向上延伸到受阻高度）。
+            const grayRect = hasGray ? (
+              <rect
+                x={x}
+                y={y(day.donePoints + blocked)}
+                width={barW}
+                height={Math.max(0, y(day.donePoints) - y(day.donePoints + blocked))}
+                className="fill-slate-500/70 dark:fill-slate-300/70"
+              />
+            ) : null
+
+            // 空起點格的綠色長條可點，列出「開局前已完成」的 Dev-Task。
             if (openingCell) {
-              const rectClickable = (
+              return (
                 <g
                   key={day.date}
                   role="button"
@@ -189,33 +219,66 @@ export function BurndownChart({
                       onBarClick?.(day.date, true)
                     }
                   }}
-                  {...hintHandlers}
+                  {...hintHandlers(false)}
                 >
-                  {rect}
+                  {mainRect}
                 </g>
               )
-              return rectClickable
             }
-            if (!onBarClick) return <g key={day.date} className="burndown-bar-enter" {...hintHandlers}>{rect}</g>
-            return (
-              <g
-                key={day.date}
-                role="button"
-                tabIndex={0}
-                aria-label={`${day.date} 完成 ${formatPoints(day.donePoints)} 點，檢視當天 Dev-Task 清單`}
-                className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
-                onClick={() => onBarClick(day.date)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault()
-                    onBarClick(day.date)
-                  }
-                }}
-                {...hintHandlers}
-              >
-                {rect}
-              </g>
-            )
+
+            const bars: React.ReactNode[] = []
+            if (hasBlue) {
+              bars.push(
+                onBarClick ? (
+                  <g
+                    key={`${day.date}-done`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${day.date} 完成 ${formatPoints(day.donePoints)} 點，檢視當天 Dev-Task 清單`}
+                    className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
+                    onClick={() => onBarClick(day.date)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        onBarClick(day.date)
+                      }
+                    }}
+                    {...hintHandlers(false)}
+                  >
+                    {mainRect}
+                  </g>
+                ) : (
+                  <g key={`${day.date}-done`} className="burndown-bar-enter" {...hintHandlers(false)}>{mainRect}</g>
+                )
+              )
+            }
+            // 受阻深灰長條，疊在藍色之上；點擊列出受阻母票的 Dev-Task。
+            if (hasGray) {
+              bars.push(
+                onBarClick ? (
+                  <g
+                    key={`${day.date}-blocked`}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${day.date} 受阻 ${formatPoints(blocked)} 點，檢視受阻母票的 Dev-Task 清單`}
+                    className="burndown-bar-enter cursor-pointer outline-none focus-visible:opacity-80"
+                    onClick={() => onBarClick(day.date, undefined, true)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        onBarClick(day.date, undefined, true)
+                      }
+                    }}
+                    {...hintHandlers(true)}
+                  >
+                    {grayRect}
+                  </g>
+                ) : (
+                  <g key={`${day.date}-blocked`} className="burndown-bar-enter" {...hintHandlers(true)}>{grayRect}</g>
+                )
+              )
+            }
+            return <g key={day.date}>{bars}</g>
           })}
 
         {/* 理想線 */}
@@ -264,6 +327,12 @@ export function BurndownChart({
             </span>
           </>
         )}
+        {showBar && hasBlockedBar && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 bg-slate-500/70 dark:bg-slate-300/70" />
+            受阻母票（計為已完成）
+          </span>
+        )}
       </div>
 
       {/* 滑鼠即時 hint：原生 <title> 有約 1 秒延遲，改以 fixed 定位浮現於游標旁。 */}
@@ -277,7 +346,10 @@ export function BurndownChart({
               className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 shadow-md dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               style={{ left: hover.x, top: hover.y - 10 }}
             >
-              {day.date}：完成 {formatPoints(day.donePoints)} 點
+              {day.date}：
+              {hover.blocked
+                ? `受阻 ${formatPoints(day.blockedPoints ?? 0)} 點（計為已完成）`
+                : `完成 ${formatPoints(day.donePoints)} 點`}
             </div>
           )
         })()}

@@ -50,6 +50,7 @@ export function DevelopmentStatus({
   tasks,
   today,
   jiraBaseUrl,
+  blockedParentStatuses,
 }: {
   /** accountId → 團隊 label 的映射（由團隊選單載入）；缺省者歸「其他」。 */
   teamOf: Record<string, string>
@@ -61,15 +62,24 @@ export function DevelopmentStatus({
   today: string | null
   /** Jira 主站 URL，供彈窗列內文開外連。 */
   jiraBaseUrl: string | null
+  /** 母票目前狀態 ∈ 此集合的 Dev-Task 視為已完成（與圖表共用勾選）。 */
+  blockedParentStatuses?: ReadonlySet<string> | null
 }) {
   const [list, setList] = useState<{ title: string; tasks: BurndownTask[] } | null>(null)
 
   const teams = useMemo(
-    () => (today ? computeBurndownStatus({ tasks, today, teamOf: (accountId) => (accountId === null ? undefined : teamOf[accountId]), teamOrder }) : []),
-    [tasks, today, teamOf, teamOrder]
+    () => (today ? computeBurndownStatus({ tasks, today, teamOf: (accountId) => (accountId === null ? undefined : teamOf[accountId]), teamOrder, blockedParentStatuses }) : []),
+    [tasks, today, teamOf, teamOrder, blockedParentStatuses]
   )
 
-  // 依 teamKey + assignee + 完成與否過濾原始 tasks（同一份 teamOf 判定）。
+  // 依 teamKey + assignee + 完成與否過濾原始 tasks（同一份 teamOf 判定）；
+  // 完成判定須與計算一致：受阻母票在勾選時也視為已完成。
+  const isTaskDone = (task: BurndownTask): boolean =>
+    (task.doneDate !== null && task.doneDate <= (today ?? "")) ||
+    (blockedParentStatuses !== null &&
+      blockedParentStatuses !== undefined &&
+      task.parentStatus !== null &&
+      blockedParentStatuses.has(task.parentStatus))
   const filterTasks = (
     teamKey: string,
     assigneeAccountId: string | null | "all",
@@ -79,9 +89,9 @@ export function DevelopmentStatus({
       if (teamKey !== "other" && teamOf[task.assigneeAccountId ?? ""] !== teamKey) return false
       if (teamKey === "other" && (task.assigneeAccountId === null || teamOf[task.assigneeAccountId] !== undefined)) return false
       if (assigneeAccountId !== "all" && task.assigneeAccountId !== assigneeAccountId) return false
-      const isDone = task.doneDate !== null && task.doneDate <= (today ?? "")
-      if (done === "done" && !isDone) return false
-      if (done === "notDone" && isDone) return false
+      const taskDone = isTaskDone(task)
+      if (done === "done" && !taskDone) return false
+      if (done === "notDone" && taskDone) return false
       return true
     })
   }

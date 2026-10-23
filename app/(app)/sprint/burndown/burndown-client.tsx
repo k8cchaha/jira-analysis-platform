@@ -21,6 +21,13 @@ type StreamPhase =
   | { status: "complete" }
   | { status: "error"; message: string }
 
+/** 母票處於這些狀態時，其 Dev-Task 在勾選「受阻母票計為已完成」後視為 Done。 */
+const BLOCKED_PARENT_STATUSES: ReadonlySet<string> = new Set([
+  "Request Info",
+  "Pending",
+  "Reproduce",
+])
+
 interface BasePayload {
   today: string
   empty: boolean
@@ -68,8 +75,10 @@ export function BurndownClient({
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   const [showLine, setShowLine] = useState(true)
   const [showBar, setShowBar] = useState(true)
-  /** 被點擊的長條（一般日完成／開局前已完成）；null 表示未開啟彈窗。 */
-  const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean } | null>(null)
+  /** 勾選「受阻母票計為已完成」：母票受阻的 Dev-Task 在圖表與開發狀況都視為完成。 */
+  const [countParentBlocked, setCountParentBlocked] = useState(false)
+  /** 被點擊的長條（一般日完成／開局前已完成／受阻母票）；null 表示未開啟彈窗。 */
+  const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean; blocked?: boolean } | null>(null)
 
   // 串流資料（由 `base`／`day` 事件驅動）。
   const [phase, setPhase] = useState<StreamPhase>({ status: "idle" })
@@ -199,8 +208,9 @@ export function BurndownClient({
       tasks,
       unestimated,
       accountIds: memberIds,
+      blockedParentStatuses: countParentBlocked ? BLOCKED_PARENT_STATUSES : null,
     })
-  }, [sprint, today, lastStreamedDate, tasks, unestimated, memberIds])
+  }, [sprint, today, lastStreamedDate, tasks, unestimated, memberIds, countParentBlocked])
 
   return (
     <div className="relative">
@@ -240,11 +250,13 @@ export function BurndownClient({
           <>
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <h2 className="font-semibold text-slate-900 dark:text-white">{sprint.name}</h2>
+                <h2 className="font-semibold text-slate-900 dark:text-white">
+                      {sprint.name}
+                      <span className="font-normal text-slate-500 dark:text-slate-400">
+                        {" "}（{sprint.startDate} → {sprint.endDate}）
+                      </span>
+                    </h2>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-500 dark:text-slate-400">
-                    {sprint.startDate} → {sprint.endDate}
-                  </span>
                   <div role="group" aria-label="圖形顯示" className="flex items-center gap-3">
                     <label className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
                       <input
@@ -263,6 +275,18 @@ export function BurndownClient({
                         className="h-4 w-4 shrink-0 accent-blue-600"
                       />
                       已完成
+                    </label>
+                    <label
+                      className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200"
+                      title="母票處於受阻狀態（如 Request Info）時，其 Dev-Task 視為已完成來計算剩餘與完成度。"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={countParentBlocked}
+                        onChange={(event) => setCountParentBlocked(event.target.checked)}
+                        className="h-4 w-4 shrink-0 accent-slate-600"
+                      />
+                      受阻母票計為已完成
                     </label>
                   </div>
                 </div>
@@ -294,7 +318,7 @@ export function BurndownClient({
                     totalPoints={filtered.totalPoints}
                     showLine={showLine}
                     showBar={showBar}
-                    onBarClick={(date, beforeStart) => setClickedDay({ date, beforeStart })}
+                    onBarClick={(date, beforeStart, blocked) => setClickedDay({ date, beforeStart, blocked })}
                   />
                   {phase.status === "streaming" && (
                     <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
@@ -317,6 +341,8 @@ export function BurndownClient({
                     <DayTasksDialog
                       date={clickedDay.date}
                       beforeStart={clickedDay.beforeStart}
+                      blocked={clickedDay.blocked}
+                      blockedParentStatuses={countParentBlocked ? BLOCKED_PARENT_STATUSES : null}
                       tasks={filtered.tasks}
                       jiraBaseUrl={jiraBaseUrl}
                       onClose={() => setClickedDay(null)}
@@ -333,6 +359,7 @@ export function BurndownClient({
                 tasks={filtered.tasks}
                 today={today}
                 jiraBaseUrl={jiraBaseUrl}
+                blockedParentStatuses={countParentBlocked ? BLOCKED_PARENT_STATUSES : null}
               />
             </div>
           </>

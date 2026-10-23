@@ -107,17 +107,23 @@ export async function getBurndownBase(
   today: string,
   credentials: JiraCredentials
 ): Promise<BurndownBase> {
-  // 1. 撈此 sprint 的母票（Story / Task / Bug）。
+  // 1. 撈此 sprint 的母票（Story / Task / Bug）。request `status` 與 `assignee`，
+  //    供「受阻母票計為已完成」的 checkbox 與受阻彈窗（母票狀態／母票 Owner）用。
   const parentKeys = new Set<string>()
+  const parentInfo = new Map<string, { status: string | null; assigneeName: string | null }>()
   let parents = 0
   for await (const issues of searchJiraIssues(
     credentials,
     sprintParentIssuesJql(sprint.id),
-    []
+    ["status", "assignee"]
   )) {
     for (const issue of issues) {
       parents += 1
       parentKeys.add(issue.key)
+      parentInfo.set(issue.key, {
+        status: statusName(issue.fields.status),
+        assigneeName: assigneeDisplayName(issue.fields.assignee),
+      })
       if (parents > MAX_DEVTASKS) {
         throw new JiraBurndownError("limit", "此 Sprint 的票數過多，無法提供精確結果。")
       }
@@ -158,6 +164,8 @@ export async function getBurndownBase(
           actualPoints: actualPointValue(issue.fields[ACTUAL_STORY_POINTS_FIELD]),
           doneDate: null,
           doneBeforeStart: false,
+          parentStatus: parentStatusOf(issue.fields.parent, parentInfo),
+          parentAssigneeDisplayName: parentAssigneeOf(issue.fields.parent, parentInfo),
           assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
           assigneeAccountId: assigneeAccountId(issue.fields.assignee),
           parentIssueType: parentIssueTypeOf(issue.fields.parent),
@@ -363,6 +371,40 @@ function parentIssueTypeOf(
   const nested = parent.fields
   const name = recordFieldName(nested)
   return name ? { status: "known", name } : { status: "unknown" }
+}
+
+/** 從 Jira status 欄位（`fields.status`）取名稱；缺失/格式異常回 null。 */
+function statusName(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null
+  const name = (value as Record<string, unknown>).name
+  return typeof name === "string" && name.trim().length > 0 ? name : null
+}
+
+/** 從 Dev-Task 的 `parent` 欄位查母票目前狀態；無母票/母票不在清單回 null。 */
+function parentStatusOf(
+  value: unknown,
+  parentInfo: ReadonlyMap<string, { status: string | null; assigneeName: string | null }>
+): string | null {
+  return parentInfoOf(value, parentInfo)?.status ?? null
+}
+
+/** 從 Dev-Task 的 `parent` 欄位查母票目前指派人顯示名稱；無母票/未指派回 null。 */
+function parentAssigneeOf(
+  value: unknown,
+  parentInfo: ReadonlyMap<string, { status: string | null; assigneeName: string | null }>
+): string | null {
+  return parentInfoOf(value, parentInfo)?.assigneeName ?? null
+}
+
+/** 依母票 key 查 `parentInfo`；`value` 無 key 或不在清單回 undefined。 */
+function parentInfoOf(
+  value: unknown,
+  parentInfo: ReadonlyMap<string, { status: string | null; assigneeName: string | null }>
+): { status: string | null; assigneeName: string | null } | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const key = (value as Record<string, unknown>).key
+  if (typeof key !== "string" || key.trim().length === 0) return undefined
+  return parentInfo.get(key)
 }
 
 function recordFieldName(value: unknown): string | null {

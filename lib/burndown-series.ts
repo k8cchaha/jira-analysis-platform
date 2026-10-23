@@ -16,6 +16,10 @@ export interface BurndownTask {
   doneDate: string | null
   /** 在 sprint 開始日**之前**就已 Done（故 doneDate 在 sprint 範圍外、未經每日掃描標記）。 */
   doneBeforeStart: boolean
+  /** 母票目前狀態名稱（如 "Request Info"）；無母票或未知為 null。 */
+  parentStatus: string | null
+  /** 母票目前指派人顯示名稱；無母票或未指派為 null。 */
+  parentAssigneeDisplayName: string | null
   /** 指派人顯示名稱；未指派為 null。 */
   assigneeDisplayName: string | null
   /** 指派人 accountId；未指派為 null。 */
@@ -37,6 +41,8 @@ export interface BurndownDay {
   date: string
   /** 當天切到 Done 的點數。 */
   donePoints: number
+  /** 歸到該天（最後一天節點）的「受阻母票 Dev-Task」點數；僅 >0 時有值、畫深灰長條。 */
+  blockedPoints?: number
   /** 截至當天累計剩餘點數；未到當天（未來）為 null、不畫。 */
   remainingPoints: number | null
   /** 理想線在當天的值（等速下降）。 */
@@ -114,6 +120,15 @@ function matchesScope(
   return accountId !== null && accountIds.has(accountId)
 }
 
+/** 母票目前狀態是否落在「受阻」集合（沒有集合就不套用）。 */
+function isParentBlocked(
+  task: BurndownTask,
+  blockedParentStatuses: ReadonlySet<string> | null | undefined
+): boolean {
+  if (blockedParentStatuses === null || blockedParentStatuses === undefined) return false
+  return task.parentStatus !== null && blockedParentStatuses.has(task.parentStatus)
+}
+
 /**
  * 依選定的指派人群組（`accountIds`）重算燃盡系列。
  *
@@ -128,6 +143,11 @@ function matchesScope(
  * - `days` 最前面含一個「空起點格」（`startDate` 前一天，remaining＝total），
  *   x=0 的初始值讓實際線與理想線對齊。其 `donePoints` 顯示「sprint 開始前就
  *   Done」的點數（client 以綠色長條呈現），不累計 sprint 內每日 done。
+ * - `blockedParentStatuses`（可選）：勾選「受阻母票計為已完成」時，母票目前狀態
+ *   ∈ 此集合的 Dev-Task 視為「已完成」。這些點數**全部歸到**「目前的最後一天」
+ *   （`effectiveThrough`，即 `throughDate ?? today`）這一個節點：該天多放一段
+ *   `blockedPoints` 深灰長條、剩餘也多扣這量；**之前每一天的長條與曲線不受影響**，
+ *   故不像 `doneBeforeStart` 那樣開局就壓低整條剩餘線。
  */
 export function computeBurndownSeries({
   startDate,
@@ -137,6 +157,7 @@ export function computeBurndownSeries({
   tasks,
   unestimated,
   accountIds,
+  blockedParentStatuses,
 }: {
   startDate: string
   endDate: string
@@ -146,6 +167,8 @@ export function computeBurndownSeries({
   tasks: readonly BurndownTask[]
   unestimated: readonly BurndownUnestimated[]
   accountIds: ReadonlySet<string> | null
+  /** 受阻母票的狀態集合（見上）；未提供或 null＝不套用受阻視為完成。 */
+  blockedParentStatuses?: ReadonlySet<string> | null
 }): BurndownSeries {
   let totalPoints = 0
   const byDate = new Map<string, number>()
@@ -153,11 +176,20 @@ export function computeBurndownSeries({
   // 剩餘/總點數——它們在每日 `runningDone` 計算前就先從剩餘中扣掉，且總點數本身
   // 已有含它們（`sprintDevTasksJql` 不限制完成日期）。
   let preSprintDonePoints = 0
+  // 勾選「受阻母票計為已完成」的點數：母票受阻的 Dev-Task 全部歸到「目前的最後
+  // 一天」節點（`blockedDonePoints` 匯總）、疊成深灰長條並在那天扣剩餘；**不**
+  // 在開局壓線。
+  let blockedDonePoints = 0
   for (const task of tasks) {
     if (!matchesScope(task.assigneeAccountId, accountIds)) continue
     totalPoints += task.points
     if (task.doneBeforeStart) {
       preSprintDonePoints += task.points
+      continue
+    }
+    // 受阻母票的 Dev-Task：點數匯總，歸到最後一天節點（不進每日 byDate）。
+    if (isParentBlocked(task, blockedParentStatuses)) {
+      blockedDonePoints += task.points
       continue
     }
     // 未來還沒到：完成尚未發生，累計剩餘點數暫不列入（原始 else 分支亦不會查 future）。
@@ -184,7 +216,9 @@ export function computeBurndownSeries({
   // 只要有任何一筆「今天以前已完成」的記錄，實際剩餘線才有可信的下降資料；
   // 否則（例如串流初期資料未到、或 sprint 至今全未完成）所有天的 remainingPoints
   // 都為 null，實際線不畫——不先畫一條還沒有資料支持的平線。
-  // sprint 開始前就 Done 的任務（preSprintDonePoints > 0）也算已完成的記錄。
+  // sprint 開始前就 Done（preSprintDonePoints）也算已完成的記錄。受阻母票
+  // （blockedDonePoints）**不算**：它的點數歸到最後一天節點，不應讓過去每一天
+  // 因此冒出受到影響的曲線。
   const hasDoneRecord =
     preSprintDonePoints > 0 ||
     tasks.some(
@@ -195,8 +229,10 @@ export function computeBurndownSeries({
     )
 
   const roundedPreSprintDone = Math.round(preSprintDonePoints * 10) / 10
+  const roundedBlockedDone = Math.round(blockedDonePoints * 10) / 10
   // 理想線／實際剩餘線的共同起點：總點數扣除「開局前就已 Done」的部分，因為
   // 這些點數在 sprint 開始前就已消耗，不屬於 sprint 期間要「燃」的剩餘範圍。
+  // （受阻母票**不**從此起點扣——屬「目前起視為完成」的最小影響，理想線不受影響。）
   const roundedRemainingStart = roundedTotal - roundedPreSprintDone
   const days: BurndownDay[] = [
     // x=0 的空起點格：sprint 開跑前一天。實際剩餘線與理想線都從
@@ -216,20 +252,24 @@ export function computeBurndownSeries({
   const effectiveThrough = throughDate ?? today
   // 剩餘＝總點數 − 已完成。sprint 開始前就 Done 的點數先扣（開局即已完成），
   // 之後逐日再加扣當天完成的點數，讓剩餘線反映「第一天的實際點已落後理想線」。
+  // 受阻母票的點數**不**在開局扣：全部歸到 `effectiveThrough` 那天節點。
   let runningDone = roundedPreSprintDone
   for (const date of eachDay(startDate, endDate)) {
     const donePoints = Math.round((byDate.get(date) ?? 0) * 10) / 10
     const future = date > today
     const beyondStream = date > effectiveThrough
+    // 受阻點數只放在「目前的最後一天」節點（可見區內），疊在當天完成長條之上。
+    const blocked = date === effectiveThrough ? roundedBlockedDone : 0
     // 只有「今天以前（含）」且「串流已掃描到」的完成才往前累計剩餘點數。
     runningDone += donePoints
     days.push({
       date,
       donePoints,
+      blockedPoints: blocked > 0 ? blocked : undefined,
       remainingPoints:
         future || !hasDoneRecord || beyondStream
           ? null
-          : roundedTotal - runningDone,
+          : roundedTotal - runningDone - blocked,
       idealPoints:
         roundedTotal === 0 ? 0 : remainingAt(roundedRemainingStart, date, idealStart, endDate),
     })

@@ -4,13 +4,14 @@ import { computeBurndownStatus } from "../lib/burndown-status.ts"
 
 const TODAY = "2026-10-19"
 
-const task = (key, points, doneDate, assignee, actualPoints = null, doneBeforeStart = false) => ({
+const task = (key, points, doneDate, assignee, actualPoints = null, doneBeforeStart = false, parentStatus = null) => ({
   key,
   summary: `Summary ${key}`,
   points,
   actualPoints,
   doneDate,
   doneBeforeStart,
+  parentStatus,
   assigneeDisplayName: assignee ? `Display ${assignee}` : null,
   assigneeAccountId: assignee,
 })
@@ -158,6 +159,49 @@ describe("computeBurndownStatus", () => {
     assert.equal(web.doneTasks, 2)
     assert.equal(web.donePoints, 9)
     assert.equal(web.completionPercent, Math.round((9 / 17) * 1000) / 10)
+  })
+
+  it("treats parent-blocked Dev-Tasks as done only when the checkbox is on", () => {
+    const requestInfo = new Set(["Request Info"])
+    const base = [
+      task("T-1", 5, null, "u-web-1", 6, false, "Request Info"), // 母票受阻
+      task("T-2", 8, null, "u-web-1", null, false, "To Do"), // 正常未完成
+      task("T-3", 3, "2026-10-15", "u-web-1"), // 已完成
+    ]
+    // 未勾選（沒有集合）：受阻照算未完成。
+    const off = computeBurndownStatus({ tasks: base, today: TODAY, teamOf, teamOrder: TEAM_ORDER })
+    const web1Off = off[0].assignees[0]
+    assert.equal(web1Off.doneTasks, 1)
+    assert.equal(web1Off.notDoneTasks, 2)
+    assert.equal(web1Off.notDonePoints, 13) // 8 + 5
+    // 勾選後：T-1（Request Info）視為完成。
+    const on = computeBurndownStatus({ tasks: base, today: TODAY, teamOf, teamOrder: TEAM_ORDER, blockedParentStatuses: requestInfo })
+    const web1On = on[0].assignees[0]
+    assert.equal(web1On.doneTasks, 2)
+    assert.equal(web1On.notDoneTasks, 1)
+    assert.equal(web1On.donePoints, 8) // 5 + 3
+    assert.equal(web1On.notDonePoints, 8)
+    assert.equal(web1On.doneActualPoints, 6) // 只有 T-1 有 actual
+    // 團隊層級同步。
+    assert.equal(on[0].doneTasks, 2)
+    assert.equal(on[0].notDonePoints, 8)
+  })
+
+  it("does not treat tasks in blocked set as done for non-matching parent statuses", () => {
+    const result = computeBurndownStatus({
+      tasks: [
+        task("T-1", 5, null, "u-web-1", null, false, "Done"), // 母票 Done，非受阻集合
+        task("T-2", 3, "2026-10-15", "u-web-1", null, false, "Request Info"), // 受阻但已完成
+      ],
+      today: TODAY,
+      teamOf,
+      teamOrder: TEAM_ORDER,
+      blockedParentStatuses: new Set(["Request Info"]),
+    })
+    // T-1 母票狀態不在受阻集合 → 仍算未完成；T-2 本就完成。
+    assert.equal(result[0].assignees[0].doneTasks, 1)
+    assert.equal(result[0].assignees[0].notDoneTasks, 1)
+    assert.equal(result[0].assignees[0].notDonePoints, 5)
   })
 
   it("orders teams by teamOrder and appends unknown teams last", () => {
