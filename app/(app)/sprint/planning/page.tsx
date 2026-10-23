@@ -1,4 +1,5 @@
 import { PageHeader } from "@/components/page-header"
+import { auth } from "@/auth"
 import { PlanningClient } from "@/app/(app)/sprint/planning/planning-client"
 import {
   parseProjectKey,
@@ -11,11 +12,10 @@ import {
 } from "@/lib/jira-sprint-data"
 import {
   getPlanningData,
-  getPlanningSubset,
   JiraPlanningError,
   planningJiraBaseUrl,
-  type PlanningTask,
 } from "@/lib/planning-data"
+import type { PlanningTask } from "@/lib/planning-subset"
 
 export const metadata = {
   title: "Planning",
@@ -30,6 +30,12 @@ export default async function PlanningPage({
   const project = parseProjectKey(params.project)
   const today = new Date().toISOString().slice(0, 10)
 
+  // 目前登入者（Atlassian/Jira accountId＝session.user.id）。供 Capacity 判斷
+  // 「點擊者是否為該團隊成員」以決定能否編輯。（目前假資料：登入者被視為
+  // Web/QA 團隊成員。）
+  const session = await auth()
+  const viewerAccountId = session?.user?.id ?? ""
+
   const planningSprints: SprintRecord[] = project
     ? [...getPlanningSprints(project, today)]
     : []
@@ -41,16 +47,10 @@ export default async function PlanningPage({
 
   let tasks: PlanningTask[] = []
   let dataError: { code: string; message: string } | null = null
-  let unestimated: PlanningTask[] | null = null
-  let unassigned: PlanningTask[] | null = null
   if (project && selectedSprint) {
     try {
       const data = await getPlanningData(selectedSprint)
       tasks = data.tasks
-      // 「未估時／未分派」彈窗的單也在此 server 端撈好（見 lib/planning-data.ts
-      // 的 getPlanningSubset），client 只顯示，不自行組 JQL / 撈 Jira。
-      unestimated = (await getPlanningSubset(selectedSprint, "unestimated")).tasks
-      unassigned = (await getPlanningSubset(selectedSprint, "unassigned")).tasks
     } catch (error) {
       dataError =
         error instanceof JiraPlanningError
@@ -63,7 +63,6 @@ export default async function PlanningPage({
     <>
       <PageHeader
         title="Planning"
-        description="規劃衝刺內容與估算（列出所選 Sprint 的 Dev-Task 明細）。"
       />
 
       <PlanningClient
@@ -73,9 +72,8 @@ export default async function PlanningPage({
         sprint={selectedSprint ?? null}
         tasks={tasks}
         dataError={dataError}
-        unestimated={unestimated}
-        unassigned={unassigned}
         jiraBaseUrl={planningJiraBaseUrl()}
+        viewerAccountId={viewerAccountId}
       />
     </>
   )

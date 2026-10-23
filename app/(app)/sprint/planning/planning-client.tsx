@@ -1,11 +1,13 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
-import type { PlanningTask } from "@/lib/planning-data"
+import type { PlanningTask } from "@/lib/planning-subset"
+import { parsePlanningSubsetResult } from "@/lib/planning-subset"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
+import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
 import { TeamSelect } from "@/components/team-select"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { EditDialog } from "@/components/edit-dialog"
@@ -27,9 +29,8 @@ export function PlanningClient({
   sprint,
   tasks,
   dataError,
-  unestimated,
-  unassigned,
   jiraBaseUrl,
+  viewerAccountId,
 }: {
   project: SprintProjectKey | null
   sprints: readonly SprintRecord[]
@@ -37,11 +38,8 @@ export function PlanningClient({
   sprint: SprintRecord | null
   tasks: readonly PlanningTask[]
   dataError: { code: string; message: string } | null
-  /** 未估時的 Dev-Task（server 撈好；無 sprint/資料時為 null）。 */
-  unestimated: readonly PlanningTask[] | null
-  /** 未分派的 Dev-Task（同上）。 */
-  unassigned: readonly PlanningTask[] | null
   jiraBaseUrl: string | null
+  viewerAccountId: string
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -95,19 +93,23 @@ export function PlanningClient({
           <div className="flex items-center gap-2">
             <JqlButton
               label="未估時"
-              tasks={unestimated}
-              sprintName={sprint?.name ?? null}
+              kind="unestimated"
+              project={project}
+              sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}
             />
             <JqlButton
               label="未分派"
-              tasks={unassigned}
-              sprintName={sprint?.name ?? null}
+              kind="unassigned"
+              project={project}
+              sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}
             />
           </div>
         }
       />
+
+      {project && sprint && <CapacityPanel project={project} viewerAccountId={viewerAccountId} />}
 
       <div className="mt-8">
         {!project ? (
@@ -131,9 +133,14 @@ export function PlanningClient({
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-semibold text-slate-900 dark:text-white">{sprint.name}</h2>
+              <h2 className="font-semibold text-slate-900 dark:text-white">
+                {sprint.name}
+                <span className="font-normal text-slate-500 dark:text-slate-400">
+                  {" "}（{sprint.startDate} → {sprint.endDate}）
+                </span>
+              </h2>
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {sprint.startDate} → {sprint.endDate} · 共{" "}
+                共{" "}
                 <span className="font-semibold text-slate-900 dark:text-white">
                   {filtered.length}
                 </span>{" "}
@@ -283,20 +290,61 @@ function EmptyState({
   )
 }
 
-/** Filter 列右側的按鈕：點開彈出「JQL 撈出來的單」清單；`tasks` 為 null（無 sprint/資料）時停用。 */
+/**
+ * Filter 列右側的按鈕：點開彈出「JQL 撈出來的單」清單。為避免等全部資料才解除
+ * 遮罩，這裡**自行**向 `/api/sprint/planning/subset` 撈各自子集合：載入中先顯示
+ * 骨架，資料回來後顯示按鈕＋計數（計數 0 時停用、不可點）。`project`／`sprintId`
+ * 為 null（無專案／無 sprint）時停用、不 fetch。
+ */
 function JqlButton({
   label,
-  tasks,
-  sprintName,
+  kind,
+  project,
+  sprintId,
   jiraBaseUrl,
 }: {
   label: string
-  tasks: readonly PlanningTask[] | null
-  sprintName: string | null
+  kind: "unestimated" | "unassigned"
+  project: SprintProjectKey | null
+  sprintId: number | null
   jiraBaseUrl: string | null
 }) {
   const [open, setOpen] = useState(false)
-  const disabled = tasks === null
+  const [state, setState] = useState<{ status: "loading" } | { status: "loaded"; tasks: PlanningTask[] } | { status: "error" }>({ status: "loading" })
+
+  useEffect(() => {
+    if (project === null || sprintId === null) {
+      setState({ status: "loaded", tasks: [] })
+      return
+    }
+    const controller = new AbortController()
+    let active = true
+    setState({ status: "loading" })
+    queueMicrotask(async () => {
+      if (!active) return
+      try {
+        const params = new URLSearchParams({ project, sprint: String(sprintId), kind })
+        const response = await fetch(`/api/sprint/planning/subset?${params}`, { cache: "no-store", signal: controller.signal })
+        const result = parsePlanningSubsetResult(await response.json())
+        if (!response.ok && result.status === "success") throw new Error("Invalid response")
+        if (active) setState(result.status === "success" ? { status: "loaded", tasks: result.data.tasks } : { status: "error" })
+      } catch {
+        if (active) setState({ status: "error" })
+      }
+    })
+    return () => { active = false; controller.abort() }
+  }, [project, sprintId, kind])
+
+  const loading = state.status === "loading"
+  const tasks = state.status === "loaded" ? state.tasks : null
+  const count = tasks === null ? null : tasks.length
+
+  // 資料尚在載入時，先渲染與按鈕同尺寸的骨架，回來再換成真按鈕。
+  if (loading) {
+    return <JqlButtonSkeleton />
+  }
+
+  const disabled = count === null || count === 0
   return (
     <>
       <button
@@ -310,9 +358,9 @@ function JqlButton({
           <path d="m16 16 5 5" />
         </svg>
         {label}
-        {tasks !== null && tasks.length > 0 && (
+        {count !== null && (
           <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-            {tasks.length}
+            {count}
           </span>
         )}
       </button>
@@ -320,7 +368,6 @@ function JqlButton({
         <JqlDialog
           label={label}
           tasks={tasks}
-          sprintName={sprintName}
           jiraBaseUrl={jiraBaseUrl}
           onClose={() => setOpen(false)}
         />
@@ -329,54 +376,91 @@ function JqlButton({
   )
 }
 
-/** 顯示「JQL 撈出來的單」的唯讀彈窗：清單 + 每張票可另開 Jira。 */
+/** 載入中的骨架：與真按鈕接近的寬高動畫佔位，避免版面跳動。 */
+function JqlButtonSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      className="flex h-10 w-28 animate-pulse items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 motion-reduce:animate-none dark:border-slate-800 dark:bg-slate-800"
+    >
+      <div className="h-3 w-12 rounded bg-slate-200 dark:bg-slate-700" />
+      <div className="h-4 w-5 rounded-full bg-slate-200 dark:bg-slate-700" />
+    </div>
+  )
+}
+
+/** 顯示「JQL 撈出來的單」的唯讀彈窗：仿其他彈窗的 Table＋Mobile 卡片格式。 */
 function JqlDialog({
   label,
   tasks,
-  sprintName,
   jiraBaseUrl,
   onClose,
 }: {
   label: string
   tasks: readonly PlanningTask[]
-  sprintName: string | null
   jiraBaseUrl: string | null
   onClose: () => void
 }) {
   return (
-    <EditDialog title={label} description="" compact iconClose onClose={onClose}>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
-        <p className="mb-3 text-xs leading-5 text-slate-500 dark:text-slate-400">
-          {sprintName ? `以下為「${label}」的 Dev-Task（${sprintName}）。` : `以下為「${label}」的 Dev-Task。`}
-        </p>
-
+    <EditDialog
+      title={label}
+      description=""
+      count={tasks.length}
+      iconClose
+      onClose={onClose}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {tasks.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-            此 Sprint 沒有符合條件的 Dev-Task。
-          </p>
+          <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">此 Sprint 沒有符合條件的 Dev-Task。</p>
         ) : (
-          <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-            {tasks.map((task) => (
-              <li key={task.key} className="flex items-center gap-3 py-2.5">
-                <ParentIssueTypeIcon parent={task.parentIssueType} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <>
+            <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
+              <table className="w-full min-w-[640px] table-fixed text-left text-sm">
+                <caption className="sr-only">{label} 的 Dev-Task</caption>
+                <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  <tr>
+                    <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>
+                    <th scope="col" className="w-32 px-3 py-3 font-medium">Ticket</th>
+                    <th scope="col" className="w-24 px-3 py-3 font-medium">Status</th>
+                    <th scope="col" className="px-3 py-3 font-medium">Summary</th>
+                    <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>
+                    <th scope="col" className="w-20 px-3 py-3 text-right font-medium" title="Story Points">SP</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                  {tasks.map((task) => (
+                    <tr key={task.key} className="align-top">
+                      <td className="py-3 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
+                      <td className="px-3 py-3"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
+                      <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.status ?? "—"}</td>
+                      <td className="break-words px-3 py-3">{task.summary || "—"}</td>
+                      <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.assigneeDisplayName || "—"}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="divide-y divide-slate-200 px-4 md:hidden dark:divide-slate-800">
+              {tasks.map((task) => (
+                <article key={task.key} className="py-4">
+                  <div className="flex items-center gap-2">
+                    <ParentIssueTypeIcon parent={task.parentIssueType} />
                     <TicketLink task={task} jiraBaseUrl={jiraBaseUrl} />
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400" title="Story Points">
+                    <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400" title="Story Points">
                       SP {formatPoints(task.points)}
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate break-words text-xs text-slate-500 dark:text-slate-400">
-                    {task.summary || "—"}
+                  <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">
+                    Assignee：{task.assigneeDisplayName || "—"}
+                    <span className="mx-1">·</span>
+                    Status：{task.status ?? "—"}
                   </p>
-                </div>
-                <div className="shrink-0 text-right text-xs leading-5 text-slate-500 dark:text-slate-400">
-                  <div>{task.status ?? "—"}</div>
-                  <div className="max-w-32 truncate">{task.assigneeDisplayName || "—"}</div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                  <p className="mt-1 break-words text-sm text-slate-800 dark:text-slate-200">{task.summary || "—"}</p>
+                </article>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </EditDialog>

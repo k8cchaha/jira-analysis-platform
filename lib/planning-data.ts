@@ -15,6 +15,7 @@ import {
 import { STORY_POINTS_FIELD } from "@/lib/jira-fields"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
+import type { PlanningTask } from "@/lib/planning-subset"
 
 export class JiraPlanningError extends Error {
   constructor(
@@ -24,23 +25,6 @@ export class JiraPlanningError extends Error {
     super(message)
     this.name = "JiraPlanningError"
   }
-}
-
-/**
- * Planning 明細表的一列 Dev-Task。與燃盡圖不同，這裡把「估計＋未估計」的單
- * 都放同一張表：未估計的 `points` 為 `null`（顯示「—」），不因此中斷。
- * `status` 是 Jira 目前的工作流狀態名稱（Planning 只展示，不做群組/圖表）。
- */
-export interface PlanningTask {
-  key: string
-  summary: string | null
-  /** 目前的 status 名稱；讀不到為 null。 */
-  status: string | null
-  /** 已估計的 Story Points；未估計（無法提供）為 null。 */
-  points: number | null
-  assigneeDisplayName: string | null
-  assigneeAccountId: string | null
-  parentIssueType: MissingIssue["parentIssueType"]
 }
 
 export interface PlanningData {

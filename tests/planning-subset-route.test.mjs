@@ -1,0 +1,259 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { fileURLToPath } from "node:url"
+import vm from "node:vm"
+import { describe, it } from "node:test"
+
+const require = createRequire(import.meta.url)
+const ts = require("typescript")
+const root = new URL("../", import.meta.url)
+const compiled = new Map()
+const plain = (value) => JSON.parse(JSON.stringify(value))
+
+const TODAY = "2026-10-21"
+
+/**
+ * 載入新的 Planning subset API route（`app/api/sprint/planning/subset/route.ts`）
+ * 及其依賴，stub `@/auth`、`@/lib/jira-token`、`server-only`、`node:crypto`，
+ * 並 mock `/rest/api/3/search/jql`（母票搜尋 → 子集合搜尋）做端到端驗證。
+ */
+function harness(t, options = {}) {
+  const violations = []
+  const tokenCalls = []
+  const fail = (message) => { violations.push(message); throw new Error(message) }
+  class JiraAuthorizationError extends Error {
+    constructor(code) { super("Fixture authorization error"); this.code = code }
+  }
+  class JiraHttpError extends Error { constructor(status) { super(`Fixture http ${status}`); this.status = status } }
+
+  // 母票（unestimated 子集合的母票）；parseIssue 需要 fields.project.id。
+  const parents = options.parents ?? [
+    { key: "SUN-100", id: "1", fields: { project: { id: "10" } } },
+    { key: "SUN-101", id: "2", fields: { project: { id: "10" } } },
+  ]
+  // 子集合 Dev-Task：未估時（points 缺欄）＋未分派（assignee 空）共用同一批 fixture，
+  // JQL 只在 server 端組合；此 mock 依載入內容決定母票/子集合回應。
+  const subsetIssues = options.subsetIssues ?? [
+    {
+      id: "10", key: "SUN-102",
+      fields: {
+        project: { id: "10" },
+        summary: "Unestimated task",
+        status: { name: "In Progress" },
+        assignee: null,
+        parent: { id: "450", key: "SUN-100", fields: { issuetype: { name: "Story" } } },
+      },
+    },
+    {
+      id: "11", key: "SUN-103",
+      fields: {
+        project: { id: "10" },
+        summary: "Another task",
+        status: { name: "To Do" },
+        assignee: { displayName: "Owner A", accountId: "aa1" },
+        parent: { id: "451", key: "SUN-101", fields: { issuetype: { name: "Task" } } },
+      },
+    },
+  ]
+
+  const globals = {
+    Buffer, URL, URLSearchParams, AbortSignal, Request, Response,
+    process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    console: { error: () => {} },
+    fetch: async (url, init = {}) => {
+      const prefix = `https://api.atlassian.com/ex/jira/${encodeURIComponent(options.cloudId ?? "fixture-cloud")}`
+      if (!url.startsWith(prefix + "/rest/api/3/")) return fail(`Unexpected Jira origin/route: ${url}`)
+      if (init.headers?.Authorization !== "Bearer fixture-token-not-real") return fail("Unexpected authorization fixture")
+      if (init.cache !== "no-store") return fail("Jira requests must not be cached")
+      const path = url.slice(prefix.length)
+      const method = init.method ?? "GET"
+      const body = init.body ? JSON.parse(init.body) : null
+      if (path === "/rest/api/3/search/jql" && method === "POST") {
+        if (body.maxResults !== 100) return fail("Search must use maxResults 100")
+        // 母票搜尋：sprint = … ，fields 應為自動補入的 ["project"]。
+        if (/\bsprint = \d+/.test(body.jql)) {
+          if (JSON.stringify(body.fields) !== '["project"]') return fail("Parent search must request only project")
+          return new Response(JSON.stringify({ issues: parents, isLast: true }), { status: 200 })
+        }
+        // 子集合搜尋：parent in (...) AND issuetype = "Dev-Task" …
+        const expectedFields = JSON.stringify(["project", "summary", "assignee", "parent", "status", "customfield_10005"])
+        if (JSON.stringify(body.fields) !== expectedFields) return fail("Subset search must request planning fields")
+        if (options.responseStatus) return new Response(null, { status: options.responseStatus })
+        return new Response(JSON.stringify({ issues: subsetIssues, isLast: true }), { status: 200 })
+      }
+      return fail(`Unexpected Jira route: ${method} ${path}`)
+    },
+  }
+  const sandbox = vm.createContext(globals)
+  const allowed = [
+    "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts",
+    "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts",
+    "lib/jira-sprint-data.ts", "lib/burndown-params.ts", "lib/planning-data.ts",
+    "lib/planning-subset.ts", "app/api/sprint/planning/subset/route.ts",
+  ]
+  const modules = new Map()
+  function load(path) {
+    if (modules.has(path)) return modules.get(path).exports
+    if (!allowed.includes(path)) return fail(`Unexpected module: ${path}`)
+    const loaded = { exports: {} }
+    modules.set(path, loaded)
+    if (!compiled.has(path)) {
+      const filename = fileURLToPath(new URL(path, root))
+      compiled.set(path, ts.transpileModule(readFileSync(filename, "utf8"), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }, fileName: filename,
+      }).outputText)
+    }
+    const fixtureRequire = (specifier) => {
+      if (specifier === "server-only") return {}
+      if (specifier === "node:crypto") return require("node:crypto")
+      if (specifier === "@/auth") return { auth: async () => (options.unauthenticated ? null : { user: { id: "fixture-user" } }) }
+      if (specifier === "@/lib/jira-token") return {
+        JiraAuthorizationError,
+        JiraHttpError,
+        getJiraToken: async () => {
+          tokenCalls.push(true)
+          if (options.authError) throw new JiraAuthorizationError(options.authError)
+          return { cloudId: options.cloudId ?? "fixture-cloud", accessToken: "fixture-token-not-real" }
+        },
+      }
+      if (specifier.startsWith("@/lib/")) return load(specifier.slice(2) + (specifier.endsWith(".ts") ? "" : ".ts"))
+      if (specifier.startsWith("./")) return load("lib/" + specifier.slice(2) + (specifier.endsWith(".ts") ? "" : ".ts"))
+      return fail(`Unexpected require: ${specifier}`)
+    }
+    vm.runInContext(`(function(require,module,exports){\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loaded, loaded.exports)
+    return loaded.exports
+  }
+  t.after(() => assert.deepEqual(violations, []))
+  const route = load("app/api/sprint/planning/subset/route.ts")
+  const model = load("lib/planning-subset.ts")
+  return { route, model, tokenCalls }
+}
+
+function GETroute(route, params) {
+  const qs = new URLSearchParams(params).toString()
+  return route.GET(new Request(`https://fixture.example.invalid/api/sprint/planning/subset${qs ? `?${qs}` : ""}`))
+}
+
+describe("planning subset route — auth & params", () => {
+  it("無 session → 401，不打 token、不打 Jira", async (t) => {
+    const h = harness(t, { unauthenticated: true })
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 401)
+    const body = await res.json()
+    assert.equal(body.status, "error")
+    assert.equal(body.error.code, "reauthorize")
+    assert.equal(h.tokenCalls.length, 0)
+  })
+
+  it("壞 project → 400，不打 token", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "NOPE", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+    assert.equal(h.tokenCalls.length, 0)
+  })
+
+  it("專案無進行中/未來 sprint（PRIDE）→ 400", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "PRIDE", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+  })
+
+  it("壞 kind → 400", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "bogus" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+  })
+
+  it("多重參數 → 400", async (t) => {
+    const h = harness(t)
+    const url = new URL("https://fixture.example.invalid/api/sprint/planning/subset")
+    url.searchParams.append("project", "SUN")
+    url.searchParams.append("project", "TKK")
+    url.searchParams.append("sprint", "7517")
+    url.searchParams.append("kind", "unestimated")
+    const res = await h.route.GET(new Request(url))
+    assert.equal(res.status, 400)
+  })
+})
+
+describe("planning subset route — success", () => {
+  it("撈子集合並回 success { tasks }", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, "success")
+    const tasks = plain(body.data.tasks)
+    assert.deepEqual(tasks.map((x) => x.key), ["SUN-102", "SUN-103"])
+    // points 缺欄 → null（未估時）；assignee 空 → null。
+    assert.equal(tasks[0].points, null)
+    assert.equal(tasks[0].assigneeDisplayName, null)
+    assert.deepEqual(tasks[0].parentIssueType, { status: "known", name: "Story" })
+    assert.deepEqual(tasks[1].parentIssueType, { status: "known", name: "Task" })
+    assert.equal(tasks[1].assigneeAccountId, "aa1")
+    // 該回應可直接經 client validator 解碼。
+    const parsed = h.model.parsePlanningSubsetResult(body)
+    assert.equal(parsed.status, "success")
+  })
+})
+
+describe("planning subset client validator (parsePlanningSubsetResult)", () => {
+  const validTask = (over = {}) => ({
+    key: "SUN-102",
+    summary: "S",
+    status: "In Progress",
+    points: 3.5,
+    assigneeDisplayName: "Owner",
+    assigneeAccountId: "aa1",
+    parentIssueType: { status: "known", name: "Story" },
+    ...over,
+  })
+  const ok = (t, payload) => {
+    const h = harness(t)
+    const parsed = h.model.parsePlanningSubsetResult(payload)
+    assert.equal(parsed.status, "success")
+    return parsed
+  }
+
+  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee）", (t) => {
+    const parsed = ok(t, {
+      status: "success",
+      data: { tasks: [
+        validTask(),
+        validTask({ key: "SUN-103", points: null, assigneeDisplayName: null, assigneeAccountId: null, parentIssueType: { status: "none" } }),
+        validTask({ key: "SUN-104", parentIssueType: { status: "unknown" } }),
+      ] },
+    })
+    if (parsed.status !== "success") return
+    assert.equal(parsed.data.tasks[0].points, 3.5)
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[1].parentIssueType)), { status: "none" })
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[2].parentIssueType)), { status: "unknown" })
+  })
+
+  it("回傳 error 分支並保留 code/message", (t) => {
+    const h = harness(t)
+    const parsed = h.model.parsePlanningSubsetResult({ status: "error", error: { code: "limit", message: "太多了" } })
+    assert.equal(parsed.status, "error")
+    if (parsed.status !== "error") return
+    assert.equal(parsed.error.code, "limit")
+    assert.equal(parsed.error.message, "太多了")
+  })
+
+  it("拒絕重複 key / 缺 key / 壞 points / 未列白名單的 error code", (t) => {
+    const h = harness(t)
+    const good = { status: "success", data: { tasks: [] } }
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [validTask(), validTask()] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), key: "" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), points: -1 }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ status: "error", error: { code: "nonsense", message: "x" } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ status: "success", data: "not-object" }))
+    // 壞 parentIssueType（known 缺 name）做安全 fallback 為 unknown，而非拒絕。
+    const parsed = h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), parentIssueType: { status: "known" } }] } })
+    assert.equal(parsed.status, "success")
+    if (parsed.status === "success") assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[0].parentIssueType)), { status: "unknown" })
+  })
+})
