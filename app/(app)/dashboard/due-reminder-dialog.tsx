@@ -102,11 +102,11 @@ function DueGroup({ title, issues, showAssignee, jiraBaseUrl, today, overdue }: 
           <table className="w-full min-w-[800px] table-fixed text-left text-sm">
             <caption className="sr-only">{title} Issue 明細</caption>
             <thead className="border-b border-slate-200 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <tr><th scope="col" className="w-32 px-3 py-3 font-medium">Ticket</th><th scope="col" className="w-28 px-3 py-3 font-medium">Issue Type</th><th scope="col" className="px-3 py-3 font-medium">Summary</th><th scope="col" className="w-32 px-3 py-3 font-medium">Status</th><th scope="col" className="w-32 px-3 py-3 font-medium">逾期日</th>{showAssignee && <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>}</tr>
+              <tr><th scope="col" className="w-32 px-3 py-3 font-medium">Ticket</th><th scope="col" className="w-28 px-3 py-3 font-medium">Issue Type</th><th scope="col" className="w-32 px-3 py-3 font-medium">Status</th><th scope="col" className="px-3 py-3 font-medium">Summary</th><th scope="col" className="w-32 px-3 py-3 font-medium">逾期日</th>{showAssignee && <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>}</tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
               {issues.map((issue) => <tr key={issue.id} className="align-top">
-                <td className="px-3 py-3"><Ticket issue={issue} jiraBaseUrl={jiraBaseUrl} /></td><td className={`break-words px-3 py-3 font-medium ${issueTypeColor(issue.issueType)}`}>{issue.issueType}</td><td className="break-words px-3 py-3">{issue.summary}</td><td className={`break-words px-3 py-3 ${statusColor(issue.status)}`}>{issue.status}</td><td className="px-3 py-3 tabular-nums"><DueDays dueDate={issue.dueDate} today={today} overdue={overdue} /></td>{showAssignee && <td className="break-words px-3 py-3">{issue.assigneeDisplayName || "—"}</td>}
+                <td className="px-3 py-3"><Ticket issue={issue} jiraBaseUrl={jiraBaseUrl} /></td><td className={`break-words px-3 py-3 font-medium ${issueTypeColor(issue.issueType)}`}>{issue.issueType}</td><td className={`break-words px-3 py-3 ${statusColor(issue.status)}`}>{issue.status}</td><td className="break-words px-3 py-3">{issue.summary}</td><td className="px-3 py-3 tabular-nums"><DueDays dueDate={issue.dueDate} today={today} overdue={overdue} /></td>{showAssignee && <td className="break-words px-3 py-3">{issue.assigneeDisplayName || "—"}</td>}
               </tr>)}
             </tbody>
           </table>
@@ -116,8 +116,8 @@ function DueGroup({ title, issues, showAssignee, jiraBaseUrl, today, overdue }: 
             <p className="text-sm font-medium"><Ticket issue={issue} jiraBaseUrl={jiraBaseUrl} /></p>
             <dl className="mt-3 space-y-2 text-sm">
               <div><dt className="text-xs text-slate-500 dark:text-slate-400">Issue Type</dt><dd className={`mt-1 break-words font-medium ${issueTypeColor(issue.issueType)}`}>{issue.issueType}</dd></div>
-              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Summary</dt><dd className="mt-1 break-words">{issue.summary}</dd></div>
               <div><dt className="text-xs text-slate-500 dark:text-slate-400">Status</dt><dd className={`mt-1 break-words ${statusColor(issue.status)}`}>{issue.status}</dd></div>
+              <div><dt className="text-xs text-slate-500 dark:text-slate-400">Summary</dt><dd className="mt-1 break-words">{issue.summary}</dd></div>
               <div><dt className="text-xs text-slate-500 dark:text-slate-400">逾期日</dt><dd className="mt-1 tabular-nums"><DueDays dueDate={issue.dueDate} today={today} overdue={overdue} /></dd></div>
               {showAssignee && <div><dt className="text-xs text-slate-500 dark:text-slate-400">Assignee</dt><dd className="mt-1 break-words">{issue.assigneeDisplayName || "—"}</dd></div>}
             </dl>

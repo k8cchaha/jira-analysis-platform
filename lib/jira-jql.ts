@@ -47,6 +47,41 @@ export function sprintDevTasksDoneBeforeJql(
   return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "${beforeDate}"`
 }
 
+/**
+ * 儀表板下方的開發任務看板（跨專案）全部 active Dev-Task：套用上方 Dashboard scope 的 assignee
+ * （self→currentUser()；person→`=`；team→`in (...)`＋有選 project 才加 project in (...)），
+ * person/team 並加 `created >= -Nd`。`boardDays` 非 null 時再疊加「近 X 天建立或更新」
+ * （`created` 或 `updated` 任一時點在 -Xd 內）；null 表示看板不套重近條件。Done 已移除
+ * 欄位，故 JQL 用 `status not in ("Done")` 不撈完成任務。scope/`boardDays` 應已由呼叫端驗證。
+ */
+export function scrumBoardDevTasksJql(scope: ResolvedDashboardScope, boardDays: number | null): string {
+  let assignee = "assignee = currentUser()"
+  let projects = ""
+  let date = ""
+  if (scope.mode !== "self") {
+    dashboardDays(String(scope.days))
+    date = ` AND created >= -${scope.days}d`
+    if (
+      !["person", "team-project"].includes(scope.mode) ||
+      !scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT ||
+      scope.accountIds.some((id) => !isDashboardAccountId(id)) ||
+      (scope.mode === "person" && (scope.accountIds.length !== 1 || scope.projects.length !== 0)) ||
+      scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))
+    ) throw new DashboardFilterError()
+    const ids = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`)
+    assignee = scope.mode === "person" ? `assignee = ${ids[0]}` : `assignee in (${ids.join(", ")})`
+    if (scope.projects.length) projects = ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})`
+  }
+  let recency = ""
+  if (boardDays !== null) {
+    dashboardDays(String(boardDays))
+    recency = ` AND (created >= -${boardDays}d OR updated >= -${boardDays}d)`
+  }
+  const jql = `issuetype = "Dev-Task" AND status not in ("Done") AND ${assignee}${date}${projects}${recency} ORDER BY key ASC`
+  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
+  return jql
+}
+
 /** 某組母票之下、尚未估計 Story Points 的 Dev-Task（Planning 彈窗顯示用）。 */
 export function sprintUnestimatedJql(parentKeys: readonly string[]): string {
   return `${sprintDevTasksJql(parentKeys)} AND ${storyPointsJql} in (Empty, 0)`
