@@ -21,6 +21,8 @@ export type AppRoute =
   | "/reports/saved/list"
   | "/reports/exports/list"
   | "/settings/jira"
+  | "/settings/system"
+  | "/settings/project"
 
 export type NavigationIcon =
   | "dashboard"
@@ -182,6 +184,24 @@ export const navigationCategories = [
         label: "匯出紀錄",
         icon: "export",
         routes: [{ href: "/reports/exports/list", label: "匯出清單" }],
+      },
+    ],
+  },
+  {
+    id: "settings",
+    label: "設定",
+    features: [
+      {
+        id: "system-settings",
+        label: "系統設定",
+        icon: "settings",
+        routes: [{ href: "/settings/system", label: "系統設定" }],
+      },
+      {
+        id: "project-settings",
+        label: "專案設定",
+        icon: "edit",
+        routes: [{ href: "/settings/project", label: "專案設定" }],
       },
     ],
   },

@@ -38,7 +38,7 @@ function harness() {
   return load("components/app-shell/navigation.ts")
 }
 
-const ALL_IDS = ["sprint", "issues", "analytics", "reports"]
+const ALL_IDS = ["sprint", "issues", "analytics", "reports", "settings"]
 
 /** host 側讀取回傳類別的 id 清單（避免沙箱 realm 的 array 比對問題）。 */
 function categoryIds(categories) {
