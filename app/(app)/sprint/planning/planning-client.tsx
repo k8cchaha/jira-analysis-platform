@@ -97,6 +97,7 @@ export function PlanningClient({
               project={project}
               sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}
+              memberIds={memberIds}
             />
             <JqlButton
               label="未分派"
@@ -104,6 +105,7 @@ export function PlanningClient({
               project={project}
               sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}
+              memberIds={memberIds}
             />
           </div>
         }
@@ -115,7 +117,7 @@ export function PlanningClient({
         {!project ? (
           <EmptyState
             title="請先選擇專案"
-            body="從上方選擇專案後，將顯示該專案的 Dev-Task 明細。"
+            body="從上方選擇專案後，將顯示該專案 Sprint 的 Capacity 與分派計畫。"
             emoji="👋"
           />
         ) : !sprint ? (
@@ -295,6 +297,9 @@ function EmptyState({
  * 遮罩，這裡**自行**向 `/api/sprint/planning/subset` 撈各自子集合：載入中先顯示
  * 骨架，資料回來後顯示按鈕＋計數（計數 0 時停用、不可點）。`project`／`sprintId`
  * 為 null（無專案／無 sprint）時停用、不 fetch。
+ *
+ * 團隊過濾：**未估時**套用與主表相同的站內過濾（只列所選團隊成員的任務），
+ * 不重發 JQL；**未分派**不受團隊過濾影響（其任務沒有指派人，無從以團隊判定）。
  */
 function JqlButton({
   label,
@@ -302,12 +307,14 @@ function JqlButton({
   project,
   sprintId,
   jiraBaseUrl,
+  memberIds,
 }: {
   label: string
   kind: "unestimated" | "unassigned"
   project: SprintProjectKey | null
   sprintId: number | null
   jiraBaseUrl: string | null
+  memberIds: ReadonlySet<string> | null
 }) {
   const [open, setOpen] = useState(false)
   const [state, setState] = useState<{ status: "loading" } | { status: "loaded"; tasks: PlanningTask[] } | { status: "error" }>({ status: "loading" })
@@ -337,7 +344,16 @@ function JqlButton({
 
   const loading = state.status === "loading"
   const tasks = state.status === "loaded" ? state.tasks : null
-  const count = tasks === null ? null : tasks.length
+  // 團隊過濾（站內重算，不重發 JQL）：未估時只列所選團隊成員的任務；未分派不受
+  // 團隊影響。與主表同規則：無選取（memberIds === null）→ 全列。
+  const visibleTasks = useMemo(() => {
+    if (kind !== "unestimated" || memberIds === null || tasks === null) return tasks
+    return tasks.filter(
+      (task) =>
+        task.assigneeAccountId !== null && memberIds.has(task.assigneeAccountId)
+    )
+  }, [tasks, kind, memberIds])
+  const count = visibleTasks === null ? null : visibleTasks.length
 
   // 資料尚在載入時，先渲染與按鈕同尺寸的骨架，回來再換成真按鈕。
   if (loading) {
@@ -364,10 +380,10 @@ function JqlButton({
           </span>
         )}
       </button>
-      {open && tasks !== null && (
+      {open && visibleTasks !== null && (
         <JqlDialog
           label={label}
-          tasks={tasks}
+          tasks={visibleTasks}
           jiraBaseUrl={jiraBaseUrl}
           onClose={() => setOpen(false)}
         />
