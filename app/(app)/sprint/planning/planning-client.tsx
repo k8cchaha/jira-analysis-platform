@@ -8,7 +8,9 @@ import type { PlanningTask } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
+import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
 import { TeamSelect } from "@/components/team-select"
+import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { EditDialog } from "@/components/edit-dialog"
 
@@ -45,6 +47,8 @@ export function PlanningClient({
   const [isPending, startTransition] = useTransition()
   const [groups, setGroups] = useState<string[]>([])
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
+  /** accountId → 團隊 label 映射（由團隊選單載入，供「任務分派狀況」分組）。 */
+  const [teamOf, setTeamOf] = useState<Record<string, string>>({})
 
   function navigate(path: string) {
     startTransition(() => router.push(path))
@@ -87,7 +91,7 @@ export function PlanningClient({
         basePath="/sprint/planning"
         onNavigate={navigate}
         teamSlot={
-          <TeamSelect groups={groups} onGroupsChange={onGroupsChange} perMember={false} />
+          <TeamSelect groups={groups} onMembersReady={setTeamOf} onGroupsChange={onGroupsChange} perMember={false} />
         }
         trailing={
           <div className="flex items-center gap-2">
@@ -158,73 +162,19 @@ export function PlanningClient({
               <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
                 此 Sprint 尚未有對應的 Dev-Task。
               </p>
-            ) : filtered.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-                沒有符合所選團隊的 Dev-Task。
-              </p>
             ) : (
               <>
-                {/* Desktop 表格 */}
-                <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full table-fixed text-left text-sm">
-                    <caption className="sr-only">{sprint.name} 的 Dev-Task 明細</caption>
-                    <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                      <tr>
-                        <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>
-                        <th scope="col" className="w-28 px-3 py-3 font-medium">Ticket</th>
-                        <th scope="col" className="px-3 py-3 font-medium">Summary</th>
-                        <th scope="col" className="w-24 px-3 py-3 font-medium">Status</th>
-                        <th scope="col" className="w-20 px-3 py-3 text-right font-medium" title="Story Points">SP</th>
-                        <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filtered.map((task) => (
-                        <tr key={task.key} className="align-top">
-                          <td className="py-3 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
-                          <td className="px-3 py-3">
-                            <TicketLink task={task} jiraBaseUrl={jiraBaseUrl} />
-                          </td>
-                          <td className="break-words px-3 py-3 text-slate-800 dark:text-slate-200">
-                            {task.summary || "—"}
-                          </td>
-                          <td className="px-3 py-3 text-slate-600 dark:text-slate-300">
-                            {task.status ?? "—"}
-                          </td>
-                          <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">
-                            {formatPoints(task.points)}
-                          </td>
-                          <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">
-                            {task.assigneeDisplayName || "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile 卡片 */}
-                <div className="divide-y divide-slate-200 md:hidden dark:divide-slate-800">
-                  {filtered.map((task) => (
-                    <article key={task.key} className="py-4">
-                      <div className="flex items-center gap-2">
-                        <ParentIssueTypeIcon parent={task.parentIssueType} />
-                        <TicketLink task={task} jiraBaseUrl={jiraBaseUrl} />
-                        <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400" title="Story Points">
-                          SP {formatPoints(task.points)}
-                        </span>
-                      </div>
-                      <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">
-                        Assignee：{task.assigneeDisplayName || "—"}
-                        <span className="mx-1">·</span>
-                        Status：{task.status ?? "—"}
-                      </p>
-                      <p className="mt-1 break-words text-sm text-slate-800 dark:text-slate-200">
-                        {task.summary || "—"}
-                      </p>
-                    </article>
-                  ))}
-                </div>
+                {filtered.length === 0 && (
+                  <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                    沒有符合所選團隊的 Dev-Task。
+                  </p>
+                )}
+                <AssignmentStatus
+                  project={project}
+                  tasks={filtered}
+                  teamOf={teamOf}
+                  teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
+                />
               </>
             )}
           </div>

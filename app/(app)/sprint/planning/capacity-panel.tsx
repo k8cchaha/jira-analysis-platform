@@ -416,7 +416,7 @@ function SprintNoteButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex h-16 w-28 flex-row items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium leading-tight text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
+        className="flex h-16 w-28 flex-row items-center justify-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm font-medium leading-tight text-amber-800 hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-950/50"
       >
         <svg aria-hidden="true" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 20h9" />
