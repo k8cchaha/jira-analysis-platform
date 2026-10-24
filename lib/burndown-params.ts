@@ -62,10 +62,10 @@ export function resolveSprint(
 }
 
 /**
- * 決定 Planning 頁面要顯示的 sprint（只允許「當前＋下一個」這對）：
- * - `requestedSprintId` 是該專案 planning 對之一 → 選它；
- * - 否則回 planning 對的第一個（當前 sprint）；
- * - 無專案、或該專案沒有進行中／未來的 sprint（planning 對為空）→ `null`。
+ * 決定 Planning 頁面要顯示的 sprint（只允許 `getPlanningSprints` 選定的那一個）：
+ * - `requestedSprintId` 是該專案 planning 中的 sprint → 選它；
+ * - 否則回 planning 的第一個（也就是符合「今日 <= sprint start + 3」的最近一個）；
+ * - 無專案、或該專案沒有任何符合條件的 sprint（planning 為空）→ `null`。
  */
 export function resolvePlanningSprint(
   projectKey: SprintProjectKey | null,

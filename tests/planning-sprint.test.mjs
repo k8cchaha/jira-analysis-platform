@@ -60,10 +60,13 @@ function harness() {
   }
 }
 
-// today：2026-10-21（SUN＝Sprint 70 進行中、隨之 Sprint 71；TKK＝S132 進行中、隨之 S133；PRIDE 最後一個 Sprint 已於 10-19 結束）
+// today：2026-10-21。規則「今日 <= sprint start + 3」→ cutoff＝10-18。
+// SUN：Sprint 71（10-26 開始）是開始日不早於 10-18 的最近一個；Sprint 70（10-13）已超過。
+// TKK：S133（10-26 開始）同理；S132（09-21）已超過。
+// PRIDE：最近的 Sprint 30（10-06 開始）也已超過 cutoff → 空。
 const TODAY = "2026-10-21"
 
-describe("getPlanningSprints（當前＋下一個）", () => {
+describe("getPlanningSprints（符合條件且開始日最近的那一個）", () => {
   // vm 沙箱內的 Array.prototype.map / Number 都屬於沙箱 realm，回傳的陣列與
   // boxed number 是沙箱物件；改以 host 側逐一讀取 .length 與 Number(s.id) 比對。
   const assertIds = (plan, expected) => {
@@ -71,52 +74,53 @@ describe("getPlanningSprints（當前＋下一個）", () => {
     expected.forEach((id, index) => assert.equal(Number(plan[index].id), id))
   }
 
-  it("SUN：回傳進行中的 Sprint 70 與下一個 Sprint 71", () => {
+  it("SUN：選定 Sprint 71（最近的滿足者），不再連帶 Sprint 70", () => {
     const { sprints } = harness()
-    assertIds(sprints.getPlanningSprints("SUN", TODAY), [7517, 7518]) // Sprint 70, 71
+    assertIds(sprints.getPlanningSprints("SUN", TODAY), [7518]) // 只有 Sprint 71
   })
 
-  it("TKK：回傳進行中的 S132 與下一個 S133", () => {
+  it("TKK：選定 S133（最近的滿足者），不再連帶 S132", () => {
     const { sprints } = harness()
-    assertIds(sprints.getPlanningSprints("TKK", TODAY), [7401, 7402]) // S132, S133
+    assertIds(sprints.getPlanningSprints("TKK", TODAY), [7402]) // 只有 S133
   })
 
-  it("PRIDE：最後一個 Sprint 已結束於今天之前 → 回空陣列（不回退過去）", () => {
+  it("PRIDE：最近的 Sprint 也已超過「今天 − 3」 → 回空陣列（不回退過去）", () => {
     const { sprints } = harness()
     assert.equal(sprints.getPlanningSprints("PRIDE", TODAY).length, 0)
   })
 
-  it("某專案連一個 sprint 都沒有 → 回空陣列", () => {
+  it("今天在任何 sprint 開始之前 → 選定最前面（尚未開始）的那個", () => {
+    // cutoff＝2024-12-29；SUN 最早的 Sprint 58（04-28）仍滿足「today <= start + 3」。
     const { sprints } = harness()
-    assert.equal(sprints.getPlanningSprints("SUN", "2025-01-01").length, 0)
+    assertIds(sprints.getPlanningSprints("SUN", "2025-01-01"), [6823]) // Sprint 58
   })
 
-  it("current 是最後一個 sprint（今天在其期間）→ 只回它本身", () => {
+  it("已過最後一棒「開始 + 3」之後 → 回空陣列", () => {
+    // cutoff＝2027-01-02；TKK 最後一棒 S135（12-21 開始）也已超過 → 空。
     const { sprints } = harness()
-    // TKK 的 S135 為最後一棒（12-21 → 01-24）；取 2027-01-05 在其期間內。
-    assertIds(sprints.getPlanningSprints("TKK", "2027-01-05"), [7404]) // 只有 S135
+    assert.equal(sprints.getPlanningSprints("TKK", "2027-01-05").length, 0)
   })
 })
 
-describe("resolvePlanningSprint（只允許 planning 對）", () => {
-  it("有效的下一個 sprint → 選它", () => {
+describe("resolvePlanningSprint（只允許 planning 選定的那一個）", () => {
+  it("有效的 sprint（剛好是選定的那一個）→ 選它", () => {
     const { params } = harness()
     assert.equal(params.resolvePlanningSprint("SUN", 7518, TODAY)?.id, 7518)
   })
 
-  it("有效的當前 sprint → 選它", () => {
+  it("已超過條件的 sprint → 回退到選定的那一個（Sprint 71）", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", 7517, TODAY)?.id, 7517)
+    assert.equal(params.resolvePlanningSprint("SUN", 7517, TODAY)?.id, 7518)
   })
 
-  it("無效（已過去的歷史）sprint id → 回退到當前 sprint", () => {
+  it("無效（已過去的歷史）sprint id → 回退到選定的那一個", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", 7515, TODAY)?.id, 7517)
+    assert.equal(params.resolvePlanningSprint("SUN", 7515, TODAY)?.id, 7518)
   })
 
-  it("未指定 id → 回退到當前 sprint", () => {
+  it("未指定 id → 回退到選定的那一個", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", null, TODAY)?.id, 7517)
+    assert.equal(params.resolvePlanningSprint("SUN", null, TODAY)?.id, 7518)
   })
 
   it("無專案 → null", () => {
