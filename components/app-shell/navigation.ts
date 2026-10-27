@@ -2,10 +2,6 @@ export type AppRoute =
   | "/dashboard"
   | "/sprint/planning"
   | "/sprint/burndown"
-  | "/issues/assigned/list"
-  | "/issues/assigned/summary"
-  | "/issues/search/filter"
-  | "/issues/search/jql"
   | "/analytics/workload/summary"
   | "/analytics/workload/breakdown"
   | "/analytics/workload/detail"
@@ -26,8 +22,6 @@ export type AppRoute =
 
 export type NavigationIcon =
   | "dashboard"
-  | "issues"
-  | "search"
   | "edit"
   | "workload"
   | "points"
@@ -96,30 +90,6 @@ export const navigationCategories = [
         label: "Burn Down Chart",
         icon: "burndown",
         routes: [{ href: "/sprint/burndown", label: "Burn Down Chart" }],
-      },
-    ],
-  },
-  {
-    id: "issues",
-    label: "Issue 管理",
-    features: [
-      {
-        id: "assigned",
-        label: "指派給我的 Issues",
-        icon: "issues",
-        routes: [
-          { href: "/issues/assigned/list", label: "Issue 清單" },
-          { href: "/issues/assigned/summary", label: "摘要" },
-        ],
-      },
-      {
-        id: "issue-search",
-        label: "Issue 查詢",
-        icon: "search",
-        routes: [
-          { href: "/issues/search/filter", label: "篩選器查詢" },
-          { href: "/issues/search/jql", label: "JQL 查詢" },
-        ],
       },
     ],
   },

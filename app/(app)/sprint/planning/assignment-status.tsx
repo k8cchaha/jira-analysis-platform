@@ -125,9 +125,9 @@ function TeamCard({ team }: { team: TeamAssignment }) {
           </span>
           <span
             className={`rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium ${ratioColor(teamRatio)} dark:bg-slate-800`}
-            title={`${team.label} 總分配比例`}
+            title={`${team.label} 總分派比例`}
           >
-            總比例 {percent(teamRatio)}
+            總分派比例 {percent(teamRatio)}
           </span>
         </div>
       </header>

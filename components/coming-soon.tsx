@@ -14,12 +14,7 @@ export function ComingSoon({
   description,
   plannedCapabilities = [description],
   unavailableReason = "相關資料與操作功能仍在開發中，因此本次版本尚未開放。",
-  relatedLinks = [
-    {
-      href: "/issues/assigned/list",
-      label: "前往目前可用的指派 Issue 清單",
-    },
-  ],
+  relatedLinks = [],
 }: ComingSoonProps) {
   return (
     <>

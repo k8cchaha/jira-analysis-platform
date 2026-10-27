@@ -24,10 +24,6 @@ export function NavigationIconGlyph({ name, className = "h-5 w-5" }: IconProps) 
       return <svg {...common}><path d="m3 20 5-6 4 3 4-7 5 5" /><path d="M15 8h6v6" /></svg>
     case "planning":
       return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M8 2v4M16 2v4M3 9h18" /><path d="m8 14 2 2 4-4" /></svg>
-    case "issues":
-      return <svg {...common}><path d="M8 6h11M8 12h11M8 18h7" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></svg>
-    case "search":
-      return <svg {...common}><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /></svg>
     case "edit":
       return <svg {...common}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
     case "workload":
