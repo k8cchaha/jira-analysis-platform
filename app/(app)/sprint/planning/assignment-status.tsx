@@ -1,12 +1,16 @@
 "use client"
 
-import { useMemo } from "react"
+import { Fragment, useMemo, useState } from "react"
 import type { PlanningTask } from "@/lib/planning-subset"
 import type { SprintProjectKey } from "@/lib/jira-jql"
+import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
+import { TicketLink } from "@/components/ticket-link"
+import { statusColorClass } from "@/lib/status-color"
 import {
   computeAssignmentStatus,
   OTHER_TEAM,
   type TeamAssignment,
+  type MemberAssignment,
 } from "@/lib/assignment-status"
 
 /**
@@ -19,9 +23,9 @@ const PER_PERSON_CAPACITY: Record<SprintProjectKey, number> = {
   PRIDE: 20, // 專案 = Pride（未設定，暫佔位）
 }
 
-/** 點數顯示：四捨五入到小數第一位。 */
-function formatPoints(value: number): string {
-  return String(Math.round(value * 10) / 10)
+/** 點數顯示：未估計（null）顯示「—」，否則四捨五入到小數第一位。 */
+function formatPoints(value: number | null): string {
+  return value === null ? "—" : String(Math.round(value * 10) / 10)
 }
 
 /** 分配比例（%）：分母不大於 0 時回 null（顯示「—」）。 */
@@ -58,6 +62,7 @@ export function AssignmentStatus({
   tasks,
   teamOf,
   teamOrder,
+  jiraBaseUrl,
 }: {
   project: SprintProjectKey
   /** 已經過濾的 Dev-Task（與主表同源）。 */
@@ -66,6 +71,8 @@ export function AssignmentStatus({
   teamOf: Record<string, string>
   /** 團隊顯示順序（label，取自 DASHBOARD_TEAMS）。 */
   teamOrder: readonly string[]
+  /** Jira browse 根網址（供展開的票 Ticket 連結）。 */
+  jiraBaseUrl: string | null
 }) {
   const perPersonCapacity = PER_PERSON_CAPACITY[project]
   const teams = useMemo(
@@ -88,7 +95,6 @@ export function AssignmentStatus({
   if (visibleTeams.length === 0) {
     return (
       <div>
-        <h3 className="mb-2 font-semibold text-slate-900 dark:text-white">任務分派狀況</h3>
         <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
           此 Sprint 尚無可分派的成員（沒有已指派 Dev-Task）。
         </p>
@@ -98,19 +104,24 @@ export function AssignmentStatus({
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold text-slate-900 dark:text-white">任務分派狀況</h3>
-      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {visibleTeams.map((team) => (
-          <TeamCard key={team.teamKey} team={team} />
+          <TeamCard key={team.teamKey} team={team} tasks={tasks} jiraBaseUrl={jiraBaseUrl} />
         ))}
       </div>
     </div>
   )
 }
 
-function TeamCard({ team }: { team: TeamAssignment }) {
+function TeamCard({
+  team,
+  tasks,
+  jiraBaseUrl,
+}: {
+  team: TeamAssignment
+  tasks: readonly PlanningTask[]
+  jiraBaseUrl: string | null
+}) {
   const teamRatio = ratio(team.assignedPoints, team.capacity)
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
@@ -150,30 +161,101 @@ function TeamCard({ team }: { team: TeamAssignment }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-          {team.members.map((member) => {
-            const memberRatio =
-              member.capacity === null
-                ? null
-                : ratio(member.assignedPoints, member.capacity)
-            return (
-              <tr key={member.assigneeAccountId ?? "unassigned"} className="align-top">
-                <th scope="row" className="py-2.5 pl-4 pr-2 font-medium text-slate-900 dark:text-white">
-                  {member.name}
-                </th>
-                <td className="py-2.5 pr-2 text-right tabular-nums text-slate-600 dark:text-slate-300">
-                  {member.capacity === null ? "—" : formatPoints(member.capacity)}
-                </td>
-                <td className="py-2.5 pr-2 text-right tabular-nums text-slate-600 dark:text-slate-300">
-                  {formatPoints(member.assignedPoints)}
-                </td>
-                <td className="py-2.5 pr-4 text-right tabular-nums font-semibold text-slate-700 dark:text-slate-200">
-                  {percent(memberRatio)}
-                </td>
-              </tr>
-            )
-          })}
+          {team.members.map((member) => (
+            <MemberRow key={member.assigneeAccountId ?? "unassigned"} member={member} tasks={tasks} jiraBaseUrl={jiraBaseUrl} />
+          ))}
         </tbody>
       </table>
     </section>
+  )
+}
+
+/**
+ * 單一成員列：可點擊展開該成員被分派的票（parent type icon、Ticket、summary、status、
+ * story points）。沒有被分派的票（ex. 未指派任務為空）時不展開。
+ */
+function MemberRow({
+  member,
+  tasks,
+  jiraBaseUrl,
+}: {
+  member: MemberAssignment
+  tasks: readonly PlanningTask[]
+  jiraBaseUrl: string | null
+}) {
+  const [open, setOpen] = useState(false)
+  // 該成員的票：未指派（accountId null）比對未指派；其餘比對 accountId。
+  const tickets = tasks.filter((task) =>
+    member.assigneeAccountId === null
+      ? task.assigneeAccountId === null
+      : task.assigneeAccountId === member.assigneeAccountId
+  )
+  const hasTickets = tickets.length > 0
+  const memberRatio =
+    member.capacity === null ? null : ratio(member.assignedPoints, member.capacity)
+
+  return (
+    <Fragment>
+      <tr
+        className={`align-top ${hasTickets ? "cursor-pointer" : ""}`}
+        onClick={() => hasTickets && setOpen((value) => !value)}
+      >
+        <th scope="row" className="py-2.5 pl-4 pr-2 font-medium text-slate-900 dark:text-white">
+          <span className="flex items-center gap-1.5">
+            {hasTickets ? (
+              <span
+                aria-hidden="true"
+                className={`shrink-0 text-slate-400 transition-transform dark:text-slate-500 ${open ? "rotate-90" : ""}`}
+              >
+                <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m6 4 4 4-4 4" />
+                </svg>
+              </span>
+            ) : (
+              <span aria-hidden="true" className="w-3.5 shrink-0" />
+            )}
+            {member.name}
+          </span>
+        </th>
+        <td className="py-2.5 pr-2 text-right tabular-nums text-slate-600 dark:text-slate-300">
+          {member.capacity === null ? "—" : formatPoints(member.capacity)}
+        </td>
+        <td className="py-2.5 pr-2 text-right tabular-nums text-slate-600 dark:text-slate-300">
+          {formatPoints(member.assignedPoints)}
+        </td>
+        <td className="py-2.5 pr-4 text-right tabular-nums font-semibold text-slate-700 dark:text-slate-200">
+          {percent(memberRatio)}
+        </td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={4} className="bg-slate-50/60 px-4 pt-1 pb-3 dark:bg-slate-900/40">
+            <table className="w-full text-left text-xs">
+              <caption className="sr-only">{member.name} 被分派的 Dev-Task</caption>
+              <thead>
+                <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
+                  <th scope="col" className="w-8 py-1.5"><span className="sr-only">Parent Issue type</span></th>
+                  <th scope="col" className="w-24 py-1.5 pr-2 font-semibold">Ticket</th>
+                  <th scope="col" className="py-1.5 pr-2 font-semibold">Summary</th>
+                  <th scope="col" className="w-[5.5rem] py-1.5 pr-2 text-center font-semibold">Status</th>
+                  <th scope="col" className="w-10 py-1.5 text-right font-semibold" title="Story Points">SP</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {tickets.map((task) => (
+                  <tr key={task.key} className="align-top">
+                    <td className="py-1.5"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
+                    <td className="py-1.5 pr-2"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
+                    <td className="max-w-0 truncate py-1.5 pr-2 text-slate-700 dark:text-slate-200" title={task.summary ?? ""}>{task.summary || "—"}</td>
+                    <td className={`whitespace-nowrap py-1.5 pr-2 text-center ${statusColorClass(task.status)}`}>{task.status ?? "—"}</td>
+                    <td className="py-1.5 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </td>
+        </tr>
+      )}
+    </Fragment>
   )
 }

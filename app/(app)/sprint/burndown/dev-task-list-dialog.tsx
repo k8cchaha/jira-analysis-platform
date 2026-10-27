@@ -3,19 +3,8 @@
 import { useMemo } from "react"
 import { EditDialog } from "@/components/edit-dialog"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
+import { statusColorClass } from "@/lib/status-color"
 import type { BurndownTask } from "@/lib/jira-burndown"
-
-/** 依 issue 目前狀態回傳文字顏色類別：In Review / In Progress 藍、Done 綠、其餘預設。 */
-function statusColorClass(status: string | null): string {
-  const value = status?.toLowerCase()
-  if (value === "in review" || value === "in progress") {
-    return "text-blue-600 dark:text-blue-300"
-  }
-  if (value === "done") {
-    return "text-green-600 dark:text-green-400"
-  }
-  return "text-slate-600 dark:text-slate-300"
-}
 
 /**
  * 開發狀況彈窗：列出已依團隊＋指派＋完成狀態過濾好的 Dev-Task。

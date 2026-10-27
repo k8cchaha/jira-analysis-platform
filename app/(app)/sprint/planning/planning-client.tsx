@@ -14,6 +14,7 @@ import { TeamSelect } from "@/components/team-select"
 import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { EditDialog } from "@/components/edit-dialog"
+import { TicketLink } from "@/components/ticket-link"
 
 /** 點數顯示：未估計（null）顯示「—」，否則四捨五入到小數第一位。 */
 function formatPoints(value: number | null): string {
@@ -199,6 +200,7 @@ export function PlanningClient({
                       tasks={filtered}
                       teamOf={teamOf}
                       teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
+                      jiraBaseUrl={jiraBaseUrl}
                     />
                   </>
                 )}
@@ -270,29 +272,6 @@ function PlanningTabs({
       })}
     </div>
   )
-}
-
-function TicketLink({
-  task,
-  jiraBaseUrl,
-}: {
-  task: PlanningTask
-  jiraBaseUrl: string | null
-}) {
-  if (jiraBaseUrl) {
-    return (
-      <a
-        href={`${jiraBaseUrl.replace(/\/$/, "")}/browse/${encodeURIComponent(task.key)}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={`在 Jira 開啟 ${task.key}（另開分頁）`}
-        className="break-words font-medium text-blue-600 hover:underline focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-blue-300"
-      >
-        {task.key}
-      </a>
-    )
-  }
-  return <span className="break-words font-medium">{task.key}</span>
 }
 
 function EmptyState({
