@@ -17,6 +17,10 @@ export interface PlanningTask {
   points: number | null
   assigneeDisplayName: string | null
   assigneeAccountId: string | null
+  /** 填報人（Reporter）的顯示名稱；讀不到為 null。 */
+  reporter: string | null
+  /** Component 名稱清單；無或讀不到為空陣列。 */
+  components: string[]
   parentIssueType:
     | { status: "known"; name: string }
     | { status: "none" | "unknown" }
@@ -90,8 +94,19 @@ export function parsePlanningSubsetResult(value: unknown): PlanningSubsetResult 
       points: pointsOrNull(task.points),
       assigneeDisplayName: optionalString(task.assigneeDisplayName),
       assigneeAccountId: optionalString(task.assigneeAccountId, 100),
+      reporter: optionalString(task.reporter),
+      components: stringList(task.components),
       parentIssueType: parentIssueType(task.parentIssueType),
     }
   })
   return { status: "success", data: { tasks } }
+}
+
+/** 解碼 Component 名稱清單（陣列內每個元素須為字串；上限 32 個、每個 120 字元）。 */
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 32) invalidResult()
+  return value.map((item) => {
+    if (typeof item !== "string" || item.length > 120) invalidResult()
+    return item
+  })
 }

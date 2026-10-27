@@ -31,6 +31,9 @@ export function parseSprintId(value: string | undefined): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
+/** Planning 頁面的分頁（Tab）；`assignment`＝任務分派狀況、`overview`＝任務規劃總覽。 */
+export type PlanningTab = "assignment" | "overview"
+
 /** 依專案與 sprint id 從寫死的 `SPRINT_DATA` 抓完整 `SprintRecord`；不存在回 `null`。 */
 export function getSprintById(
   projectKey: SprintProjectKey,

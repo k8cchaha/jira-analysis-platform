@@ -32,6 +32,33 @@ function harness(t, options = {}) {
     { key: "SUN-100", id: "1", fields: { project: { id: "10" } } },
     { key: "SUN-101", id: "2", fields: { project: { id: "10" } } },
   ]
+  // 「未開子單」的母票：要完整明細欄位（summary/status/assignee/points）。
+  const fullParents = options.fullParents ?? [
+    {
+      id: "1", key: "SUN-100",
+      fields: {
+        project: { id: "10" },
+        summary: "Has subtasks",
+        status: { name: "In Progress" },
+        assignee: { displayName: "Owner A", accountId: "aa1" },
+        reporter: { displayName: "Reporter X", accountId: "rr1" },
+        components: [{ name: "Frontend" }, { name: "API" }],
+        customfield_10005: 5,
+      },
+    },
+    {
+      id: "2", key: "SUN-101",
+      fields: {
+        project: { id: "10" },
+        summary: "No children",
+        status: { name: "To Do" },
+        assignee: null,
+        reporter: null,
+        components: [],
+        customfield_10005: null,
+      },
+    },
+  ]
   // 子集合 Dev-Task：未估時（points 缺欄）＋未分派（assignee 空）共用同一批 fixture，
   // JQL 只在 server 端組合；此 mock 依載入內容決定母票/子集合回應。
   const subsetIssues = options.subsetIssues ?? [
@@ -71,13 +98,19 @@ function harness(t, options = {}) {
       const body = init.body ? JSON.parse(init.body) : null
       if (path === "/rest/api/3/search/jql" && method === "POST") {
         if (body.maxResults !== 100) return fail("Search must use maxResults 100")
-        // 母票搜尋：sprint = … ，fields 應為自動補入的 ["project"]。
+        // 母票搜尋：sprint = … 。一般子集合只用 ["project"]；「未開子單」要完整明細。
         if (/\bsprint = \d+/.test(body.jql)) {
-          if (JSON.stringify(body.fields) !== '["project"]') return fail("Parent search must request only project")
-          return new Response(JSON.stringify({ issues: parents, isLast: true }), { status: 200 })
+          if (JSON.stringify(body.fields) === JSON.stringify(["project"])) {
+            return new Response(JSON.stringify({ issues: options.parents ?? parents, isLast: true }), { status: 200 })
+          }
+          const planningFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "customfield_10005"])
+          if (JSON.stringify(body.fields) === planningFields) {
+            return new Response(JSON.stringify({ issues: options.fullParents ?? fullParents, isLast: true }), { status: 200 })
+          }
+          return fail("Parent search must request project or planning fields")
         }
-        // 子集合搜尋：parent in (...) AND issuetype = "Dev-Task" …
-        const expectedFields = JSON.stringify(["project", "summary", "assignee", "parent", "status", "customfield_10005"])
+        // Dev-Task 搜尋：parent in (...) AND issuetype = "Dev-Task" …（含未開子單的全量 Dev-Task）。
+        const expectedFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "customfield_10005"])
         if (JSON.stringify(body.fields) !== expectedFields) return fail("Subset search must request planning fields")
         if (options.responseStatus) return new Response(null, { status: options.responseStatus })
         return new Response(JSON.stringify({ issues: subsetIssues, isLast: true }), { status: 200 })
@@ -199,6 +232,47 @@ describe("planning subset route — success", () => {
     const parsed = h.model.parsePlanningSubsetResult(body)
     assert.equal(parsed.status, "success")
   })
+
+  it("未開子單：只列沒有 Dev-Task 子票的母票", async (t) => {
+    // 所有 Dev-Task 都掛 SUN-101 下 → SUN-100 沒有子票，會被列出。
+    const h = harness(t, {
+      subsetIssues: [
+        {
+          id: "10", key: "SUN-102",
+          fields: { project: { id: "10" }, summary: "t", status: { name: "In Progress" }, assignee: null, parent: { id: "450", key: "SUN-101", fields: { issuetype: { name: "Task" } } } },
+        },
+        {
+          id: "11", key: "SUN-103",
+          fields: { project: { id: "10" }, summary: "t2", status: { name: "To Do" }, assignee: null, parent: { id: "451", key: "SUN-101", fields: { issuetype: { name: "Task" } } } },
+        },
+      ],
+    })
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "no-subtasks" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, "success")
+    const tasks = plain(body.data.tasks)
+    assert.deepEqual(tasks.map((x) => x.key), ["SUN-100"])
+    // 母票明細直接帶出；未開子單的母票其 parentIssueType 為 none。
+    assert.equal(tasks[0].summary, "Has subtasks")
+    assert.equal(tasks[0].points, 5)
+    assert.deepEqual(tasks[0].parentIssueType, { status: "none" })
+    // 新增欄位：Reporter / Component 一併帶出。
+    assert.equal(tasks[0].reporter, "Reporter X")
+    assert.deepEqual(tasks[0].components, ["Frontend", "API"])
+    // client validator 可解碼。
+    const parsed = h.model.parsePlanningSubsetResult(body)
+    assert.equal(parsed.status, "success")
+  })
+
+  it("未開子單：全部母票都有子票 → 回空清單", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "no-subtasks" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.deepEqual(plain(body.data.tasks), [])
+    assert.equal(body.status, "success")
+  })
 })
 
 describe("planning subset client validator (parsePlanningSubsetResult)", () => {
@@ -209,6 +283,8 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     points: 3.5,
     assigneeDisplayName: "Owner",
     assigneeAccountId: "aa1",
+    reporter: "Reporter",
+    components: ["Frontend"],
     parentIssueType: { status: "known", name: "Story" },
     ...over,
   })
@@ -219,19 +295,21 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     return parsed
   }
 
-  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee）", (t) => {
+  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee、空 components）", (t) => {
     const parsed = ok(t, {
       status: "success",
       data: { tasks: [
         validTask(),
         validTask({ key: "SUN-103", points: null, assigneeDisplayName: null, assigneeAccountId: null, parentIssueType: { status: "none" } }),
-        validTask({ key: "SUN-104", parentIssueType: { status: "unknown" } }),
+        validTask({ key: "SUN-104", parentIssueType: { status: "unknown" }, reporter: null, components: [] }),
       ] },
     })
     if (parsed.status !== "success") return
     assert.equal(parsed.data.tasks[0].points, 3.5)
     assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[1].parentIssueType)), { status: "none" })
     assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[2].parentIssueType)), { status: "unknown" })
+    assert.deepEqual(parsed.data.tasks[0].components, ["Frontend"])
+    assert.deepEqual(parsed.data.tasks[2].components, [])
   })
 
   it("回傳 error 分支並保留 code/message", (t) => {
@@ -243,12 +321,14 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     assert.equal(parsed.error.message, "太多了")
   })
 
-  it("拒絕重複 key / 缺 key / 壞 points / 未列白名單的 error code", (t) => {
+  it("拒絕重複 key / 缺 key / 壞 points / 壞 components / 未列白名單的 error code", (t) => {
     const h = harness(t)
     const good = { status: "success", data: { tasks: [] } }
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [validTask(), validTask()] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), key: "" }] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), points: -1 }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: "not-array" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: [42] }] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ status: "error", error: { code: "nonsense", message: "x" } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ status: "success", data: "not-object" }))
     // 壞 parentIssueType（known 缺 name）做安全 fallback 為 unknown，而非拒絕。

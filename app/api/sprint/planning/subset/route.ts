@@ -7,7 +7,7 @@ import {
 } from "@/lib/planning-data"
 import type { MissingDataError } from "@/lib/jira-missing-data"
 
-const SUBSET_KINDS: readonly PlanningSubsetKind[] = ["unestimated", "unassigned"]
+const SUBSET_KINDS: readonly PlanningSubsetKind[] = ["unestimated", "unassigned", "no-subtasks"]
 
 /** 把 Planning 的服務層錯誤轉成 HTTP 狀態 + `MissingDataError` envelope。 */
 function planningError(error: unknown): { status: number; error: MissingDataError } {

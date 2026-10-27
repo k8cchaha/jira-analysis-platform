@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
+import type { PlanningTab } from "@/lib/burndown-params"
 import type { PlanningTask } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
@@ -49,9 +50,16 @@ export function PlanningClient({
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
   /** accountId → 團隊 label 映射（由團隊選單載入，供「任務分派狀況」分組）。 */
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
+  /** 內容區目前分頁（任務分派狀況／任務規劃總覽）。純 client 端 state，不改 URL。 */
+  const [tab, setTab] = useState<PlanningTab>("assignment")
 
   function navigate(path: string) {
     startTransition(() => router.push(path))
+  }
+
+  /** 切換內容區分頁：純 client 端切換顯示的資料，不更新 URL。 */
+  function switchTab(nextTab: PlanningTab) {
+    setTab(nextTab)
   }
 
   function onGroupsChange(nextGroups: string[], accountIds: string[], ready: boolean) {
@@ -90,11 +98,20 @@ export function PlanningClient({
         selectedSprintId={selectedSprintId}
         basePath="/sprint/planning"
         onNavigate={navigate}
+        teamSlotClassName="w-full min-w-0 lg:w-40 lg:shrink-0"
         teamSlot={
           <TeamSelect groups={groups} onMembersReady={setTeamOf} onGroupsChange={onGroupsChange} perMember={false} />
         }
         trailing={
           <div className="flex items-center gap-2">
+            <JqlButton
+              label="未開子單"
+              kind="no-subtasks"
+              project={project}
+              sprintId={selectedSprintId}
+              jiraBaseUrl={jiraBaseUrl}
+              memberIds={memberIds}
+            />
             <JqlButton
               label="未估時"
               kind="unestimated"
@@ -158,23 +175,33 @@ export function PlanningClient({
               </p>
             </div>
 
-            {tasks.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-                此 Sprint 尚未有對應的 Dev-Task。
+            <PlanningTabs tab={tab} onSwitch={switchTab} />
+
+            {tab === "overview" ? (
+              <p className="py-12 text-center text-sm text-slate-500 dark:text-slate-400">
+                任務規劃總覽尚在建置中。
               </p>
             ) : (
               <>
-                {filtered.length === 0 && (
-                  <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                    沒有符合所選團隊的 Dev-Task。
+                {tasks.length === 0 ? (
+                  <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                    此 Sprint 尚未有對應的 Dev-Task。
                   </p>
+                ) : (
+                  <>
+                    {filtered.length === 0 && (
+                      <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                        沒有符合所選團隊的 Dev-Task。
+                      </p>
+                    )}
+                    <AssignmentStatus
+                      project={project}
+                      tasks={filtered}
+                      teamOf={teamOf}
+                      teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
+                    />
+                  </>
                 )}
-                <AssignmentStatus
-                  project={project}
-                  tasks={filtered}
-                  teamOf={teamOf}
-                  teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
-                />
               </>
             )}
           </div>
@@ -197,6 +224,50 @@ export function PlanningClient({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 內容區分頁切換：任務分派狀況／任務規劃總覽。純 client 端切換顯示的資料，
+ * 不更新 URL，也不觸發 server 端重新撈取。
+ */
+function PlanningTabs({
+  tab,
+  onSwitch,
+}: {
+  tab: PlanningTab
+  onSwitch: (next: PlanningTab) => void
+}) {
+  const tabs: { key: PlanningTab; label: string }[] = [
+    { key: "assignment", label: "任務分派狀況" },
+    { key: "overview", label: "任務規劃總覽" },
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Planning 內容分頁"
+      className="mb-6 flex w-full flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800"
+    >
+      {tabs.map((item) => {
+        const active = item.key === tab
+        return (
+          <button
+            key={item.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onSwitch(item.key)}
+            className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+              active
+                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-white"
+                : "text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-700/60 dark:hover:text-white"
+            }`}
+          >
+            {item.label}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -249,7 +320,8 @@ function EmptyState({
  * 為 null（無專案／無 sprint）時停用、不 fetch。
  *
  * 團隊過濾：**未估時**套用與主表相同的站內過濾（只列所選團隊成員的任務），
- * 不重發 JQL；**未分派**不受團隊過濾影響（其任務沒有指派人，無從以團隊判定）。
+ * 不重發 JQL；**未分派**不受團隊過濾影響（其任務沒有指派人，無從以團隊判定）；
+ * **未開子單**也不套團隊過濾（母票常為未指派狀態，套了可能整批消失）。
  */
 function JqlButton({
   label,
@@ -260,7 +332,7 @@ function JqlButton({
   memberIds,
 }: {
   label: string
-  kind: "unestimated" | "unassigned"
+  kind: "unestimated" | "unassigned" | "no-subtasks"
   project: SprintProjectKey | null
   sprintId: number | null
   jiraBaseUrl: string | null
@@ -333,6 +405,7 @@ function JqlButton({
       {open && visibleTasks !== null && (
         <JqlDialog
           label={label}
+          variant={kind === "no-subtasks" ? "parent" : "devtask"}
           tasks={visibleTasks}
           jiraBaseUrl={jiraBaseUrl}
           onClose={() => setOpen(false)}
@@ -355,18 +428,28 @@ function JqlButtonSkeleton() {
   )
 }
 
-/** 顯示「JQL 撈出來的單」的唯讀彈窗：仿其他彈窗的 Table＋Mobile 卡片格式。 */
+/**
+ * 顯示「JQL 撈出來的單」的唯讀彈窗：仿其他彈窗的 Table＋Mobile 卡片格式。
+ *
+ * `variant`：
+ * - `devtask`＝未估時／未分派（Dev-Task 清單）：有母票 type icon，無 Reporter/Component；
+ * - `parent`＝未開子單（母票清單）：不需要母票 type icon，多列 Reporter／Component。
+ */
 function JqlDialog({
   label,
+  variant,
   tasks,
   jiraBaseUrl,
   onClose,
 }: {
   label: string
+  variant: "devtask" | "parent"
   tasks: readonly PlanningTask[]
   jiraBaseUrl: string | null
   onClose: () => void
 }) {
+  const isParent = variant === "parent"
+  const captionText = isParent ? "母票" : "Dev-Task"
   return (
     <EditDialog
       title={label}
@@ -377,18 +460,20 @@ function JqlDialog({
     >
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {tasks.length === 0 ? (
-          <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">此 Sprint 沒有符合條件的 Dev-Task。</p>
+          <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">此 Sprint 沒有符合條件的{captionText}。</p>
         ) : (
           <>
             <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
-              <table className="w-full min-w-[640px] table-fixed text-left text-sm">
-                <caption className="sr-only">{label} 的 Dev-Task</caption>
+              <table className={`w-full table-fixed text-left text-sm ${isParent ? "min-w-[820px]" : "min-w-[640px]"}`}>
+                <caption className="sr-only">{label} 的 {captionText}</caption>
                 <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
                   <tr>
-                    <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>
+                    {!isParent && <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>}
                     <th scope="col" className="w-32 px-3 py-3 font-medium">Ticket</th>
                     <th scope="col" className="w-24 px-3 py-3 font-medium">Status</th>
+                    {isParent && <th scope="col" className="w-32 px-3 py-3 font-medium">Component</th>}
                     <th scope="col" className="px-3 py-3 font-medium">Summary</th>
+                    {isParent && <th scope="col" className="w-28 px-3 py-3 font-medium">Reporter</th>}
                     <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>
                     <th scope="col" className="w-20 px-3 py-3 text-right font-medium" title="Story Points">SP</th>
                   </tr>
@@ -396,10 +481,12 @@ function JqlDialog({
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                   {tasks.map((task) => (
                     <tr key={task.key} className="align-top">
-                      <td className="py-3 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
+                      {!isParent && <td className="py-3 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>}
                       <td className="px-3 py-3"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
                       <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.status ?? "—"}</td>
+                      {isParent && <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.components.length ? task.components.join(", ") : "—"}</td>}
                       <td className="break-words px-3 py-3">{task.summary || "—"}</td>
+                      {isParent && <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.reporter || "—"}</td>}
                       <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{task.assigneeDisplayName || "—"}</td>
                       <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
                     </tr>
@@ -411,17 +498,36 @@ function JqlDialog({
               {tasks.map((task) => (
                 <article key={task.key} className="py-4">
                   <div className="flex items-center gap-2">
-                    <ParentIssueTypeIcon parent={task.parentIssueType} />
+                    {!isParent && <ParentIssueTypeIcon parent={task.parentIssueType} />}
                     <TicketLink task={task} jiraBaseUrl={jiraBaseUrl} />
                     <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400" title="Story Points">
                       SP {formatPoints(task.points)}
                     </span>
                   </div>
-                  <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">
-                    Assignee：{task.assigneeDisplayName || "—"}
-                    <span className="mx-1">·</span>
-                    Status：{task.status ?? "—"}
-                  </p>
+                  {isParent && (
+                    <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">
+                      Reporter：{task.reporter || "—"}
+                      <span className="mx-1">·</span>
+                      Assignee：{task.assigneeDisplayName || "—"}
+                    </p>
+                  )}
+                  {isParent && (
+                    <p className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">
+                      Component：{task.components.length ? task.components.join(", ") : "—"}
+                    </p>
+                  )}
+                  {!isParent && (
+                    <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">
+                      Assignee：{task.assigneeDisplayName || "—"}
+                      <span className="mx-1">·</span>
+                      Status：{task.status ?? "—"}
+                    </p>
+                  )}
+                  {isParent && (
+                    <p className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">
+                      Status：{task.status ?? "—"}
+                    </p>
+                  )}
                   <p className="mt-1 break-words text-sm text-slate-800 dark:text-slate-200">{task.summary || "—"}</p>
                 </article>
               ))}

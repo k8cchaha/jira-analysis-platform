@@ -12,6 +12,7 @@ export function SprintSelector({
   teamSlot,
   trailing,
   basePath = "/sprint/burndown",
+  teamSlotClassName = "w-full min-w-0 lg:w-56 lg:shrink-0",
   onNavigate,
 }: {
   project: SprintProjectKey | null
@@ -21,6 +22,8 @@ export function SprintSelector({
   trailing?: ReactNode
   /** 切換專案／Sprint 時跳轉的基底路徑（預設 Burn Down，供 Planning 等改指）。 */
   basePath?: string
+  /** 團隊過濾外層的寬度 class（預設 `lg:w-56`；Planning 傳較窄的以縮短團隊 filter）。 */
+  teamSlotClassName?: string
   /** navigation 由呼叫端以 transition 執行；省略時此元件不觸發導航。 */
   onNavigate?: (path: string) => void
 }) {
@@ -140,7 +143,7 @@ export function SprintSelector({
           選擇要查看燃盡圖的 Sprint。
         </p>
       </div>
-      {teamSlot ? <div className="w-full min-w-0 lg:w-56 lg:shrink-0">{teamSlot}</div> : null}
+      {teamSlot ? <div className={`${teamSlotClassName} lg:shrink-0`}>{teamSlot}</div> : null}
       {trailing ? <div className="w-auto lg:ml-auto">{trailing}</div> : null}
     </div>
   )
