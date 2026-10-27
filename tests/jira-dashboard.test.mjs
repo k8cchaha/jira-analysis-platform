@@ -583,8 +583,8 @@ describe("scoped missing-data reads", () => {
           assert.match(jql, /assignee in \("person-1"\)/)
           assert.doesNotMatch(jql, /currentUser\(\)/)
           if (kind === "points") {
-            assert.ok(jql.endsWith(` AND status CHANGED TO Done AFTER -${days}d ORDER BY key ASC`))
-            assert.doesNotMatch(jql, /\b(created|updated|resolved|resolutiondate)\b/i)
+            assert.ok(jql.endsWith(` AND created >= -${days}d ORDER BY key ASC`))
+            assert.doesNotMatch(jql, /\b(updated|resolved|resolutiondate)\b/i)
           } else {
             assert.ok(jql.endsWith(` AND created >= -${days}d ORDER BY key ASC`))
             assert.doesNotMatch(jql, /status CHANGED|\b(updated|resolved|resolutiondate)\b/i)
@@ -661,7 +661,7 @@ describe("scoped page-token binding", () => {
     assert.equal(typeof second.previousPageToken, "string")
     const query = h.calls.find((call) => call.method === "POST").body.jql
     assert.match(query, /assignee in \("person-1", "person-2"\)/)
-    assert.ok(query.endsWith(" AND status CHANGED TO Done AFTER -17d AND project in (sun, tkk) ORDER BY key ASC"))
+    assert.ok(query.endsWith(" AND created >= -17d AND project in (sun, tkk) ORDER BY key ASC"))
     const before = h.calls.length
     groups["ent-web"].push(fixtureUser("person-4"))
     scope = { ...scope, accountIds: ["person-1", "person-2", "person-4"] }

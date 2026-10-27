@@ -40,12 +40,12 @@ describe("dashboard alert cards", () => {
       assert.match(bug({ s0s1Count, s2Count }), /border-red-500/)
     }
   })
-  it("renders only pending totals with neutral borders", () => {
+  it("renders only pending totals with green at zero and blue borders when counted", () => {
     const zero = pending({ inReviewCount: 0, requestInfoCount: 0 })
-    assert.match(zero, /border-slate-200/)
-    assert.doesNotMatch(zero, /border-green|border-yellow|超過3天未更新/)
+    assert.match(zero, /border-green-500/)
+    assert.doesNotMatch(zero, /border-blue|border-yellow|超過3天未更新/)
     const counts = pending({ inReviewCount: 2, requestInfoCount: 3 })
-    assert.match(counts, /border-slate-200/)
+    assert.match(counts, /border-blue-500/)
     assert.match(counts, /2 張 Issue/)
     assert.match(counts, /3 張 Issue/)
     assert.doesNotMatch(counts, /border-green|border-yellow|超過3天未更新/)

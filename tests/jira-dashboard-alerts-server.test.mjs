@@ -157,11 +157,11 @@ describe("scoped alert group orchestration", () => {
     assert.deepEqual(plain(await h.service.getDashboardAlertCounts("pending")), { inReview: 1, requestInfo: 1 })
     assert.equal(h.maxActive(), 2); assert.equal(h.calls.length, 2)
   })
-  it("uses verified person account equality and ignores supplied days/name", async (t) => {
+  it("uses verified person account equality with the chosen days window", async (t) => {
     const h = harness(t)
     await h.service.getDashboardAlertCounts("bugs", person)
     assert.equal(h.calls.filter((call) => call.path.startsWith("user?")).length, 1)
-    assert.ok(h.calls.filter((call) => call.body).every((call) => call.body.jql.includes('assignee = "person-a"') && !call.body.jql.includes("-7d") && !call.body.jql.includes("Fixture User")))
+    assert.ok(h.calls.filter((call) => call.body).every((call) => call.body.jql.includes('assignee = "person-a"') && call.body.jql.includes("created >= -7d") && !call.body.jql.includes("Fixture User")))
   })
   it("fails a mismatched person before any search", async (t) => {
     const h = harness(t, { user: () => user("other-person") })
@@ -172,7 +172,7 @@ describe("scoped alert group orchestration", () => {
     const h = harness(t, { groups: { "ent-web": [user("a"), user("b")], "ent-be1": [user("b"), user("c")] } })
     await h.service.getDashboardAlertCounts("bugs", team)
     const searches = h.calls.filter((call) => call.body)
-    assert.ok(searches.every((call) => call.body.jql.includes('assignee in ("a", "b", "c") AND project in (sun)') && !call.body.jql.includes("-17d")))
+    assert.ok(searches.every((call) => call.body.jql.includes('assignee in ("a", "b", "c")') && call.body.jql.includes("created >= -17d") && call.body.jql.includes("AND project in (sun)")))
     assert.equal(h.calls.filter((call) => call.path.startsWith("group/member?")).length, 2)
   })
   it("fully paginates group members before searching", async (t) => {

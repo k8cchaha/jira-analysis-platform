@@ -80,17 +80,17 @@ describe("scoped missing-data JQL", () => {
     for (const kind of ["points", "defect-cause"]) assert.equal(missingDataReadJql(kind, { mode: "self" }), missingDataJql(kind))
     assert.equal(missingDataReadJql("points", { mode: "self" }).includes("30d"), false)
   })
-  it("uses Done transition for Points and created for Bug", () => {
+  it("uses created window for Points and Bug person scope", () => {
     const scope = { mode: "person", accountIds: ["user-b", "user-a", "user-a"], projects: [], days: 30 }
     const points = missingDataReadJql("points", scope)
     const bug = missingDataReadJql("defect-cause", scope)
     assert.ok(points.includes('assignee in ("user-a", "user-b")'))
-    assert.ok(points.includes("status CHANGED TO Done AFTER -30d"))
+    assert.ok(points.includes("created >= -30d"))
     assert.ok(points.includes("resolution in (EMPTY, Done, Fixed)"))
     assert.ok(points.includes('((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0)))'))
     assert.equal(points.includes("project not in"), false)
     assert.equal(points.includes("currentUser"), false)
-    assert.equal(points.includes("created"), false)
+    assert.equal(points.includes("CHANGED"), false)
     assert.ok(bug.includes("created >= -30d"))
     assert.ok(bug.includes('status not in ("In Progress", "Dev Ready")'))
     assert.equal(bug.includes("CHANGED"), false)

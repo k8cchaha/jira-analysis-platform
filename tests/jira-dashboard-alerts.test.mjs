@@ -8,8 +8,8 @@ const literalQueries = {
   s2: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d',
   inReview: 'issuetype in (DEV-Task, QA-Task) and status = "In Review"',
   requestInfo: 'status = "Request Info"',
-  overdue: 'duedate < startOfDay()',
-  upcoming: 'duedate >= startOfDay() AND duedate < startOfDay("+3d")',
+  overdue: 'duedate < startOfDay() AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
+  upcoming: 'duedate >= startOfDay() AND duedate < startOfDay("+3d") AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
 }
 const bugs = { status: "success", kind: "bugs", counts: { s0s1: 0, s2: 5 } }
 const pending = { status: "success", kind: "pending", counts: { inReview: 10, requestInfo: 0 } }
@@ -23,18 +23,18 @@ describe("dashboard alert JQL contract", () => {
     it(`${key}: adds self assignee without extra date restrictions`, () => {
       assert.equal(dashboardAlertJql(key, { mode: "self" }), `(${base}) AND assignee = currentUser() ORDER BY key ASC`)
     })
-    it(`${key}: adds one verified account and ignores selected days`, () => {
+    it(`${key}: adds one verified account with the chosen days window`, () => {
       const scope = { mode: "person", accountIds: ["712020:fixture-user"], projects: [], days: 1 }
-      const expected = `(${base}) AND assignee = "712020:fixture-user" ORDER BY key ASC`
+      const expected = `(${base}) AND assignee = "712020:fixture-user" AND created >= -1d ORDER BY key ASC`
       assert.equal(dashboardAlertJql(key, scope), expected)
-      assert.equal(dashboardAlertJql(key, { ...scope, days: 365 }), expected)
+      assert.equal(dashboardAlertJql(key, { ...scope, days: 365 }), `(${base}) AND assignee = "712020:fixture-user" AND created >= -365d ORDER BY key ASC`)
     })
     it(`${key}: adds sorted deduplicated team and selected-project intersection`, () => {
-      assert.equal(dashboardAlertJql(key, { mode: "team-project", accountIds: ["b", "a", "b"], projects: ["pride", "sun", "sun"], days: 7 }), `(${base}) AND assignee in ("a", "b") AND project in (pride, sun) ORDER BY key ASC`)
+      assert.equal(dashboardAlertJql(key, { mode: "team-project", accountIds: ["b", "a", "b"], projects: ["pride", "sun", "sun"], days: 7 }), `(${base}) AND assignee in ("a", "b") AND created >= -7d AND project in (pride, sun) ORDER BY key ASC`)
     })
   }
   it("does not restrict projects when none are selected", () => {
-    assert.equal(dashboardAlertJql("requestInfo", { mode: "team-project", accountIds: ["a"], projects: [], days: 30 }), '(status = "Request Info") AND assignee in ("a") ORDER BY key ASC')
+    assert.equal(dashboardAlertJql("requestInfo", { mode: "team-project", accountIds: ["a"], projects: [], days: 30 }), '(status = "Request Info") AND assignee in ("a") AND created >= -30d ORDER BY key ASC')
   })
   for (const scope of [
     { mode: "team-project", accountIds: [], projects: [], days: 30 },
