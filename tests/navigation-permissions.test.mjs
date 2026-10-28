@@ -67,21 +67,15 @@ describe("visibleNavigationCategories（依登入使用者權限）", () => {
     assert.deepEqual(categoryIds(visible), ALL_IDS)
   })
 
-  it("非管理員（清單外的 email）→ 只留 Sprint 管理（Planning + Burn Down）", () => {
+  it("非管理員（清單外的 email）→ 不顯示任何類別（只剩儀表板）", () => {
     const nav = harness()
     const visible = nav.visibleNavigationCategories(nav.navigationCategories, "someone@example.com")
-    assert.deepEqual(categoryIds(visible), ["sprint"])
-    // Sprint 類別內應同時有 Planning 與 Burn Down 兩個 feature。
-    const sprint = visible[0]
-    assert.deepEqual(
-      Array.from({ length: sprint.features.length }, (_, i) => String(sprint.features[i].id)),
-      ["planning", "burndown"]
-    )
+    assert.deepEqual(categoryIds(visible), [])
   })
 
   it("email undefined（無 email 情形）→ 非管理員視為受限", () => {
     const nav = harness()
     const visible = nav.visibleNavigationCategories(nav.navigationCategories, undefined)
-    assert.deepEqual(categoryIds(visible), ["sprint"])
+    assert.deepEqual(categoryIds(visible), [])
   })
 })
