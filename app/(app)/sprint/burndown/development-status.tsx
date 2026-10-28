@@ -73,8 +73,10 @@ export function DevelopmentStatus({
   )
 
   // 依 teamKey + assignee + 完成與否過濾原始 tasks（同一份 teamOf 判定）；
-  // 完成判定須與計算一致：受阻母票在勾選時也視為已完成。
+  // 完成判定須與計算一致（`computeBurndownStatus`）：開局前 Done（doneBeforeStart）、
+  // 或 doneDate 今天以前（含）、或受阻母票在勾選時也視為已完成。
   const isTaskDone = (task: BurndownTask): boolean =>
+    task.doneBeforeStart ||
     (task.doneDate !== null && task.doneDate <= (today ?? "")) ||
     (blockedParentStatuses !== null &&
       blockedParentStatuses !== undefined &&

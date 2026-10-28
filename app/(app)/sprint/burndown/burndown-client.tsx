@@ -313,6 +313,7 @@ export function BurndownClient({
                 </p>
               ) : (
                 <>
+                  <h3 className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">Burn Down Chart</h3>
                   <BurndownChart
                     days={filtered.days}
                     totalPoints={filtered.totalPoints}

@@ -87,9 +87,9 @@ export const navigationCategories = [
       },
       {
         id: "burndown",
-        label: "Burn Down Chart",
+        label: "開發狀況",
         icon: "burndown",
-        routes: [{ href: "/sprint/burndown", label: "Burn Down Chart" }],
+        routes: [{ href: "/sprint/burndown", label: "開發狀況" }],
       },
     ],
   },

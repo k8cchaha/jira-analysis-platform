@@ -12,7 +12,7 @@ import {
 import { burndownJiraBaseUrl } from "@/lib/jira-burndown"
 
 export const metadata = {
-  title: "Burn Down Chart",
+  title: "開發狀況",
 }
 
 export default async function BurndownPage({
@@ -41,7 +41,7 @@ export default async function BurndownPage({
   return (
     <>
       <PageHeader
-        title="Burn Down Chart"
+        title="開發狀況"
       />
 
       <BurndownClient
