@@ -83,20 +83,10 @@ export function PlanningOverview({
     [filtered, mode, teamOfFn, teamOrder]
   )
 
-  // 圖上方的標頭：工作單總張數 + 總點數。
-  const header = useMemo(() => {
-    const points = filtered.reduce((sum, task) => sum + (task.points ?? 0), 0)
-    return { count: filtered.length, points: round1(points) }
-  }, [filtered])
-
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-4">
         <RadioGroup mode={mode} onModeChange={setMode} />
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          共 <span className="font-semibold text-slate-900 dark:text-white">{header.count}</span> 個工作單 · 總點數{" "}
-          <span className="font-semibold text-slate-900 dark:text-white">{formatPoints(header.points)}</span> SP
-        </p>
       </div>
 
       {filtered.length === 0 ? (

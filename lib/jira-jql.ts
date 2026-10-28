@@ -111,11 +111,12 @@ export function sprintDevTasksDoneBeforeJql(
 }
 
 /**
- * 儀表板下方的開發任務看板（跨專案）全部 active Dev-Task：套用上方 Dashboard scope 的 assignee
- * （self→currentUser()；person→`=`；team→`in (...)`＋有選 project 才加 project in (...)），
- * person/team 並加 `created >= -Nd`。`boardDays` 非 null 時再疊加「近 X 天建立或更新」
- * （`created` 或 `updated` 任一時點在 -Xd 內）；null 表示看板不套重近條件。Done 已移除
- * 欄位，故 JQL 用 `status not in ("Done")` 不撈完成任務。scope/`boardDays` 應已由呼叫端驗證。
+ * 儀表板下方的任務看板（跨專案）全部 active 開發單（Dev-Task + QA-Task）：套用上方
+ * Dashboard scope 的 assignee（self→currentUser()；person→`=`；team→`in (...)`＋有選 project
+ * 才加 project in (...)），person/team 並加 `created >= -Nd`。`boardDays` 非 null 時再疊加
+ * 「近 X 天建立或更新」（`created` 或 `updated` 任一時點在 -Xd 內）；null 表示看板不套重近
+ * 條件（只有 self 會在 UI 上提供這個開關，因 person/team 已有近-N 天限制）。Done 已移除欄位，
+ * 故 JQL 用 `status not in ("Done")` 不撈完成任務。scope/`boardDays` 應已由呼叫端驗證。
  */
 export function scrumBoardDevTasksJql(scope: ResolvedDashboardScope, boardDays: number | null): string {
   let assignee = "assignee = currentUser()"
@@ -140,7 +141,7 @@ export function scrumBoardDevTasksJql(scope: ResolvedDashboardScope, boardDays: 
     dashboardDays(String(boardDays))
     recency = ` AND (created >= -${boardDays}d OR updated >= -${boardDays}d)`
   }
-  const jql = `issuetype = "Dev-Task" AND status not in ("Done") AND ${assignee}${date}${projects}${recency} ORDER BY key ASC`
+  const jql = `issuetype in ("Dev-Task", "QA-Task") AND status not in ("Done") AND ${assignee}${date}${projects}${recency} ORDER BY key ASC`
   if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
   return jql
 }
@@ -211,7 +212,7 @@ export function missingDataUpdateJql(kind: MissingDataKind, issueIds: readonly s
 export const DASHBOARD_ALERT_JQL = {
   s0s1: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")',
   s2: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d',
-  inReview: 'issuetype in (DEV-Task, QA-Task) and status = "In Review"',
+  inReview: 'status = "In Review"',
   requestInfo: 'status = "Request Info"',
   overdue: 'duedate < startOfDay() AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
   upcoming: 'duedate >= startOfDay() AND duedate < startOfDay("+3d") AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',

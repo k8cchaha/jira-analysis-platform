@@ -110,16 +110,16 @@ export function PlanningClient({
         trailing={
           <div className="flex items-center gap-2">
             <JqlButton
-              label="未開子單"
-              kind="no-subtasks"
+              label="未估時"
+              kind="unestimated"
               project={project}
               sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}
               memberIds={memberIds}
             />
             <JqlButton
-              label="未估時"
-              kind="unestimated"
+              label="未開子單"
+              kind="no-subtasks"
               project={project}
               sprintId={selectedSprintId}
               jiraBaseUrl={jiraBaseUrl}

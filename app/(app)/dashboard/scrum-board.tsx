@@ -35,10 +35,11 @@ function typePalette(parent: ScrumBoardCard["parentIssueType"]): { border: strin
 }
 
 /**
- * 儀表板下方的開發任務看板：垂直三欄（To Do / In Progress / In Review）
- * 列出該 Dashboard scope（self / person / team）範圍內的 active Dev-Task。
- * Done 已移除欄位、不撈。看板右上角「近 X 天建立/更新」checkbox＋數字 input
- * 是額外疊加的重近條件。每張卡片依母票 issue type 上色，點擊後在新視窗開啟 Jira 單。
+ * 儀表板下方的任務看板：垂直三欄（To Do / In Progress / In Review）
+ * 列出該 Dashboard scope（self / person / team）範圍內的 active 開發單（Dev-Task + QA-Task）。
+ * Done 已移除欄位、不撈。右上角「近 X 天建立/更新」checkbox＋數字 input 是額外疊加的重近
+ * 條件，**只在上方 Filter 為「自己」時提供**——正因 person/team 的 scope JQL 已加
+ * `created >= -Nd`，不必再加開關。每張卡片依母票 issue type 上色，點擊後在新視窗開啟 Jira 單。
  */
 export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: DashboardFilter | null; jiraBaseUrl: string | null }) {
   const [nearEnabled, setNearEnabled] = useState(true)
@@ -49,10 +50,13 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
 
+  /** 只有「自己」模式才提供看板的重近天數開關（person/team 的 scope JQL 已含近-N 天限制）。 */
+  const isSelf = filter?.mode === "self"
+
   const load = useCallback(async () => {
     if (!filter) return
     const params = new URLSearchParams(serializeDashboardFilter(filter))
-    if (nearEnabled && days.trim() !== "") params.set("boardDays", days)
+    if (isSelf && nearEnabled && days.trim() !== "") params.set("boardDays", days)
     const sequence = ++seq.current
     setLoading(true)
     setError(null)
@@ -65,13 +69,13 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
       setColumns(parsed.data.columns)
     } catch {
       if (sequence === seq.current) {
-        setError("無法載入開發任務看板，請重試。")
+        setError("無法載入任務看板，請重試。")
         setColumns(null)
       }
     } finally {
       if (sequence === seq.current) setLoading(false)
     }
-  }, [filter, nearEnabled, days])
+  }, [filter, nearEnabled, days, isSelf])
 
   useEffect(() => {
     void load()
@@ -87,12 +91,13 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
   const total = COLUMNS.reduce((sum, { key }) => sum + effective[key].length, 0)
 
   return (
-    <section aria-label="開發任務看板" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+    <section aria-label="任務看板" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-950 dark:text-white">
-          開發任務看板 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">（共 {total} 張 Dev-Task）</span>
+          任務看板 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">（共 {total} 張開發/測試單）</span>
         </h2>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
+        {isSelf && (
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
           <input
             type="checkbox"
             checked={nearEnabled}
@@ -111,12 +116,13 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
             className="h-8 w-16 rounded border border-slate-300 bg-white px-2 text-sm tabular-nums text-slate-900 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           />
           天建立/更新
-        </label>
+          </label>
+        )}
       </div>
 
       {!filter ? (
         <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-slate-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-slate-200">
-          開發任務看板需要有效的上方篩選條件才能載入。
+          任務看板需要有效的上方篩選條件才能載入。
         </p>
       ) : error ? (
         <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm dark:border-amber-800 dark:bg-amber-950/30">
@@ -145,7 +151,7 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
                 </header>
                 <ul className="max-h-[32rem] min-h-[6rem] flex-1 space-y-2 overflow-y-auto overscroll-contain p-2" aria-busy={loading}>
                   {cards.length === 0 && !loading ? (
-                    <li className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">沒有 Dev-Task</li>
+                    <li className="px-2 py-6 text-center text-xs text-slate-400 dark:text-slate-500">沒有開發/測試單</li>
                   ) : (
                     cards.map((card) => (
                       <li key={card.key}>
@@ -198,7 +204,7 @@ function CardLink({ card, jiraBaseUrl }: { card: ScrumBoardCard; jiraBaseUrl: st
 function ScrumBoardSkeleton() {
   return (
     <div role="status" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      <span className="sr-only">正在載入開發任務看板</span>
+      <span className="sr-only">正在載入任務看板</span>
       {COLUMNS.map((_, i) => (
         <div key={i} aria-hidden="true" className="h-48 animate-pulse rounded-xl bg-slate-100 motion-reduce:animate-none dark:bg-slate-800" />
       ))}

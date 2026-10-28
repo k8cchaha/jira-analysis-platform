@@ -135,14 +135,14 @@ describe("scrum board Dev-Task JQL", () => {
     const h = harness(t)
     assert.equal(
       h.jql.scrumBoardDevTasksJql(SELF, null),
-      'issuetype = "Dev-Task" AND status not in ("Done") AND assignee = currentUser() ORDER BY key ASC'
+      'issuetype in ("Dev-Task", "QA-Task") AND status not in ("Done") AND assignee = currentUser() ORDER BY key ASC'
     )
   })
   it("layers the board recency window on self", (t) => {
     const h = harness(t)
     assert.equal(
       h.jql.scrumBoardDevTasksJql(SELF, 30),
-      'issuetype = "Dev-Task" AND status not in ("Done") AND assignee = currentUser() AND (created >= -30d OR updated >= -30d) ORDER BY key ASC'
+      'issuetype in ("Dev-Task", "QA-Task") AND status not in ("Done") AND assignee = currentUser() AND (created >= -30d OR updated >= -30d) ORDER BY key ASC'
     )
   })
   it("uses assignee equality and the person near-N days for a person scope", (t) => {

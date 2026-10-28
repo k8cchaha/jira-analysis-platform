@@ -6,7 +6,7 @@ import { DashboardFilterError } from "../lib/jira-dashboard-filter.ts"
 const literalQueries = {
   s0s1: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")',
   s2: 'project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d',
-  inReview: 'issuetype in (DEV-Task, QA-Task) and status = "In Review"',
+  inReview: 'status = "In Review"',
   requestInfo: 'status = "Request Info"',
   overdue: 'duedate < startOfDay() AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
   upcoming: 'duedate >= startOfDay() AND duedate < startOfDay("+3d") AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))',
