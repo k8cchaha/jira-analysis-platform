@@ -60,67 +60,74 @@ function harness() {
   }
 }
 
-// today：2026-10-21。規則「今日 <= sprint start + 3」→ cutoff＝10-18。
-// SUN：Sprint 71（10-26 開始）是開始日不早於 10-18 的最近一個；Sprint 70（10-13）已超過。
-// TKK：S133（10-26 開始）同理；S132（09-21）已超過。
-// PRIDE：最近的 Sprint 30（10-06 開始）也已超過 cutoff → 空。
+// today：2026-10-21。新規則：顯示「當天仍在範圍內（active）」＋「未來的」全部 sprint，
+// 即 `endDate >= today`，照 startDate 升序。
+// SUN：Sprint 70（10-13..10-25，含今天）為進行中；71..75 為未來 → 共 6 個。
+// TKK：S132（09-21..10-25，含今天）為進行中；S133/S134/S135 為未來 → 共 4 個。
+// PRIDE：最近 S30（10-06..10-19）也已結束 → 空。
 const TODAY = "2026-10-21"
 
-describe("getPlanningSprints（符合條件且開始日最近的那一個）", () => {
-  // vm 沙箱內的 Array.prototype.map / Number 都屬於沙箱 realm，回傳的陣列與
-  // boxed number 是沙箱物件；改以 host 側逐一讀取 .length 與 Number(s.id) 比對。
+describe("getPlanningSprints（進行中＋未來的全部 sprint）", () => {
+  // vm 沙箱內的 Array.prototype / Number 屬於沙箱 realm，回傳的陣列與 boxed number
+  // 是沙箱物件；改以 host 側逐一讀取 .length 與 Number(s.id) 比對。
   const assertIds = (plan, expected) => {
     assert.equal(plan.length, expected.length)
     expected.forEach((id, index) => assert.equal(Number(plan[index].id), id))
   }
 
-  it("SUN：選定 Sprint 71（最近的滿足者），不再連帶 Sprint 70", () => {
+  it("SUN：進行中 Sprint 70 + 未來的 71..75（升序）", () => {
     const { sprints } = harness()
-    assertIds(sprints.getPlanningSprints("SUN", TODAY), [7518]) // 只有 Sprint 71
+    assertIds(sprints.getPlanningSprints("SUN", TODAY), [7517, 7518, 7519, 7520, 7521, 7522])
   })
 
-  it("TKK：選定 S133（最近的滿足者），不再連帶 S132", () => {
+  it("TKK：進行中 S132 + 未來的 S133/S134/S135（升序）", () => {
     const { sprints } = harness()
-    assertIds(sprints.getPlanningSprints("TKK", TODAY), [7402]) // 只有 S133
+    assertIds(sprints.getPlanningSprints("TKK", TODAY), [7401, 7402, 7403, 7404])
   })
 
-  it("PRIDE：最近的 Sprint 也已超過「今天 − 3」 → 回空陣列（不回退過去）", () => {
+  it("PRIDE：最近的 Sprint 也已結束 → 回空陣列（不回退過去）", () => {
     const { sprints } = harness()
     assert.equal(sprints.getPlanningSprints("PRIDE", TODAY).length, 0)
   })
 
-  it("今天在任何 sprint 開始之前 → 選定最前面（尚未開始）的那個", () => {
-    // cutoff＝2024-12-29；SUN 最早的 Sprint 58（04-28）仍滿足「today <= start + 3」。
+  it("今天在任何 sprint 開始之前 → 列出全部未來的 sprint", () => {
+    // SUN 最早的 Sprint 58（04-28 開始）在 2025-01-01 之前 → 全部都是未來。
     const { sprints } = harness()
-    assertIds(sprints.getPlanningSprints("SUN", "2025-01-01"), [6823]) // Sprint 58
+    assertIds(sprints.getPlanningSprints("SUN", "2025-01-01"), [6823, 6824, 6825, 7323, 7324, 7510, 7511, 7512, 7513, 7514, 7515, 7516, 7517, 7518, 7519, 7520, 7521, 7522])
   })
 
-  it("已過最後一棒「開始 + 3」之後 → 回空陣列", () => {
-    // cutoff＝2027-01-02；TKK 最後一棒 S135（12-21 開始）也已超過 → 空。
+  it("已結束最後一個 sprint 之後 → 回空陣列", () => {
+    // TKK 最後一棒 S135 結束於 2027-01-24；2027-02-01 已無任何範圍內 sprint。
     const { sprints } = harness()
-    assert.equal(sprints.getPlanningSprints("TKK", "2027-01-05").length, 0)
+    assert.equal(sprints.getPlanningSprints("TKK", "2027-02-01").length, 0)
   })
 })
 
-describe("resolvePlanningSprint（只允許 planning 選定的那一個）", () => {
-  it("有效的 sprint（剛好是選定的那一個）→ 選它", () => {
+describe("resolvePlanningSprint（預設＝進行中，否則最早未來；只允許 planning 選項內）", () => {
+  it("明確指定有效的未來 sprint（在選項內）→ 選它", () => {
     const { params } = harness()
     assert.equal(params.resolvePlanningSprint("SUN", 7518, TODAY)?.id, 7518)
   })
 
-  it("已超過條件的 sprint → 回退到選定的那一個（Sprint 71）", () => {
+  it("明確指定進行中的 sprint（在選項內）→ 選它", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", 7517, TODAY)?.id, 7518)
+    assert.equal(params.resolvePlanningSprint("SUN", 7517, TODAY)?.id, 7517)
   })
 
-  it("無效（已過去的歷史）sprint id → 回退到選定的那一個", () => {
+  it("未指定 id → 預設＝當天仍在範圍內的 Sprint 70（id 7517）", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", 7515, TODAY)?.id, 7518)
+    assert.equal(params.resolvePlanningSprint("SUN", null, TODAY)?.id, 7517)
   })
 
-  it("未指定 id → 回退到選定的那一個", () => {
+  it("無效（已過去的歷史）sprint id → 回退到預設（進行中 Sprint 70）", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("SUN", null, TODAY)?.id, 7518)
+    assert.equal(params.resolvePlanningSprint("SUN", 7515, TODAY)?.id, 7517)
+  })
+
+  it("當天不在任何 sprint 範圍內 → 預設最早的那個未來 sprint", () => {
+    // 2026-10-27：不在 Sprint 70（結束 10-25）也不在 Sprint 71（10-26 開始）內 → 選最早未來 Sprint 71。
+    const { params } = harness()
+    assert.equal(params.resolvePlanningSprint("SUN", null, "2026-10-27")?.id, 7518)
   })
 
   it("無專案 → null", () => {

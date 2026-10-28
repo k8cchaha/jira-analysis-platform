@@ -146,6 +146,8 @@ describe("burndown query builders", () => {
   it("builds parents, all-tasks, and done-on-day JQL from validated inputs", (t) => {
     const h = harness(t)
     assert.equal(h.jql.sprintParentIssuesJql(7517), "sprint = 7517 AND issuetype in (story, task, bug)")
+    assert.equal(h.jql.sprintParentIssuesOfTypeJql(7517, "story"), "sprint = 7517 AND issuetype = story")
+    assert.equal(h.jql.sprintParentIssuesOfTypeJql(7517, "bug"), "sprint = 7517 AND issuetype = bug")
     assert.equal(h.jql.sprintDevTasksJql(["SUN-51", "SUN-50"]), 'parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task"')
     assert.equal(
       h.jql.sprintDevTasksDoneOnJql(["SUN-51", "SUN-50"], "2026-10-19"),

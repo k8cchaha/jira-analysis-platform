@@ -16,6 +16,7 @@ import { STORY_POINTS_FIELD } from "@/lib/jira-fields"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { PlanningTask } from "@/lib/planning-subset"
+import type { PlanningOverviewItem } from "@/lib/planning-overview"
 
 export class JiraPlanningError extends Error {
   constructor(
@@ -120,6 +121,17 @@ const PLANNING_FIELDS = [
   STORY_POINTS_FIELD,
 ]
 
+/** 「任務規劃總覽」要請求的欄位：需要母票自身 type（issuetype）＋其 Epic（parent）。 */
+const OVERVIEW_FIELDS = [
+  "summary",
+  "assignee",
+  "reporter",
+  "status",
+  "issuetype",
+  "parent",
+  STORY_POINTS_FIELD,
+]
+
 /** 把一筆 Jira issue 投影成 PlanningTask 列。 */
 function projectPlanningTask(issue: {
   key: string
@@ -135,6 +147,41 @@ function projectPlanningTask(issue: {
     reporter: assigneeDisplayName(issue.fields.reporter),
     components: componentNames(issue.fields.components),
     parentIssueType: parentIssueTypeOf(issue.fields.parent),
+  }
+}
+
+/** 從 Jira `parent` 欄位取出 Epic（當 parent 的 issuetype 是 Epic 時）；否則回 null。 */
+function epicOfParent(value: unknown): PlanningOverviewItem["epic"] | null {
+  if (typeof value !== "object" || value === null) return null
+  const parent = value as Record<string, unknown>
+  const name = recordFieldName(parent.fields)
+  if (name === null || !name.toLowerCase().includes("epic")) return null
+  const key = parentObjectKey(parent)
+  if (key === null) return null
+  const nested = parent.fields
+  const summary =
+    typeof nested === "object" && nested !== null &&
+    typeof (nested as Record<string, unknown>).summary === "string"
+      ? ((nested as Record<string, unknown>).summary as string)
+      : null
+  return { key, summary }
+}
+
+/** 把一筆母票 issue 投影成 PlanningOverviewItem（含自身 type、Epic 推導）。 */
+function projectOverviewItem(issue: {
+  key: string
+  fields: Record<string, unknown>
+}): PlanningOverviewItem {
+  return {
+    key: issue.key,
+    summary: typeof issue.fields.summary === "string" ? issue.fields.summary : null,
+    issueType: recordFieldName(issue.fields),
+    status: statusName(issue.fields.status),
+    points: pointsOrNull(issue.fields[STORY_POINTS_FIELD]),
+    assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
+    assigneeAccountId: assigneeAccountId(issue.fields.assignee),
+    reporter: assigneeDisplayName(issue.fields.reporter),
+    epic: epicOfParent(issue.fields.parent),
   }
 }
 
@@ -177,6 +224,41 @@ export async function getPlanningData(sprint: SprintRecord): Promise<PlanningDat
   }
 
   return { taskCount: tasks.length, tasks, parentKeys: [...parentKeys] }
+}
+
+/**
+ * 撈此 sprint 的母票（Story / Task / Bug）明細，供「任務規劃總覽」的任務清單與
+ * 票種圓餅圖使用。只重用 `sprintParentIssuesJql`，不手刻 JQL；Epic 由母票的
+ * `parent` 欄位推導，因此不需新增自訂欄位或改查詢。
+ */
+export async function getPlanningOverview(sprint: SprintRecord): Promise<PlanningOverviewItem[]> {
+  let credentials: JiraCredentials
+  try {
+    credentials = await getJiraToken()
+  } catch (error) {
+    if (error instanceof JiraAuthorizationError) {
+      throw new JiraPlanningError(
+        error.code === "invalid_configuration" ? "request_failed" : "reauthorize",
+        "無法讀取 Jira 登入狀態，請重新授權。"
+      )
+    }
+    throw new JiraPlanningError("request_failed", "無法取得 Jira 登入資料。")
+  }
+
+  const items: PlanningOverviewItem[] = []
+  for await (const issues of searchJiraIssues(
+    credentials,
+    sprintParentIssuesJql(sprint.id),
+    OVERVIEW_FIELDS
+  )) {
+    for (const issue of issues) {
+      items.push(projectOverviewItem(issue))
+      if (items.length > MAX_DEVTASKS) {
+        throw new JiraPlanningError("limit", "此 Sprint 的票數過多，無法提供精確結果。")
+      }
+    }
+  }
+  return items
 }
 
 export { dashboardJiraBaseUrl as planningJiraBaseUrl }

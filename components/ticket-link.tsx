@@ -1,14 +1,13 @@
-import type { PlanningTask } from "@/lib/planning-subset"
-
 /**
  * Issue 的 Ticket 連結：有 Jira base URL 時連到 Jira browse 頁（另開分頁），否則只顯示
- * Ticket（單號）。Planning 頁的彈窗與「任務分派狀況」展開清單共用。
+ * Ticket（單號）。Planning 頁的彈窗、任務分派狀況展開清單、任務規劃總覽共用。
+ * 只取 `key`，任何帶 key 的 DTO 都可用。
  */
 export function TicketLink({
   task,
   jiraBaseUrl,
 }: {
-  task: PlanningTask
+  task: { key: string }
   jiraBaseUrl: string | null
 }) {
   if (jiraBaseUrl) {

@@ -115,30 +115,21 @@ export function currentSprint(
 }
 
 /**
- * Sprint 管理 → Planning 的下拉選項：只提供「符合出現條件、且開始日最近」的
- * 單一 sprint。
+ * Sprint 管理 → Planning 的下拉選項：顯示「當天仍在範圍內」＋「未來的」全部 sprint。
  *
- * 出現條件：`today <= sprint.startDate + 3`（即 sprint 的開始日不早於「今天
- * 往前推 3 天」，或在此之後 / 尚未開始）。在 `getProjectSprints`（照 startDate
- * 升序）中取「第一個」滿足此條件的 sprint，且只顯示這一個——下一個 sprint
- * 不再一起出現。
+ * - 「當天仍在範圍內」＝`startDate <= today <= endDate`（進行中的 sprint）。
+ * - 「未來的」＝`startDate > today` 尚未開始的 sprint（全部列出，不限個數）。
+ * - 合併即 `endDate >= today`（尚未結束的 sprint），照 startDate 升序回傳。
  *
- * 若沒有任何 sprint 滿足條件（專案連一個 sprint 都沒有、或最近的一個也已超過
- * 「今天 − 3」），回空陣列——不回退顯示早已過去的 sprint（使用者明確要求
- * 顯示空狀態）。
+ * 若某天兩個 sprint 重疊（例如跨 board），兩種條件的 sprint 都會列入。
+ * 沒有任何 `endDate >= today` 的 sprint（全數都過去）時回空陣列——不回退顯示
+ * 早已結束的 sprint（使用者明確要求顯示空狀態）。
  */
 export function getPlanningSprints(
   projectKey: SprintProjectKey,
   today = new Date().toISOString().slice(0, 10)
 ): readonly SprintRecord[] {
-  const all = getProjectSprints(projectKey)
-  const cutoff = shiftDays(today, -3) // today − 3
-  const focus = all.find((sprint) => sprint.startDate >= cutoff) ?? null
-  return focus ? [focus] : []
-}
-
-/** 對 `YYYY-MM-DD` 日期字串做以「天」為單位的位移（timezone-safe）。 */
-export function shiftDays(date: string, delta: number): string {
-  const [year, month, day] = date.split("-").map(Number)
-  return new Date(Date.UTC(year, month - 1, day + delta)).toISOString().slice(0, 10)
+  return [...SPRINT_DATA[projectKey]]
+    .filter((sprint) => sprint.endDate >= today)
+    .sort((a, b) => a.startDate.localeCompare(b.startDate))
 }

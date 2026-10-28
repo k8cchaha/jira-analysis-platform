@@ -1,15 +1,18 @@
 "use client"
 
-import { useEffect, useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { PlanningTab } from "@/lib/burndown-params"
 import type { PlanningTask } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
+import type { PlanningOverviewItem } from "@/lib/planning-overview"
+import { parsePlanningOverviewResult } from "@/lib/planning-overview"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
 import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
+import { PlanningOverview } from "@/app/(app)/sprint/planning/planning-overview"
 import { TeamSelect } from "@/components/team-select"
 import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
@@ -53,6 +56,52 @@ export function PlanningClient({
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   /** 內容區目前分頁（任務分派狀況／任務規劃總覽）。純 client 端 state，不改 URL。 */
   const [tab, setTab] = useState<PlanningTab>("assignment")
+  /** 任務規劃總覽的母票資料：首次切到該 Tab 時遲載一次並快取（切 Tab 不重撈）。 */
+  const [overview, setOverview] = useState<{
+    items: PlanningOverviewItem[] | null
+    loading: boolean
+    error: { code: string; message: string } | null
+  }>({ items: null, loading: false, error: null })
+  const overviewOpened = useRef(false)
+
+  // 首次切到「任務規劃總覽」或專案/Sprint 改變時，遲載母票資料一次。
+  useEffect(() => {
+    if (tab !== "overview" || !sprint) return
+    if (overviewOpened.current) return
+    overviewOpened.current = true
+    loadOverview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, sprint])
+
+  async function loadOverview() {
+    const projectKey = project
+    const sprintId = sprint
+    if (!projectKey || !sprintId) return
+    const controller = new AbortController()
+    setOverview({ items: null, loading: true, error: null })
+    try {
+      const response = await fetch(
+        `/api/sprint/planning/overview?project=${encodeURIComponent(projectKey)}&sprint=${encodeURIComponent(sprintId.id)}`,
+        { cache: "no-store", signal: controller.signal }
+      )
+      const result = parsePlanningOverviewResult(await response.json())
+      if (!response.ok && result.status === "success") {
+        throw new Error("回應格式錯誤")
+      }
+      if (result.status === "error") {
+        setOverview({ items: null, loading: false, error: { code: result.error.code, message: result.error.message } })
+        return
+      }
+      setOverview({ items: result.data.items, loading: false, error: null })
+    } catch {
+      if (controller.signal.aborted) return
+      setOverview({ items: null, loading: false, error: { code: "retry", message: "無法載入任務規劃總覽，請重試。" } })
+    }
+  }
+  function retryOverview() {
+    setOverview({ items: null, loading: true, error: null })
+    loadOverview()
+  }
 
   function navigate(path: string) {
     startTransition(() => router.push(path))
@@ -144,7 +193,7 @@ export function PlanningClient({
           />
         ) : !sprint ? (
           <EmptyState
-            title={`${project} 暫無進行中或下一個 Sprint`}
+            title={`${project} 暫無進行中或未來的 Sprint`}
             body="此專案目前沒有可供規劃的 Sprint。"
             emoji="🏗️"
           />
@@ -163,25 +212,35 @@ export function PlanningClient({
                   {" "}（{sprint.startDate} → {sprint.endDate}）
                 </span>
               </h2>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                共{" "}
-                <span className="font-semibold text-slate-900 dark:text-white">
-                  {filtered.length}
-                </span>{" "}
-                個 Dev-Task ·{" "}
-                <span className="font-semibold text-slate-900 dark:text-white">
-                  {formatPoints(totalPoints)}
-                </span>{" "}
-                SP
-              </p>
+              {tab !== "overview" && (
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  共{" "}
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {filtered.length}
+                  </span>{" "}
+                  個 Dev-Task ·{" "}
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {formatPoints(totalPoints)}
+                  </span>{" "}
+                  SP
+                </p>
+              )}
             </div>
 
             <PlanningTabs tab={tab} onSwitch={switchTab} />
 
             {tab === "overview" ? (
-              <p className="py-12 text-center text-sm text-slate-500 dark:text-slate-400">
-                任務規劃總覽尚在建置中。
-              </p>
+              <PlanningOverview
+                teamOf={teamOf}
+                teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
+                memberIds={memberIds}
+                jiraBaseUrl={jiraBaseUrl}
+                sprintId={sprint?.id ?? null}
+                items={overview.items}
+                loading={overview.loading}
+                error={overview.error}
+                onRetry={retryOverview}
+              />
             ) : (
               <>
                 {tasks.length === 0 ? (

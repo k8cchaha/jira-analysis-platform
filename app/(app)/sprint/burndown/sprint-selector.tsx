@@ -115,7 +115,7 @@ export function SprintSelector({
             </div>
           ) : sprints.length === 0 ? (
             <div className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
-              此專案暫無已開始的 Sprint
+              此專案暫無可檢視的 Sprint
             </div>
           ) : (
             <div role="listbox" aria-label="選擇 Sprint" className="py-1">

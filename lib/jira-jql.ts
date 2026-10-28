@@ -23,6 +23,18 @@ export function sprintParentIssuesJql(sprintId: number): string {
   return `sprint = ${sprintId} AND issuetype in (story, task, bug)`
 }
 
+/** 票種比例圓餅圖的母票票種；允許值限 Story / Task / Bug（Epic 與 Dev-Task 不算）。 */
+export type ParentIssueType = "story" | "task" | "bug"
+
+/**
+ * 某 sprint 中、某單一票種的母票（票種比例圓餅圖的 Jira deep-link 用）。
+ * 與 `sprintParentIssuesJql` 相同來源，但只取單一 `issuetype`，讓深連結
+ * 「sprint = X AND issuetype = y」能精確對應該票種的母票。
+ */
+export function sprintParentIssuesOfTypeJql(sprintId: number, issueType: ParentIssueType): string {
+  return `sprint = ${sprintId} AND issuetype = ${issueType}`
+}
+
 /** 某組母票之下的全部 Dev-Task（用於總點數與「未估計」清單）。 */
 export function sprintDevTasksJql(parentKeys: readonly string[]): string {
   const keys = enforcedSortedKeys(parentKeys)

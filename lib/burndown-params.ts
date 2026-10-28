@@ -65,10 +65,11 @@ export function resolveSprint(
 }
 
 /**
- * 決定 Planning 頁面要顯示的 sprint（只允許 `getPlanningSprints` 選定的那一個）：
+ * 決定 Planning 頁面要顯示的 sprint（選項即 `getPlanningSprints`：進行中＋未來的全部）：
  * - `requestedSprintId` 是該專案 planning 中的 sprint → 選它；
- * - 否則回 planning 的第一個（也就是符合「今日 <= sprint start + 3」的最近一個）；
- * - 無專案、或該專案沒有任何符合條件的 sprint（planning 為空）→ `null`。
+ * - 否則預設＝「當天仍在範圍內」的 sprint（`currentSprint`）；
+ * - 當天沒有落在任何 sprint 範圍內 → 選最早開始的那個「未來」sprint（`planning[0]`）；
+ * - 無專案、或該專案連一個尚未結束的 sprint 都沒有（全數過去）→ `null`。
  */
 export function resolvePlanningSprint(
   projectKey: SprintProjectKey | null,
@@ -82,5 +83,5 @@ export function resolvePlanningSprint(
     const match = planning.find((sprint) => sprint.id === requestedSprintId)
     if (match) return match
   }
-  return planning[0]
+  return currentSprint(planning, today) ?? planning[0]
 }
