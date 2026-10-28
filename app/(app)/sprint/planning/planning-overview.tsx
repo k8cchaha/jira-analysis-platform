@@ -1,17 +1,27 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import type { PlanningOverviewItem } from "@/lib/planning-overview"
+import { Fragment, useMemo, useRef, useState } from "react"
+import type { PlanningTask } from "@/lib/planning-subset"
 import {
-  buildOverviewGroups,
-  countIssueTypes,
-  sumIssueTypePoints,
+  buildPlanningGroups,
+  buildPlanningDevTypeGroups,
+  buildDevTaskTypeTeamBreakdown,
+  buildDevTypeLabelTeamBreakdown,
+  countDevTaskTypes,
+  countDevTypeLabels,
+  sumDevTaskTypePoints,
+  sumDevTypeLabelPoints,
+  devTypeFamilyOf,
+  DEV_TYPE_GROUP_LABELS,
+  UNCLASSIFIED_DEV_TYPE_LABEL,
   type OverviewGroupMode,
+  type OverviewMetric,
+  type TypeTeamBreakdown,
 } from "@/lib/planning-overview"
-import { IssueTypeIcon } from "@/components/issue-type-icon"
+import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { TicketLink } from "@/components/ticket-link"
 import { statusColorClass } from "@/lib/status-color"
-import { sprintParentIssuesOfTypeJql } from "@/lib/jira-jql"
+import { sprintChildTasksOfParentTypeJql, sprintChildTasksOfDevTypeJql, sprintChildTasksUnclassifiedDevTypeJql } from "@/lib/jira-jql"
 
 /** 點數顯示：未估計（null）顯示「—」。 */
 function formatPoints(value: number | null): string {
@@ -24,67 +34,58 @@ function round1(value: number): number {
 }
 
 /**
- * 任務規劃總覽：左 2/3 任務清單（母票層級 Epic/Story/Task/Bug，Team ／Reporter 分群）、
- * 右 1/3 票種比例圓餅圖。
+ * 任務規劃總覽：左 2/3 任務清單、右 1/3 票種比例圓餅圖。
  *
- * 母票資料由 `PlanningClient` 遲載一次並快取（切 Tab 不重撈）；本組件只做
- * 團隊過濾、分群與繪製，不重發 JQL。
+ * 資料直接吃 `PlanningClient` 已過濾好的工作單（Dev-Task + QA-Task，`filtered`，
+ * 與「任務分派狀況」同源），因此點數加總與分派狀況一致，也不另發 server 查詢。
+ *
+ * - **Team 模式**（預設）：顯示 **Epic → 母票 → 子票** 三層階層；點數顯示在子票
+ *   （Dev 與 QA 都有），子票附 Assignee 欄（放在 SP 左方）；母票只當表頭（不顯示
+ *   聚合點數）。
+ * - **Reporter 模式**：維持 flat 列表（只是資料源已是 Dev+QA），暫不做階層（延後）。
  */
 export function PlanningOverview({
   teamOf,
   teamOrder,
-  memberIds,
   jiraBaseUrl,
   sprintId,
-  items,
-  loading,
-  error,
-  onRetry,
+  tasks,
 }: {
   /** accountId → 團隊 label（由團隊選單載入；供 Team 分群）。 */
   teamOf: Record<string, string>
   /** 團隊顯示順序（label）。 */
   teamOrder: readonly string[]
-  /** 團隊過濾：null＝顯示全部；否則只保留指派人在內的母票。 */
-  memberIds: ReadonlySet<string> | null
   jiraBaseUrl: string | null
   /** 目前 sprint 的 id（圓餅圖 arc 的 Jira 深連結用來組 `sprint = X`）。 */
   sprintId: number | null
-  items: PlanningOverviewItem[] | null
-  loading: boolean
-  error: { code: string; message: string } | null
-  onRetry: () => void
+  /** 此 sprint 的工作單（已由 `PlanningClient` 依所選團隊過濾）。 */
+  tasks: readonly PlanningTask[] | null
 }) {
   const [mode, setMode] = useState<OverviewGroupMode>("team")
 
-  // 團隊過濾：與「任務分派狀況」一致——無選取顯示全部；否則只留指派人在所選團隊內。
-  const filtered = useMemo(
-    () =>
-      memberIds === null
-        ? items
-        : items?.filter(
-            (item) => item.assigneeAccountId !== null && memberIds.has(item.assigneeAccountId)
-          ) ?? null,
-    [items, memberIds]
+  // 資料已由 `PlanningClient` 依團隊過濾好；此處只防 null（仍以 useMemo 穩定參考）。
+  const filtered = useMemo(() => tasks ?? [], [tasks])
+
+  const teamOfFn = useMemo(
+    () => (accountId: string | null) => (accountId === null ? undefined : teamOf[accountId]),
+    [teamOf]
   )
 
   const groups = useMemo(
     () =>
-      filtered
-        ? buildOverviewGroups({
-            items: filtered,
-            mode,
-            teamOf: (accountId) => (accountId === null ? undefined : teamOf[accountId]),
-            teamOrder,
-          })
-        : [],
-    [filtered, mode, teamOf, teamOrder]
+      buildPlanningGroups({ tasks: filtered, mode, teamOf: teamOfFn, teamOrder }),
+    [filtered, mode, teamOfFn, teamOrder]
   )
 
-  // 圖上方的標頭：總張數 + 總點數。
+  // Team 模式的「Team → Dev Type」兩層（Reporter 模式不走）。
+  const devTypeGroups = useMemo(
+    () => (mode === "team" ? buildPlanningDevTypeGroups({ tasks: filtered, teamOf: teamOfFn, teamOrder }) : []),
+    [filtered, mode, teamOfFn, teamOrder]
+  )
+
+  // 圖上方的標頭：工作單總張數 + 總點數。
   const header = useMemo(() => {
-    if (!filtered) return null
-    const points = filtered.reduce((sum, item) => sum + (item.points ?? 0), 0)
+    const points = filtered.reduce((sum, task) => sum + (task.points ?? 0), 0)
     return { count: filtered.length, points: round1(points) }
   }, [filtered])
 
@@ -92,57 +93,65 @@ export function PlanningOverview({
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
         <RadioGroup mode={mode} onModeChange={setMode} />
-        {header && (
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            共 <span className="font-semibold text-slate-900 dark:text-white">{header.count}</span> 張母票 · 總點數{" "}
-            <span className="font-semibold text-slate-900 dark:text-white">{formatPoints(header.points)}</span> SP
-          </p>
-        )}
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          共 <span className="font-semibold text-slate-900 dark:text-white">{header.count}</span> 個工作單 · 總點數{" "}
+          <span className="font-semibold text-slate-900 dark:text-white">{formatPoints(header.points)}</span> SP
+        </p>
       </div>
 
-      {loading ? (
-        <div className="grid gap-6 py-6 lg:grid-cols-3">
-          <div className="space-y-3 lg:col-span-2">
-            <div className="h-10 w-1/2 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" aria-hidden="true" />
-            <div className="h-48 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" aria-hidden="true" />
-          </div>
-          <div className="h-48 animate-pulse rounded-xl bg-slate-100 dark:bg-slate-800" aria-hidden="true" />
-        </div>
-      ) : error ? (
-        <div className="py-10 text-center">
-          <p className="text-sm text-slate-600 dark:text-slate-300">{error.message}</p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className="mt-3 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-          >
-            重試
-          </button>
-        </div>
-      ) : !filtered || filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-          此 Sprint 尚未有對應的母票。
+          此 Sprint 尚未有對應的工作單。
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
-            {groups.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                沒有符合所選團隊的母票。
-              </p>
-            ) : (
-              groups.map((group) => (
-                <GroupSection
-                  key={group.label}
-                  label={group.label}
-                  rows={group.rows}
-                  jiraBaseUrl={jiraBaseUrl}
-                />
-              ))
-            )}
+            {/* Team 模式＝Team→Dev Type 兩層；Reporter 模式＝flat 分群列表。 */}
+            {mode === "team"
+              ? devTypeGroups.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                    沒有符合所選團隊的工作單。
+                  </p>
+                ) : (
+                  devTypeGroups.map((group) => (
+                    <DevTypeGroupSection
+                      key={group.label}
+                      label={group.label}
+                      typeGroups={group.typeGroups}
+                      jiraBaseUrl={jiraBaseUrl}
+                    />
+                  ))
+                )
+              : groups.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                    沒有符合所選團隊的工作單。
+                  </p>
+                ) : (
+                  groups.map((group) => (
+                    <GroupSection
+                      key={group.label}
+                      label={group.label}
+                      tasks={group.tasks}
+                      jiraBaseUrl={jiraBaseUrl}
+                    />
+                  ))
+                )}
           </div>
-          <div>
-            <PieChart items={filtered} jiraBaseUrl={jiraBaseUrl} sprintId={sprintId} />
+          <div className="space-y-4">
+            <PieChart
+              tasks={filtered}
+              jiraBaseUrl={jiraBaseUrl}
+              sprintId={sprintId}
+              teamOf={teamOf}
+              teamOrder={teamOrder}
+            />
+            <DevTypePieChart
+              tasks={filtered}
+              jiraBaseUrl={jiraBaseUrl}
+              sprintId={sprintId}
+              teamOf={teamOf}
+              teamOrder={teamOrder}
+            />
           </div>
         </div>
       )}
@@ -189,13 +198,112 @@ function RadioGroup({
   )
 }
 
-function GroupSection({
+/**
+ * 一群工作單的可收合區塊（Team 版）：單張表、表頭只放最上方一次；依 Dev Type 分群，
+ * 每個 Dev Type 為一個合併列表頭（其下 flat 列出該類型的工作單）。不再分母票／Epic。
+ */
+function DevTypeGroupSection({
   label,
-  rows,
+  typeGroups,
   jiraBaseUrl,
 }: {
   label: string
-  rows: Array<{ type: "epic"; epic: { key: string; summary: string | null }; children: PlanningOverviewItem[] } | { type: "item"; item: PlanningOverviewItem }>
+  typeGroups: readonly {
+    label: string
+    tasks: readonly PlanningTask[]
+  }[]
+  jiraBaseUrl: string | null
+}) {
+  const [open, setOpen] = useState(true)
+  const count = typeGroups.reduce((sum, group) => sum + group.tasks.length, 0)
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left dark:border-slate-800 dark:bg-slate-900/60"
+        aria-expanded={open}
+      >
+        <svg
+          aria-hidden="true"
+          className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform dark:text-slate-500 ${open ? "rotate-90" : ""}`}
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m6 4 4 4-4 4" />
+        </svg>
+        <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</h4>
+        <span className="ml-auto tabular-nums text-xs text-slate-400 dark:text-slate-500">
+          {count} 張
+        </span>
+      </button>
+      {open && (
+        <table className="w-full text-left text-xs">
+          <caption className="sr-only">{label} 的工作單</caption>
+          <thead>
+            <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
+              <th scope="col" className="w-8 py-2 pl-4"><span className="sr-only">Parent Issue type</span></th>
+              <th scope="col" className="w-24 py-2 pr-2 font-semibold">Ticket</th>
+              <th scope="col" className="py-2 pr-2 font-semibold">Summary</th>
+              <th scope="col" className="w-[5.5rem] py-2 pr-2 text-center font-semibold">Status</th>
+              <th scope="col" className="w-28 py-2 pr-2 font-semibold">Assignee</th>
+              <th scope="col" className="w-14 py-2 pr-4 text-right font-semibold" title="Story Points">SP</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {typeGroups.map((group) => (
+              <DevTypeGroupBlock key={group.label} group={group} jiraBaseUrl={jiraBaseUrl} />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
+/** 一個 Dev Type 群：合併列表頭（顯示 Dev Type，依色族著色）＋其下 flat 工作單列。 */
+function DevTypeGroupBlock({
+  group,
+  jiraBaseUrl,
+}: {
+  group: {
+    label: string
+    tasks: readonly PlanningTask[]
+  }
+  jiraBaseUrl: string | null
+}) {
+  return (
+    <Fragment>
+      <tr>
+        <td
+          colSpan={6}
+          className={`bg-slate-50/70 px-4 py-1.5 dark:bg-slate-900/40 ${devTypeColorClass(devTypeFamilyOf(group.label))}`}
+        >
+          <span className="text-xs font-semibold">{group.label}</span>
+          <span className="ml-2 text-[11px] font-normal text-slate-400 dark:text-slate-500">
+            {group.tasks.length} 張
+          </span>
+        </td>
+      </tr>
+      {group.tasks.map((task) => (
+        <WorkItemRow key={task.key} task={task} jiraBaseUrl={jiraBaseUrl} />
+      ))}
+    </Fragment>
+  )
+}
+
+/** 一群工作單的可收合區塊（Reporter flat 版）。 */
+function GroupSection({
+  label,
+  tasks,
+  jiraBaseUrl,
+}: {
+  label: string
+  tasks: readonly PlanningTask[]
   jiraBaseUrl: string | null
 }) {
   const [open, setOpen] = useState(true)
@@ -220,32 +328,26 @@ function GroupSection({
           <path d="m6 4 4 4-4 4" />
         </svg>
         <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</h4>
+        <span className="ml-auto tabular-nums text-xs text-slate-400 dark:text-slate-500">
+          {tasks.length} 張
+        </span>
       </button>
       {open && (
         <table className="w-full text-left text-xs">
-          <caption className="sr-only">{label} 的母票</caption>
+          <caption className="sr-only">{label} 的工作單</caption>
           <thead>
             <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-              <th scope="col" className="w-8 py-2 pl-4"><span className="sr-only">Issue type</span></th>
+              <th scope="col" className="w-8 py-2 pl-4"><span className="sr-only">Parent Issue type</span></th>
               <th scope="col" className="w-24 py-2 pr-2 font-semibold">Ticket</th>
               <th scope="col" className="py-2 pr-2 font-semibold">Summary</th>
               <th scope="col" className="w-[5.5rem] py-2 pr-2 text-center font-semibold">Status</th>
-              <th scope="col" className="w-10 py-2 pr-4 text-right font-semibold" title="Story Points">SP</th>
+              <th scope="col" className="w-14 py-2 pr-4 text-right font-semibold" title="Story Points">SP</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {rows.map((row) =>
-              row.type === "epic" ? (
-                <EpicRows
-                  key={row.epic.key}
-                  epic={row.epic}
-                  subitems={row.children}
-                  jiraBaseUrl={jiraBaseUrl}
-                />
-              ) : (
-                <ItemRow key={row.item.key} item={row.item} jiraBaseUrl={jiraBaseUrl} nest={false} />
-              )
-            )}
+            {tasks.map((task) => (
+              <DevTaskRow key={task.key} task={task} jiraBaseUrl={jiraBaseUrl} />
+            ))}
           </tbody>
         </table>
       )}
@@ -253,76 +355,94 @@ function GroupSection({
   )
 }
 
-/** Epic 表頭 + 其下母票（children 縮排，表頭紫色）。 */
-function EpicRows({
-  epic,
-  subitems,
+function DevTaskRow({
+  task,
   jiraBaseUrl,
 }: {
-  epic: { key: string; summary: string | null }
-  subitems: PlanningOverviewItem[]
+  task: PlanningTask
   jiraBaseUrl: string | null
-}) {
-  return (
-    <>
-      <tr className="bg-slate-50/70 dark:bg-slate-900/40">
-        <td className="py-2 pl-4"><IssueTypeIcon issueType="Epic" /></td>
-        <td className="py-2 pr-2 font-semibold text-purple-700 dark:text-purple-300">{epic.key}</td>
-        <td colSpan={3} className="max-w-0 truncate py-2 pr-2 font-medium text-purple-700 dark:text-purple-300" title={epic.summary ?? ""}>
-          {epic.summary || "—"}
-        </td>
-      </tr>
-      {subitems.map((item) => (
-        <ItemRow key={item.key} item={item} jiraBaseUrl={jiraBaseUrl} nest />
-      ))}
-    </>
-  )
-}
-
-function ItemRow({
-  item,
-  jiraBaseUrl,
-  nest,
-}: {
-  item: PlanningOverviewItem
-  jiraBaseUrl: string | null
-  nest: boolean
 }) {
   return (
     <tr className="align-top">
-      <td className={`py-2 pl-4 ${nest ? "pl-8" : ""}`}><IssueTypeIcon issueType={item.issueType} /></td>
-      <td className="py-2 pr-2"><TicketLink task={item} jiraBaseUrl={jiraBaseUrl} /></td>
-      <td className="max-w-0 truncate py-2 pr-2 text-slate-700 dark:text-slate-200" title={item.summary ?? ""}>{item.summary || "—"}</td>
-      <td className={`whitespace-nowrap py-2 pr-2 text-center ${statusColorClass(item.status)}`}>{item.status ?? "—"}</td>
-      <td className="py-2 pr-4 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(item.points)}</td>
+      <td className="py-2 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
+      <td className="py-2 pr-2"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
+      <td className="max-w-0 truncate py-2 pr-2 text-slate-700 dark:text-slate-200" title={task.summary ?? ""}>{task.summary || "—"}</td>
+      <td className={`whitespace-nowrap py-2 pr-2 text-center ${statusColorClass(task.status)}`}>{task.status ?? "—"}</td>
+      <td className="py-2 pr-4 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
+    </tr>
+  )
+}
+
+/** Dev Type 值 → 字色（Spike/Pre-Spike 深黃、OP-Task/OP-Bug 藍、Dev 綠、Bug 紅；其他中性）。 */
+function devTypeColorClass(family: "spike" | "op" | "bug" | "dev" | null): string {
+  switch (family) {
+    case "spike":
+      return "text-amber-700 dark:text-amber-400"
+    case "op":
+      return "text-sky-600 dark:text-sky-400"
+    case "bug":
+      return "text-red-600 dark:text-red-400"
+    case "dev":
+      return "text-emerald-600 dark:text-emerald-500"
+    default:
+      return "text-slate-500 dark:text-slate-400"
+  }
+}
+
+/** Dev Type 群下的工作單列：Parent type icon | Ticket | Summary | Status | Assignee | SP。 */
+function WorkItemRow({
+  task,
+  jiraBaseUrl,
+}: {
+  task: PlanningTask
+  jiraBaseUrl: string | null
+}) {
+  return (
+    <tr className="align-top">
+      <td className="py-1.5 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
+      <td className="py-1.5 pl-1 pr-2"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
+      <td className="max-w-0 truncate py-1.5 pr-2 text-slate-700 dark:text-slate-200" title={task.summary ?? ""}>{task.summary || "—"}</td>
+      <td className={`whitespace-nowrap py-1.5 pr-2 text-center ${statusColorClass(task.status)}`}>{task.status ?? "—"}</td>
+      <td className="whitespace-nowrap py-1.5 pr-2 tabular-nums text-slate-600 dark:text-slate-300">
+        {task.assigneeDisplayName || "—"}
+      </td>
+      <td className="py-1.5 pr-4 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
     </tr>
   )
 }
 
 /** 圓餅圖中央/弧段的統計量：預設點數，可切到張數。 */
-type PieMetric = "points" | "count"
+type PieMetric = OverviewMetric
 
 /**
- * 票種比例圓餅圖（donut，只統計母票自身票種：Story / Task / Bug）。
+ * 票種分布圓餅圖（donut，依工作單的母票類型分 Story / Task / Bug）。
  *
  * - 圖下方：張數／點數 切換開關（預設點數——弧段比例依所選量算）。
  * - 圖下方：數據分析明細（各票種的顏色、數值、百分比）。
- * - 點任一弧段／明細列 → 在 Jira 以該票種的母票 key 開一個 search 分頁。
- * - hover 弧段 → 弧加粗、提亮（CSS transition 動畫）。
+ * - 點任一弧段／明細列 → 在 Jira 以「該票種母票底下的工作單」開一個 search 分頁。
+ * - hover 弧段 → 弧加粗、提亮，並在圖旁浮現「該票種 × 各團隊」比例（跟隨張數/點數）。
  */
 function PieChart({
-  items,
+  tasks,
   jiraBaseUrl,
   sprintId,
+  teamOf,
+  teamOrder,
 }: {
-  items: PlanningOverviewItem[]
+  tasks: readonly PlanningTask[]
   jiraBaseUrl: string | null
   sprintId: number | null
+  teamOf: Record<string, string>
+  teamOrder: readonly string[]
 }) {
   const [metric, setMetric] = useState<PieMetric>("points")
+  const [hoverType, setHoverType] = useState<"story" | "task" | "bug" | null>(null)
+  /** tooltip 的 fixed 定位（視窗座標）；null = 不顯示。 */
+  const [tip, setTip] = useState<{ left: number; top: number } | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
 
-  const counts = useMemo(() => countIssueTypes(items), [items])
-  const sums = useMemo(() => sumIssueTypePoints(items), [items])
+  const counts = useMemo(() => countDevTaskTypes(tasks), [tasks])
+  const sums = useMemo(() => sumDevTaskTypePoints(tasks), [tasks])
 
   const types = [
     { key: "story" as const, label: "Story", color: "stroke-[#27a665] dark:stroke-[#27a665]", dot: "bg-[#27a665] dark:bg-[#27a665]" },
@@ -330,12 +450,24 @@ function PieChart({
     { key: "bug" as const, label: "Bug", color: "stroke-[#e05252] dark:stroke-[#e05252]", dot: "bg-[#e05252] dark:bg-[#e05252]" },
   ]
 
+  // 每個票種的「團隊 breakdown」（跟隨 metric：點數加總或張數）。
+  const breakdowns = useMemo(() => {
+    const teamOfFn = (accountId: string | null) => (accountId === null ? undefined : teamOf[accountId])
+    return {
+      story: buildDevTaskTypeTeamBreakdown({ tasks, issueType: "story", metric, teamOf: teamOfFn, teamOrder }),
+      task: buildDevTaskTypeTeamBreakdown({ tasks, issueType: "task", metric, teamOf: teamOfFn, teamOrder }),
+      bug: buildDevTaskTypeTeamBreakdown({ tasks, issueType: "bug", metric, teamOf: teamOfFn, teamOrder }),
+    }
+  }, [tasks, teamOf, teamOrder, metric])
+
   const totalCount = counts.story + counts.task + counts.bug
   const totalPoints = round1(sums.story + sums.task + sums.bug)
   const total = metric === "points" ? totalPoints : totalCount
   const unitLabel = metric === "points" ? "SP" : "張"
   const valueOf = (key: "story" | "task" | "bug") => (metric === "points" ? sums[key] : counts[key])
   const percentOf = (value: number) => (total === 0 ? 0 : round1((value / total) * 100))
+
+  const metricValue = (value: number) => (metric === "points" ? round1(value) : value)
 
   // 依固定色序算弧段（各自扣除間隙，保留表面色斷開）。
   const radius = 44
@@ -347,27 +479,75 @@ function PieChart({
     .map((segment) => {
       const fraction = total === 0 ? 0 : valueOf(segment.key) / total
       const drawn = Math.max(0, fraction * circumference - GAP)
-      const arc = { ...segment, value: valueOf(segment.key), percent: percentOf(valueOf(segment.key)), dasharray: `${drawn} ${circumference - drawn}`, offset }
+      const start = offset / circumference * 360 // 自 12 點方向順時針的起始角
+      const midDeg = start + (fraction * 360) / 2 // 弧段中點角
+      const arc = { ...segment, value: valueOf(segment.key), percent: percentOf(valueOf(segment.key)), dasharray: `${drawn} ${circumference - drawn}`, offset, midDeg }
       offset += fraction * circumference
       return arc
     })
 
-  // 深連結以「sprint + issuetype」組查詢（與母票資料同源），非逐張 key。
+  // 深連結以「sprint + 母票票種」組查詢（與工作單資料同源），非逐張 key。
   const searchHref = (key: "story" | "task" | "bug") =>
     jiraBaseUrl && sprintId !== null
-      ? issueSearchHref(jiraBaseUrl, sprintParentIssuesOfTypeJql(sprintId, key))
+      ? issueSearchHref(jiraBaseUrl, sprintChildTasksOfParentTypeJql(sprintId, key))
       : null
 
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
-      <h4 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">票種比例</h4>
+  // hover 的票種 → 浮現「該票種 × 各團隊」的提示。當該票種無弧段（0 張/點）時
+  // `arc` 為 undefined：此時也不產生 tooltip 定位，不顯示提示。
+  const hovered = hoverType === null ? null : {
+    type: types.find((t) => t.key === hoverType)!,
+    breakdown: breakdowns[hoverType],
+    arc: arcs.find((a) => a.key === hoverType) ?? null,
+  }
+  const teamPercent = (value: number, partTotal: number) =>
+    partTotal === 0 ? 0 : round1((value / partTotal) * 100)
 
-      {/* 圓餅圖：置中、放大填滿卡片；弧段 hover 有加粗＋提亮動畫。 */}
+  // tooltip 依「被 hover 弧段的中點角」錨到該票種附近，並以 fixed 定位 + 視窗 clamp
+  // 避免超出視窗（尤其右緣）。錨點取弧段中點角在圓外緣的 screen 座標，沿徑向向外推半個
+  // 自身尺寸，讓 tooltip 貼著弧段又不遮圖；若超出視窗左右/上下，就整體壓回 margin 內。
+  const TOOLTIP_W = 176 // w-44
+  const TOOLTIP_H = 150
+  const SCALE = 208 / 120 // 1 viewBox 單位 = 圖容器（208px）內幾 px
+  const MARGIN = 8
+  const computeTip = (midDeg: number): { left: number; top: number } | null => {
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    const rad = (midDeg * Math.PI) / 180
+    const anchorR = 58 // 圓心到弧段外緣的徑向距離（radius 44 + stroke 9 + 邊緣預留）
+    const ax = 60 + anchorR * Math.sin(rad) // 圓上錨點（viewBox 座標）
+    const ay = 60 - anchorR * Math.cos(rad)
+    const screenX = rect.left + ax * SCALE
+    const screenY = rect.top + ay * SCALE
+    const ux = Math.sin(rad) // 由圓心指向錨點的單位向量
+    const uy = -Math.cos(rad)
+    // tooltip 的中心沿徑向往外推 ·半尺寸 + 間隙·。
+    const cx = screenX + ux * (TOOLTIP_W / 2 + 12)
+    const cy = screenY + uy * (TOOLTIP_H / 2 + 12)
+    const left = Math.min(Math.max(cx - TOOLTIP_W / 2, MARGIN), window.innerWidth - TOOLTIP_W - MARGIN)
+    const top = Math.min(Math.max(cy - TOOLTIP_H / 2, MARGIN), window.innerHeight - TOOLTIP_H - MARGIN)
+    return { left, top }
+  }
+  const showTip = (key: "story" | "task" | "bug", midDeg: number) => {
+    setHoverType(key)
+    setTip(computeTip(midDeg))
+  }
+  const hideTip = () => {
+    setHoverType(null)
+    setTip(null)
+  }
+
+  return (
+    <section className="relative rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+      <h4 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">票種分布</h4>
+
+      {/* 圓餅圖：置中、放大填滿卡片；弧段 hover 有加粗＋提亮動畫。
+                外層 relative 容器與圖等寬高；`wrapRef` 供 tooltip 把弧段座標換成視窗座標。 */}
+      <div ref={wrapRef} className="relative mx-auto block h-52 w-52">
       <svg
         role="img"
-        aria-label={`票種比例圓餅圖（${metric === "points" ? "點數" : "張數"}），共 ${total} ${unitLabel}`}
+        aria-label={`票種分布圓餅圖（${metric === "points" ? "點數" : "張數"}），共 ${total} ${unitLabel}`}
         viewBox="0 0 120 120"
-        className="mx-auto block h-52 w-52"
+        className="block h-52 w-52"
       >
         <circle cx="60" cy="60" r={radius} fill="none" strokeWidth="18" className="stroke-slate-100 dark:stroke-slate-800" />
         {arcs.map((arc) => {
@@ -388,20 +568,29 @@ function PieChart({
               className={`${arc.color} transition-[stroke-width,filter] duration-200 ease-out group-hover:[stroke-width:24] group-hover:brightness-110 group-hover:drop-shadow-[0_2px_6px_rgba(0,0,0,0.25)]`}
             />
           )
-          if (!href) return <g key={arc.key}>{visible}</g>
-          return (
+          const hitTarget = <circle {...common} strokeWidth={30} stroke="transparent" />
+          const inner = href ? (
             <a
-              key={arc.key}
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`在 Jira 開啟 ${arc.label} 母票（${arc.value} ${unitLabel}）`}
+              aria-label={`在 Jira 開啟 ${arc.label} 工作單（${arc.value} ${unitLabel}）`}
               className="group cursor-pointer"
             >
               {visible}
-              {/* 加寬的透明 hit target，讓弧段區域範圍可點。 */}
-              <circle {...common} strokeWidth={30} stroke="transparent" />
+              {hitTarget}
             </a>
+          ) : (
+            <g className="group cursor-pointer">{visible}</g>
+          )
+          return (
+            <g
+              key={arc.key}
+              onMouseEnter={() => showTip(arc.key, arc.midDeg)}
+              onMouseLeave={hideTip}
+            >
+              {inner}
+            </g>
           )
         })}
         <text x="60" y="57" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
@@ -411,6 +600,40 @@ function PieChart({
           {unitLabel}
         </text>
       </svg>
+
+      {/* hover 某票種弧段時，浮現「該票種 × 各團隊」的比例（跟隨張數/點數）。
+          fixed 定位依弧段中點角並 clamp 在視窗內；該票種無弧段時不顯示。 */}
+      {hovered && hovered.arc && tip && (
+        <div
+          role="tooltip"
+          style={{ left: tip.left, top: tip.top }}
+          className="pointer-events-none fixed z-20 w-44 rounded-xl border border-slate-200 bg-white/95 p-2.5 text-xs shadow-xl backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95"
+        >
+          <div className="mb-1.5 flex items-center gap-2 border-b border-slate-100 pb-1.5 dark:border-slate-800">
+            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${hovered.type.dot}`} aria-hidden="true" />
+            <span className="font-semibold text-slate-800 dark:text-slate-200">{hovered.type.label} · 依團隊</span>
+            <span className="ml-auto tabular-nums text-slate-500 dark:text-slate-400">
+              {metricValue(hovered.breakdown.total)} {unitLabel}
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {hovered.breakdown.teams.length === 0 ? (
+              <li className="text-slate-400 dark:text-slate-500">此票種暫無工作單</li>
+            ) : (
+              hovered.breakdown.teams.map((team) => (
+                <li key={team.label} className="flex items-center gap-2">
+                  <span className="min-w-0 truncate text-slate-600 dark:text-slate-300">{team.label}</span>
+                  <span className="ml-auto tabular-nums text-slate-700 dark:text-slate-200">{metricValue(team.value)}</span>
+                  <span className="w-9 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                    {teamPercent(team.value, hovered.breakdown.total)}%
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
+      </div>
 
       {/* 張數／點數 切換開關（預設點數），置右於圖下方。 */}
       <div className="mt-4 flex justify-end">
@@ -435,14 +658,26 @@ function PieChart({
             </>
           )
           const rowClass = "flex items-center gap-2 px-2 py-2"
-          if (!href) return <li key={segment.key} className={rowClass}>{content}</li>
+          const rowProps = {
+            // 資料列 hover 帶出同一票種的團隊 breakdown；無弧段（0 張/點）則只 highlight、不浮提示。
+            onMouseEnter: () => {
+              const arc = arcs.find((a) => a.key === segment.key)
+              if (arc) showTip(segment.key, arc.midDeg)
+              else hideTip()
+            },
+            onMouseLeave: hideTip,
+          }
+          if (!href) return (
+            <li key={segment.key} className={rowClass} {...rowProps}>{content}</li>
+          )
           return (
             <li key={segment.key}>
               <a
+                {...rowProps}
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label={`在 Jira 開啟 ${segment.label} 母票`}
+                aria-label={`在 Jira 開啟 ${segment.label} 工作單`}
                 className={`${rowClass} rounded transition-colors hover:bg-slate-50 hover:underline dark:hover:bg-slate-800/40`}
               >
                 {content}
@@ -459,6 +694,307 @@ function PieChart({
 function issueSearchHref(jiraBaseUrl: string, jql: string): string {
   const base = jiraBaseUrl.replace(/\/$/, "")
   return `${base}/issues/?jql=${encodeURIComponent(jql)}`
+}
+
+/**
+ * 開發類型分佈圓餅圖（donut，依工作單的 Dev Type 自訂欄位分群）。
+ *
+ * - 位於「票種分布」圖下方，統計量、hover、深連結結構與票種分布相同。
+ * - 分段 = 依 `DEV_TYPE_GROUP_LABELS` 固定順序的 Dev Type 值（Pre-Spike → Spike → Dev →
+ *   Bug → OP-Task → OP-Bug → 未分類；空段不繪）；色族沿用左側 Team View 的
+ *   `devTypeFamilyOf`（Spike／Pre-Spike 深黃、OP-Task／OP-Bug 藍、Dev 綠、Bug 紅、未分類中性）。
+ * - 點弧段／明細列 → 在 Jira 以「sprint + 該 Dev Type 值」開 search 分頁；未分類段以
+ *   「Dev Type 欄位未填（`is EMPTY`）」表達（填了未知值者仍屬未分類段，但無法用單一值深連結）。
+ */
+function DevTypePieChart({
+  tasks,
+  jiraBaseUrl,
+  sprintId,
+  teamOf,
+  teamOrder,
+}: {
+  tasks: readonly PlanningTask[]
+  jiraBaseUrl: string | null
+  sprintId: number | null
+  teamOf: Record<string, string>
+  teamOrder: readonly string[]
+}) {
+  const [metric, setMetric] = useState<PieMetric>("points")
+  const [hoverLabel, setHoverLabel] = useState<string | null>(null)
+  const [tip, setTip] = useState<{ left: number; top: number } | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  const counts = useMemo(() => countDevTypeLabels(tasks), [tasks])
+  const sums = useMemo(() => sumDevTypeLabelPoints(tasks), [tasks])
+
+  // 依固定順序列出 Dev Type 分段；色族共用 `devTypeFamilyOf`（未分類中性）。
+  const segments = useMemo(() => {
+    const labelColor = (label: string): { color: string; dot: string } => {
+      switch (devTypeFamilyOf(label)) {
+        case "spike":
+          return { color: "stroke-[#d97706] dark:stroke-[#fbbf24]", dot: "bg-[#d97706] dark:bg-[#fbbf24]" }
+        case "op":
+          return { color: "stroke-[#0284c7] dark:stroke-[#38bdf8]", dot: "bg-[#0284c7] dark:bg-[#38bdf8]" }
+        case "bug":
+          return { color: "stroke-[#dc2626] dark:stroke-[#f87171]", dot: "bg-[#dc2626] dark:bg-[#f87171]" }
+        case "dev":
+          return { color: "stroke-[#059669] dark:stroke-[#34d399]", dot: "bg-[#059669] dark:bg-[#34d399]" }
+        default:
+          return { color: "stroke-[#64748b] dark:stroke-[#94a3b8]", dot: "bg-[#64748b] dark:bg-[#94a3b8]" }
+      }
+    }
+    return ([...DEV_TYPE_GROUP_LABELS, UNCLASSIFIED_DEV_TYPE_LABEL] as string[]).map((label) => {
+      const c = labelColor(label)
+      return { label, color: c.color, dot: c.dot }
+    })
+  }, [])
+
+  const teamOfFn = useMemo(
+    () => (accountId: string | null) => (accountId === null ? undefined : teamOf[accountId]),
+    [teamOf]
+  )
+
+  // 每個 Dev Type 分段的「團隊 breakdown」（跟隨 metric：點數加總或張數）。
+  const breakdowns = useMemo(() => {
+    const out: Record<string, TypeTeamBreakdown> = {}
+    for (const segment of segments) {
+      out[segment.label] = buildDevTypeLabelTeamBreakdown({
+        tasks,
+        label: segment.label,
+        metric,
+        teamOf: teamOfFn,
+        teamOrder,
+      })
+    }
+    return out
+  }, [tasks, segments, metric, teamOfFn, teamOrder])
+
+  const valueOf = (label: string) => (metric === "points" ? sums[label] ?? 0 : counts[label] ?? 0)
+  const total = round1(
+    metric === "points"
+      ? Object.values(sums).reduce((sum, value) => sum + value, 0)
+      : Object.values(counts).reduce((sum, value) => sum + value, 0)
+  )
+  const unitLabel = metric === "points" ? "SP" : "張"
+  const percentOf = (value: number) => (total === 0 ? 0 : round1((value / total) * 100))
+
+  const metricValue = (value: number) => (metric === "points" ? round1(value) : value)
+
+  // 依固定色序算弧段（各自扣除間隙，保留表面色斷開）。
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const GAP = 2
+  let offset = 0
+  const arcs = segments
+    .filter((segment) => valueOf(segment.label) > 0)
+    .map((segment) => {
+      const fraction = total === 0 ? 0 : valueOf(segment.label) / total
+      const drawn = Math.max(0, fraction * circumference - GAP)
+      const start = offset / circumference * 360
+      const midDeg = start + (fraction * 360) / 2
+      const arc = { ...segment, value: valueOf(segment.label), percent: percentOf(valueOf(segment.label)), dasharray: `${drawn} ${circumference - drawn}`, offset, midDeg }
+      offset += fraction * circumference
+      return arc
+    })
+
+  // 深連結以「sprint + Dev Type 值」組查詢；未分類以「該欄未填」表達（`is EMPTY`），
+  // 因此只涵蓋未填 Dev Type 的工作單（填了未知值的無法用單一值表達，仍留在未分類段）。
+  const searchHref = (label: string) => {
+    if (!jiraBaseUrl || sprintId === null) return null
+    const jql =
+      label === UNCLASSIFIED_DEV_TYPE_LABEL
+        ? sprintChildTasksUnclassifiedDevTypeJql(sprintId)
+        : sprintChildTasksOfDevTypeJql(sprintId, label)
+    return issueSearchHref(jiraBaseUrl, jql)
+  }
+
+  const hovered = hoverLabel === null ? null : {
+    label: hoverLabel,
+    breakdown: breakdowns[hoverLabel],
+    arc: arcs.find((a) => a.label === hoverLabel) ?? null,
+  }
+  const teamPercent = (value: number, partTotal: number) =>
+    partTotal === 0 ? 0 : round1((value / partTotal) * 100)
+
+  // tooltip 依被 hover 弧段的中點角錨到該段附近（與票種分布相同的定位方式）。
+  const TOOLTIP_W = 176
+  const TOOLTIP_H = 150
+  const SCALE = 208 / 120
+  const MARGIN = 8
+  const computeTip = (midDeg: number): { left: number; top: number } | null => {
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (!rect) return null
+    const rad = (midDeg * Math.PI) / 180
+    const anchorR = 58
+    const ax = 60 + anchorR * Math.sin(rad)
+    const ay = 60 - anchorR * Math.cos(rad)
+    const screenX = rect.left + ax * SCALE
+    const screenY = rect.top + ay * SCALE
+    const ux = Math.sin(rad)
+    const uy = -Math.cos(rad)
+    const cx = screenX + ux * (TOOLTIP_W / 2 + 12)
+    const cy = screenY + uy * (TOOLTIP_H / 2 + 12)
+    const left = Math.min(Math.max(cx - TOOLTIP_W / 2, MARGIN), window.innerWidth - TOOLTIP_W - MARGIN)
+    const top = Math.min(Math.max(cy - TOOLTIP_H / 2, MARGIN), window.innerHeight - TOOLTIP_H - MARGIN)
+    return { left, top }
+  }
+  const showTip = (label: string, midDeg: number) => {
+    setHoverLabel(label)
+    setTip(computeTip(midDeg))
+  }
+  const hideTip = () => {
+    setHoverLabel(null)
+    setTip(null)
+  }
+
+  return (
+    <section className="relative rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/40">
+      <h4 className="mb-3 text-sm font-semibold text-slate-800 dark:text-slate-200">開發類型分佈</h4>
+
+      <div ref={wrapRef} className="relative mx-auto block h-52 w-52">
+      <svg
+        role="img"
+        aria-label={`開發類型分佈圓餅圖（${metric === "points" ? "點數" : "張數"}），共 ${total} ${unitLabel}`}
+        viewBox="0 0 120 120"
+        className="block h-52 w-52"
+      >
+        <circle cx="60" cy="60" r={radius} fill="none" strokeWidth="18" className="stroke-slate-100 dark:stroke-slate-800" />
+        {arcs.map((arc) => {
+          const href = searchHref(arc.label)
+          const common = {
+            cx: 60,
+            cy: 60,
+            r: radius,
+            fill: "none",
+            strokeWidth: 18,
+            strokeDasharray: arc.dasharray,
+            strokeDashoffset: -arc.offset,
+            transform: "rotate(-90 60 60)",
+          }
+          const visible = (
+            <circle
+              {...common}
+              className={`${arc.color} transition-[stroke-width,filter] duration-200 ease-out group-hover:[stroke-width:24] group-hover:brightness-110 group-hover:drop-shadow-[0_2px_6px_rgba(0,0,0,0.25)]`}
+            />
+          )
+          const hitTarget = <circle {...common} strokeWidth={30} stroke="transparent" />
+          const inner = href ? (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`在 Jira 開啟 ${arc.label} 工作單（${arc.value} ${unitLabel}）`}
+              className="group cursor-pointer"
+            >
+              {visible}
+              {hitTarget}
+            </a>
+          ) : (
+            <g className="group cursor-pointer">{visible}</g>
+          )
+          return (
+            <g
+              key={arc.label}
+              onMouseEnter={() => showTip(arc.label, arc.midDeg)}
+              onMouseLeave={hideTip}
+            >
+              {inner}
+            </g>
+          )
+        })}
+        <text x="60" y="57" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
+          {round1(total)}
+        </text>
+        <text x="60" y="73" textAnchor="middle" className="fill-slate-500 text-[10px] dark:fill-slate-400">
+          {unitLabel}
+        </text>
+      </svg>
+
+      {hovered && hovered.arc && tip && (
+        <div
+          role="tooltip"
+          style={{ left: tip.left, top: tip.top }}
+          className="pointer-events-none fixed z-20 w-44 rounded-xl border border-slate-200 bg-white/95 p-2.5 text-xs shadow-xl backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95"
+        >
+          <div className="mb-1.5 flex items-center gap-2 border-b border-slate-100 pb-1.5 dark:border-slate-800">
+            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${hovered.arc.dot}`} aria-hidden="true" />
+            <span className="font-semibold text-slate-800 dark:text-slate-200">{hovered.label} · 依團隊</span>
+            <span className="ml-auto tabular-nums text-slate-500 dark:text-slate-400">
+              {metricValue(hovered.breakdown.total)} {unitLabel}
+            </span>
+          </div>
+          <ul className="space-y-1">
+            {hovered.breakdown.teams.length === 0 ? (
+              <li className="text-slate-400 dark:text-slate-500">此開發類型暫無工作單</li>
+            ) : (
+              hovered.breakdown.teams.map((team) => (
+                <li key={team.label} className="flex items-center gap-2">
+                  <span className="min-w-0 truncate text-slate-600 dark:text-slate-300">{team.label}</span>
+                  <span className="ml-auto tabular-nums text-slate-700 dark:text-slate-200">{metricValue(team.value)}</span>
+                  <span className="w-9 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                    {teamPercent(team.value, hovered.breakdown.total)}%
+                  </span>
+                </li>
+              ))
+            )}
+          </ul>
+        </div>
+      )}
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <MetricSwitch metric={metric} onMetricChange={setMetric} />
+      </div>
+
+      <ul className="mt-4 divide-y divide-slate-100 text-xs dark:divide-slate-800">
+        {segments.map((segment) => {
+          const href = searchHref(segment.label)
+          const value = valueOf(segment.label)
+          const content = (
+            <>
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${segment.dot}`} aria-hidden="true" />
+              <span className="text-slate-600 dark:text-slate-300">{segment.label}</span>
+              {segment.label === UNCLASSIFIED_DEV_TYPE_LABEL && (
+                <span className="text-[10px] text-slate-400 dark:text-slate-500">未填／其他</span>
+              )}
+              <span className="ml-auto tabular-nums text-slate-700 dark:text-slate-200">
+                {metric === "points" ? round1(value) : value}
+              </span>
+              <span className="w-10 text-right tabular-nums text-slate-500 dark:text-slate-400">
+                {percentOf(value)}%
+              </span>
+            </>
+          )
+          const rowClass = "flex items-center gap-2 px-2 py-2"
+          const rowProps = {
+            onMouseEnter: () => {
+              const arc = arcs.find((a) => a.label === segment.label)
+              if (arc) showTip(segment.label, arc.midDeg)
+              else hideTip()
+            },
+            onMouseLeave: hideTip,
+          }
+          if (!href) return (
+            <li key={segment.label} className={rowClass} {...rowProps}>{content}</li>
+          )
+          return (
+            <li key={segment.label}>
+              <a
+                {...rowProps}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`在 Jira 開啟 ${segment.label} 工作單`}
+                className={`${rowClass} rounded transition-colors hover:bg-slate-50 hover:underline dark:hover:bg-slate-800/40`}
+              >
+                {content}
+              </a>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
 }
 
 /** 圓餅圖統計量的滑動式切換開關（點數／張數，預設點數在左＝開）。 */

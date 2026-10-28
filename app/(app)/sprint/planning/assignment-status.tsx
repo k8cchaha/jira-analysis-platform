@@ -53,9 +53,9 @@ function ratioColor(value: number | null): string {
  * 團隊卡片內顯示 Team Capacity／已配點數／分配比例，並列出每位成員的 Capacity
  * （可用點數）／已分派點數／分配比例。
  *
- * 成員即為該 sprint 內有 assignee 的 Dev-Task 指派人（依 `teamOf` 分組歸隊，
+ * 成員即為該 sprint 內有 assignee 的工作單（Dev-Task + QA-Task）指派人（依 `teamOf` 分組歸隊，
  * 未對應團隊／未指派歸「其他」）；每人 Capacity 依專案而定（Saku＝20、Telasa＝40）。
- * 派點來源是已過濾的真實 Dev-Task，不重發 JQL。
+ * 派點來源是已過濾的真實工作單，不重發 JQL。
  */
 export function AssignmentStatus({
   project,
@@ -65,7 +65,7 @@ export function AssignmentStatus({
   jiraBaseUrl,
 }: {
   project: SprintProjectKey
-  /** 已經過濾的 Dev-Task（與主表同源）。 */
+  /** 已經過濾的工作單（Dev+QA，與主表同源）。 */
   tasks: readonly PlanningTask[]
   /** accountId → 團隊 label 映射（由團隊選單載入；缺省者歸「其他」）。 */
   teamOf: Record<string, string>
@@ -96,7 +96,7 @@ export function AssignmentStatus({
     return (
       <div>
         <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-          此 Sprint 尚無可分派的成員（沒有已指派 Dev-Task）。
+          此 Sprint 尚無可分派的成員（沒有已指派工作單）。
         </p>
       </div>
     )
@@ -231,7 +231,7 @@ function MemberRow({
         <tr>
           <td colSpan={4} className="bg-slate-50/60 px-4 pt-1 pb-3 dark:bg-slate-900/40">
             <table className="w-full text-left text-xs">
-              <caption className="sr-only">{member.name} 被分派的 Dev-Task</caption>
+              <caption className="sr-only">{member.name} 被分派的工作單</caption>
               <thead>
                 <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
                   <th scope="col" className="w-8 py-1.5"><span className="sr-only">Parent Issue type</span></th>

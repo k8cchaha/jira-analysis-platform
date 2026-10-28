@@ -13,8 +13,8 @@ import {
 import {
   getPlanningData,
   JiraPlanningError,
-  planningJiraBaseUrl,
 } from "@/lib/planning-data"
+import { dashboardJiraBaseUrl } from "@/lib/jira-dashboard"
 import type { PlanningTask } from "@/lib/planning-subset"
 
 export const metadata = {
@@ -72,7 +72,7 @@ export default async function PlanningPage({
         sprint={selectedSprint ?? null}
         tasks={tasks}
         dataError={dataError}
-        jiraBaseUrl={planningJiraBaseUrl()}
+        jiraBaseUrl={dashboardJiraBaseUrl()}
         viewerAccountId={viewerAccountId}
       />
     </>

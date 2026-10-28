@@ -27,10 +27,10 @@ function harness(t, options = {}) {
   }
   class JiraHttpError extends Error { constructor(status) { super(`Fixture http ${status}`); this.status = status } }
 
-  // 母票（unestimated 子集合的母票）；parseIssue 需要 fields.project.id。
+  // 母票（MOTHER_FIELDS 撈取；含 summary/issuetype/parent=Epic 供階層投影）。
   const parents = options.parents ?? [
-    { key: "SUN-100", id: "1", fields: { project: { id: "10" } } },
-    { key: "SUN-101", id: "2", fields: { project: { id: "10" } } },
+    { key: "SUN-100", id: "1", fields: { project: { id: "10" }, summary: "Story A", issuetype: { name: "Story" }, parent: { key: "SUN-90", fields: { summary: "Epic Alpha" } } } },
+    { key: "SUN-101", id: "2", fields: { project: { id: "10" }, summary: "Task B", issuetype: { name: "Task" }, parent: null } },
   ]
   // 「未開子單」的母票：要完整明細欄位（summary/status/assignee/points）。
   const fullParents = options.fullParents ?? [
@@ -59,7 +59,7 @@ function harness(t, options = {}) {
       },
     },
   ]
-  // 子集合 Dev-Task：未估時（points 缺欄）＋未分派（assignee 空）共用同一批 fixture，
+  // 子集合工作單（Dev+QA）：未估時（points 缺欄）＋未分派（assignee 空）共用同一批 fixture，
   // JQL 只在 server 端組合；此 mock 依載入內容決定母票/子集合回應。
   const subsetIssues = options.subsetIssues ?? [
     {
@@ -69,6 +69,8 @@ function harness(t, options = {}) {
         summary: "Unestimated task",
         status: { name: "In Progress" },
         assignee: null,
+        issuetype: { name: "QA-Task" },
+        customfield_14642: { value: "Bug" }, // option 物件形狀
         parent: { id: "450", key: "SUN-100", fields: { issuetype: { name: "Story" } } },
       },
     },
@@ -79,6 +81,8 @@ function harness(t, options = {}) {
         summary: "Another task",
         status: { name: "To Do" },
         assignee: { displayName: "Owner A", accountId: "aa1" },
+        issuetype: { name: "Dev-Task" },
+        customfield_14642: "Dev", // 字串形狀
         parent: { id: "451", key: "SUN-101", fields: { issuetype: { name: "Task" } } },
       },
     },
@@ -98,20 +102,26 @@ function harness(t, options = {}) {
       const body = init.body ? JSON.parse(init.body) : null
       if (path === "/rest/api/3/search/jql" && method === "POST") {
         if (body.maxResults !== 100) return fail("Search must use maxResults 100")
-        // 母票搜尋：sprint = … 。一般子集合只用 ["project"]；「未開子單」要完整明細。
+        // 母票搜尋：sprint = … 。`getPlanningSubset` 用 MOTHER_FIELDS（summary+issuetype+parent），
+        // 「未開子單」的 `fetchNoSubtaskParents` 用完整 PLANNING_FIELDS。
         if (/\bsprint = \d+/.test(body.jql)) {
-          if (JSON.stringify(body.fields) === JSON.stringify(["project"])) {
+          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "customfield_10005"])
+          if (JSON.stringify(body.fields) === motherFields) {
             return new Response(JSON.stringify({ issues: options.parents ?? parents, isLast: true }), { status: 200 })
           }
-          const planningFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "customfield_10005"])
+          const planningFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "issuetype", "customfield_10005", "customfield_14642"])
           if (JSON.stringify(body.fields) === planningFields) {
             return new Response(JSON.stringify({ issues: options.fullParents ?? fullParents, isLast: true }), { status: 200 })
           }
-          return fail("Parent search must request project or planning fields")
+          return fail("Parent search must request mother or planning fields")
         }
-        // Dev-Task 搜尋：parent in (...) AND issuetype = "Dev-Task" …（含未開子單的全量 Dev-Task）。
-        const expectedFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "customfield_10005"])
+        // 工作單搜尋（Dev+QA，檢查欄位）：含未開子單的全量子票。
+        const expectedFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "issuetype", "customfield_10005", "customfield_14642"])
         if (JSON.stringify(body.fields) !== expectedFields) return fail("Subset search must request planning fields")
+        // Planning 工作單資料源必須是 Dev+QA（不是燃盡圖的 Dev-only）。
+        if (!/issuetype in \("Dev-Task", "QA-Task"\)/.test(body.jql)) {
+          return fail("Subset search must target Dev-Task and QA-Task work items")
+        }
         if (options.responseStatus) return new Response(null, { status: options.responseStatus })
         return new Response(JSON.stringify({ issues: subsetIssues, isLast: true }), { status: 200 })
       }
@@ -228,13 +238,24 @@ describe("planning subset route — success", () => {
     assert.deepEqual(tasks[0].parentIssueType, { status: "known", name: "Story" })
     assert.deepEqual(tasks[1].parentIssueType, { status: "known", name: "Task" })
     assert.equal(tasks[1].assigneeAccountId, "aa1")
+    // 工作單自身票種 + 母票 key（由子票的 parent 欄位投影）。
+    assert.equal(tasks[0].issueType, "QA-Task")
+    assert.equal(tasks[1].issueType, "Dev-Task")
+    assert.equal(tasks[0].parentKey, "SUN-100")
+    assert.equal(tasks[1].parentKey, "SUN-101")
+    // Dev Type 欄位：option 物件與字串兩種形狀都解析成字串。
+    assert.equal(tasks[0].devType, "Bug")
+    assert.equal(tasks[1].devType, "Dev")
+    // subset 彈窗是 flat 清單，不帶母票 summary / Epic（那屬主表的階層投影）。
+    assert.equal(tasks[0].parentSummary, null)
+    assert.equal(tasks[0].epic, null)
     // 該回應可直接經 client validator 解碼。
     const parsed = h.model.parsePlanningSubsetResult(body)
     assert.equal(parsed.status, "success")
   })
 
-  it("未開子單：只列沒有 Dev-Task 子票的母票", async (t) => {
-    // 所有 Dev-Task 都掛 SUN-101 下 → SUN-100 沒有子票，會被列出。
+  it("未開子單：只列沒有任何工作單（Dev+QA）子票的母票", async (t) => {
+    // 所有工作單（Dev+QA）都掛 SUN-101 下 → SUN-100 沒有子票，會被列出。
     const h = harness(t, {
       subsetIssues: [
         {
@@ -285,6 +306,11 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     assigneeAccountId: "aa1",
     reporter: "Reporter",
     components: ["Frontend"],
+    issueType: "Dev-Task",
+    devType: "Dev",
+    parentKey: "SUN-100",
+    parentSummary: "P",
+    epic: { key: "SUN-20", summary: "Epic 1" },
     parentIssueType: { status: "known", name: "Story" },
     ...over,
   })
@@ -295,13 +321,15 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     return parsed
   }
 
-  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee、空 components）", (t) => {
+  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee、空 components、epic 缺欄退化）", (t) => {
     const parsed = ok(t, {
       status: "success",
       data: { tasks: [
         validTask(),
         validTask({ key: "SUN-103", points: null, assigneeDisplayName: null, assigneeAccountId: null, parentIssueType: { status: "none" } }),
         validTask({ key: "SUN-104", parentIssueType: { status: "unknown" }, reporter: null, components: [] }),
+        // epic 可為 null（無 Epic 母票）；issueType/parentKey/parentSummary/devType 可為 null。
+        validTask({ key: "SUN-105", issueType: null, parentKey: null, parentSummary: null, epic: null, devType: null }),
       ] },
     })
     if (parsed.status !== "success") return
@@ -310,6 +338,11 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[2].parentIssueType)), { status: "unknown" })
     assert.deepEqual(parsed.data.tasks[0].components, ["Frontend"])
     assert.deepEqual(parsed.data.tasks[2].components, [])
+    assert.equal(parsed.data.tasks[0].issueType, "Dev-Task")
+    assert.equal(parsed.data.tasks[0].devType, "Dev")
+    assert.equal(parsed.data.tasks[3].devType, null)
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[0].epic)), { key: "SUN-20", summary: "Epic 1" })
+    assert.equal(parsed.data.tasks[3].epic, null)
   })
 
   it("回傳 error 分支並保留 code/message", (t) => {
@@ -329,6 +362,10 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), points: -1 }] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: "not-array" }] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: [42] }] } }))
+    // 壞 epic（非物件／缺 key／summary 型別錯）→ 拒絕。
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: "SUN-20" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: { summary: "no key" } }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: { key: "SUN-20", summary: 5 } }] } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ status: "error", error: { code: "nonsense", message: "x" } }))
     assert.throws(() => h.model.parsePlanningSubsetResult({ status: "success", data: "not-object" }))
     // 壞 parentIssueType（known 缺 name）做安全 fallback 為 unknown，而非拒絕。

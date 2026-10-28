@@ -9,6 +9,12 @@ export const JIRA_FIELDS = {
     name: "Actual Story Points",
     schema: { type: "number" },
   },
+  /** 工作單的「Dev Type」分類欄位（Select）；值如 Spike／Pre-Spike／OP-Task／OP-Bug／Dev／Bug。 */
+  devType: {
+    id: "customfield_14642",
+    name: "Dev Type",
+    schema: { type: "option" },
+  },
   // These IDs are resolved from Jira metadata by name and schema.
   defectCause: {
     name: "Defect Cause",
@@ -31,6 +37,7 @@ export const JIRA_FIELDS = {
 
 export const STORY_POINTS_FIELD = JIRA_FIELDS.storyPoints.id
 export const ACTUAL_STORY_POINTS_FIELD = JIRA_FIELDS.actualStoryPoints.id
+export const DEV_TYPE_FIELD = JIRA_FIELDS.devType.id
 
 export function customFieldJql(id: `customfield_${number}`): string {
   return `cf[${id.slice("customfield_".length)}]`

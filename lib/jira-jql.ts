@@ -1,4 +1,4 @@
-import { JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
+import { DEV_TYPE_FIELD, JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
 import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 import type { MissingDataKind } from "./jira-missing-data.ts"
 
@@ -35,10 +35,61 @@ export function sprintParentIssuesOfTypeJql(sprintId: number, issueType: ParentI
   return `sprint = ${sprintId} AND issuetype = ${issueType}`
 }
 
+/**
+ * 某 sprint 中、某單一**母票票種**之下的全部 Dev-Task（Dev-Task 票種比例圓餅圖的
+ * Jira deep-link 用）。總覽圓餅圖以 Dev-Task 的 `parentIssueType` 分 Story／Task／Bug，
+ * 因此深連結「sprint = X AND parent.issuetype = y AND issuetype = "Dev-Task"」能精確
+ * 對應到該票種母票底下的 Dev-Task（與 `sprintDevTasksJql` 同屬 Dev-Task 資料源）。
+ */
+export function sprintDevTasksOfParentTypeJql(
+  sprintId: number,
+  issueType: ParentIssueType
+): string {
+  return `sprint = ${sprintId} AND parent.issuetype = ${issueType} AND issuetype = "Dev-Task"`
+}
+
 /** 某組母票之下的全部 Dev-Task（用於總點數與「未估計」清單）。 */
 export function sprintDevTasksJql(parentKeys: readonly string[]): string {
   const keys = enforcedSortedKeys(parentKeys)
   return `parent in (${keys}) AND issuetype = "Dev-Task"`
+}
+
+/**
+ * 某組母票之下的全部工作單（Dev-Task + QA-Task）。Planning 全頁以 Dev + QA
+ * 為統一的工作單資料源，故主表、圓餅深連結與「未估計／未分派」清單都用這組
+ * Dev+QA builder。`sprintDevTasksJql` 系列仍保留給燃盡圖（只算 Dev-Task）。
+ */
+export function sprintChildTasksJql(parentKeys: readonly string[]): string {
+  const keys = enforcedSortedKeys(parentKeys)
+  return `parent in (${keys}) AND issuetype in ("Dev-Task", "QA-Task")`
+}
+
+/** 某組母票之下、某單一母票票種（Story/Task/Bug）底下的全部工作單（圓餅圖深連結）。 */
+export function sprintChildTasksOfParentTypeJql(
+  sprintId: number,
+  issueType: ParentIssueType
+): string {
+  return `sprint = ${sprintId} AND parent.issuetype = ${issueType} AND issuetype in ("Dev-Task", "QA-Task")`
+}
+
+/** 此 sprint 中、某單一 Dev Type 值底下的全部工作單（開發類型分佈圓餅圖深連結，Dev+QA）。 */
+export function sprintChildTasksOfDevTypeJql(sprintId: number, devTypeValue: string): string {
+  return `sprint = ${sprintId} AND ${customFieldJql(DEV_TYPE_FIELD)} = "${devTypeValue}" AND issuetype in ("Dev-Task", "QA-Task")`
+}
+
+/** 此 sprint 中、**未填** Dev Type 的全部工作單（開發類型分佈圓餅圖「未分類」段的深連結，Dev+QA）。 */
+export function sprintChildTasksUnclassifiedDevTypeJql(sprintId: number): string {
+  return `sprint = ${sprintId} AND ${customFieldJql(DEV_TYPE_FIELD)} is EMPTY AND issuetype in ("Dev-Task", "QA-Task")`
+}
+
+/** 某組母票之下、尚未估計 Story Points 的工作單（Planning 彈窗顯示用，Dev+QA）。 */
+export function sprintChildTasksUnestimatedJql(parentKeys: readonly string[]): string {
+  return `${sprintChildTasksJql(parentKeys)} AND ${storyPointsJql} in (Empty, 0)`
+}
+
+/** 某組母票之下、未指派人的工作單（Planning 彈窗顯示用，Dev+QA）。 */
+export function sprintChildTasksUnassignedJql(parentKeys: readonly string[]): string {
+  return `${sprintChildTasksJql(parentKeys)} AND assignee is empty`
 }
 
 /** 某組母票之下、在某一天切到 Done 的 Dev-Task（每日完成度）。 */

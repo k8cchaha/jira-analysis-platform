@@ -1,14 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { PlanningTab } from "@/lib/burndown-params"
 import type { PlanningTask } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
-import type { PlanningOverviewItem } from "@/lib/planning-overview"
-import { parsePlanningOverviewResult } from "@/lib/planning-overview"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
 import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
@@ -25,7 +23,7 @@ function formatPoints(value: number | null): string {
 }
 
 /**
- * Planning 的站內檢視。持有專案／Sprint／團隊選取 state；Dev-Task 明細由
+ * Planning 的站內檢視。持有專案／Sprint／團隊選取 state；工作單（Dev-Task + QA-Task）明細由
  * server（RSC）撈好經 props 傳入，團隊過濾在此站內重算，不重發 JQL。
  * Sprint 下拉只提供「當前＋下一個」的 planning 對。
  */
@@ -56,52 +54,9 @@ export function PlanningClient({
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
   /** 內容區目前分頁（任務分派狀況／任務規劃總覽）。純 client 端 state，不改 URL。 */
   const [tab, setTab] = useState<PlanningTab>("assignment")
-  /** 任務規劃總覽的母票資料：首次切到該 Tab 時遲載一次並快取（切 Tab 不重撈）。 */
-  const [overview, setOverview] = useState<{
-    items: PlanningOverviewItem[] | null
-    loading: boolean
-    error: { code: string; message: string } | null
-  }>({ items: null, loading: false, error: null })
-  const overviewOpened = useRef(false)
 
-  // 首次切到「任務規劃總覽」或專案/Sprint 改變時，遲載母票資料一次。
-  useEffect(() => {
-    if (tab !== "overview" || !sprint) return
-    if (overviewOpened.current) return
-    overviewOpened.current = true
-    loadOverview()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, sprint])
-
-  async function loadOverview() {
-    const projectKey = project
-    const sprintId = sprint
-    if (!projectKey || !sprintId) return
-    const controller = new AbortController()
-    setOverview({ items: null, loading: true, error: null })
-    try {
-      const response = await fetch(
-        `/api/sprint/planning/overview?project=${encodeURIComponent(projectKey)}&sprint=${encodeURIComponent(sprintId.id)}`,
-        { cache: "no-store", signal: controller.signal }
-      )
-      const result = parsePlanningOverviewResult(await response.json())
-      if (!response.ok && result.status === "success") {
-        throw new Error("回應格式錯誤")
-      }
-      if (result.status === "error") {
-        setOverview({ items: null, loading: false, error: { code: result.error.code, message: result.error.message } })
-        return
-      }
-      setOverview({ items: result.data.items, loading: false, error: null })
-    } catch {
-      if (controller.signal.aborted) return
-      setOverview({ items: null, loading: false, error: { code: "retry", message: "無法載入任務規劃總覽，請重試。" } })
-    }
-  }
-  function retryOverview() {
-    setOverview({ items: null, loading: true, error: null })
-    loadOverview()
-  }
+  // 切到「任務規劃總覽」時，直接以既有 `filtered`（工作單 Dev+QA）饋給總覽；
+  // 不另發 API（總覽與分派狀況共用同一個工作單資料源，點數口徑一致）。
 
   function navigate(path: string) {
     startTransition(() => router.push(path))
@@ -212,19 +167,17 @@ export function PlanningClient({
                   {" "}（{sprint.startDate} → {sprint.endDate}）
                 </span>
               </h2>
-              {tab !== "overview" && (
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  共{" "}
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {filtered.length}
-                  </span>{" "}
-                  個 Dev-Task ·{" "}
-                  <span className="font-semibold text-slate-900 dark:text-white">
-                    {formatPoints(totalPoints)}
-                  </span>{" "}
-                  SP
-                </p>
-              )}
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                共{" "}
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {filtered.length}
+                </span>{" "}
+                個工作單 ·{" "}
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {formatPoints(totalPoints)}
+                </span>{" "}
+                SP
+              </p>
             </div>
 
             <PlanningTabs tab={tab} onSwitch={switchTab} />
@@ -233,25 +186,21 @@ export function PlanningClient({
               <PlanningOverview
                 teamOf={teamOf}
                 teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
-                memberIds={memberIds}
                 jiraBaseUrl={jiraBaseUrl}
                 sprintId={sprint?.id ?? null}
-                items={overview.items}
-                loading={overview.loading}
-                error={overview.error}
-                onRetry={retryOverview}
+                tasks={filtered}
               />
             ) : (
               <>
                 {tasks.length === 0 ? (
                   <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-                    此 Sprint 尚未有對應的 Dev-Task。
+                    此 Sprint 尚未有對應的工作單。
                   </p>
                 ) : (
                   <>
                     {filtered.length === 0 && (
                       <p className="mb-4 text-center text-sm text-slate-500 dark:text-slate-400">
-                        沒有符合所選團隊的 Dev-Task。
+                        沒有符合所選團隊的工作單。
                       </p>
                     )}
                     <AssignmentStatus
@@ -470,7 +419,7 @@ function JqlButtonSkeleton() {
  * 顯示「JQL 撈出來的單」的唯讀彈窗：仿其他彈窗的 Table＋Mobile 卡片格式。
  *
  * `variant`：
- * - `devtask`＝未估時／未分派（Dev-Task 清單）：有母票 type icon，無 Reporter/Component；
+ * - `devtask`＝未估時／未分派（工作單清單）：有母票 type icon，無 Reporter/Component；
  * - `parent`＝未開子單（母票清單）：不需要母票 type icon，多列 Reporter／Component。
  */
 function JqlDialog({
@@ -487,7 +436,7 @@ function JqlDialog({
   onClose: () => void
 }) {
   const isParent = variant === "parent"
-  const captionText = isParent ? "母票" : "Dev-Task"
+  const captionText = isParent ? "母票" : "工作單"
   return (
     <EditDialog
       title={label}

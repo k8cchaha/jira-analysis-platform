@@ -5,18 +5,17 @@ import {
   JiraAuthorizationError,
   type JiraCredentials,
 } from "@/lib/jira-token"
-import { searchJiraIssues, dashboardJiraBaseUrl } from "@/lib/jira-dashboard"
+import { searchJiraIssues } from "@/lib/jira-dashboard"
 import {
   sprintParentIssuesJql,
-  sprintDevTasksJql,
-  sprintUnassignedJql,
-  sprintUnestimatedJql,
+  sprintChildTasksJql,
+  sprintChildTasksUnassignedJql,
+  sprintChildTasksUnestimatedJql,
 } from "@/lib/jira-jql"
-import { STORY_POINTS_FIELD } from "@/lib/jira-fields"
+import { STORY_POINTS_FIELD, DEV_TYPE_FIELD } from "@/lib/jira-fields"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { PlanningTask } from "@/lib/planning-subset"
-import type { PlanningOverviewItem } from "@/lib/planning-overview"
 
 export class JiraPlanningError extends Error {
   constructor(
@@ -110,6 +109,19 @@ function componentNames(value: unknown): string[] {
     .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
 }
 
+/**
+ * 從 Jira option 型 custom field 取出其值名稱：可能是字串，或 `{ value }` 物件
+ * （Select List）。讀不到、非字串為 null。
+ */
+function optionValue(value: unknown): string | null {
+  if (typeof value === "string") return value.trim().length > 0 ? value : null
+  if (typeof value === "object" && value !== null) {
+    const v = (value as Record<string, unknown>).value
+    if (typeof v === "string" && v.trim().length > 0) return v
+  }
+  return null
+}
+
 /** Planning 主表與彈窗共用要請求的欄位。 */
 const PLANNING_FIELDS = [
   "summary",
@@ -118,25 +130,52 @@ const PLANNING_FIELDS = [
   "components",
   "parent",
   "status",
+  "issuetype",
   STORY_POINTS_FIELD,
+  DEV_TYPE_FIELD,
 ]
 
-/** 「任務規劃總覽」要請求的欄位：需要母票自身 type（issuetype）＋其 Epic（parent）。 */
-const OVERVIEW_FIELDS = [
+/** 母票（Story/Task/Bug）自身要請求的欄位：summary、issuetype、parent（＝其 Epic）。 */
+const MOTHER_FIELDS = [
   "summary",
-  "assignee",
-  "reporter",
-  "status",
   "issuetype",
   "parent",
   STORY_POINTS_FIELD,
 ]
 
+/** 一筆母票的投影（key 之外建立母票表頭／Epic 階層所需的欄位）。 */
+interface MotherInfo {
+  summary: string | null
+  issueType: string | null
+  epic: { key: string; summary: string | null } | null
+}
+
+/** 從 Jira response 的母票欄位物件取出其 Epic（`parent` 欄位的 `issuetype` 為 Epic）。 */
+function epicOf(value: unknown): { key: string; summary: string | null } | null {
+  if (typeof value !== "object" || value === null) return null
+  const parent = value as Record<string, unknown>
+  const nested = parent.fields
+  const name = recordFieldName(nested)
+  if (!name || !name.toLowerCase().includes("epic")) return null
+  const key = parent.key
+  if (typeof key !== "string" || key.length === 0) return null
+  const summary =
+    typeof nested === "object" && nested !== null
+      ? (nested as Record<string, unknown>).summary
+      : null
+  return { key, summary: typeof summary === "string" ? summary : null }
+}
+
 /** 把一筆 Jira issue 投影成 PlanningTask 列。 */
-function projectPlanningTask(issue: {
-  key: string
-  fields: Record<string, unknown>
-}): PlanningTask {
+function projectPlanningTask(
+  issue: {
+    key: string
+    fields: Record<string, unknown>
+  },
+  motherMap?: ReadonlyMap<string, MotherInfo>
+): PlanningTask {
+  const parentKey = parentObjectKey(issue.fields.parent)
+  const mother = parentKey !== null ? motherMap?.get(parentKey) : undefined
   return {
     key: issue.key,
     summary: typeof issue.fields.summary === "string" ? issue.fields.summary : null,
@@ -146,48 +185,19 @@ function projectPlanningTask(issue: {
     assigneeAccountId: assigneeAccountId(issue.fields.assignee),
     reporter: assigneeDisplayName(issue.fields.reporter),
     components: componentNames(issue.fields.components),
+    issueType: recordFieldName(issue.fields),
+    devType: optionValue(issue.fields[DEV_TYPE_FIELD]),
+    parentKey,
+    parentSummary: mother?.summary ?? null,
+    epic: mother?.epic ?? null,
     parentIssueType: parentIssueTypeOf(issue.fields.parent),
   }
 }
 
-/** 從 Jira `parent` 欄位取出 Epic（當 parent 的 issuetype 是 Epic 時）；否則回 null。 */
-function epicOfParent(value: unknown): PlanningOverviewItem["epic"] | null {
-  if (typeof value !== "object" || value === null) return null
-  const parent = value as Record<string, unknown>
-  const name = recordFieldName(parent.fields)
-  if (name === null || !name.toLowerCase().includes("epic")) return null
-  const key = parentObjectKey(parent)
-  if (key === null) return null
-  const nested = parent.fields
-  const summary =
-    typeof nested === "object" && nested !== null &&
-    typeof (nested as Record<string, unknown>).summary === "string"
-      ? ((nested as Record<string, unknown>).summary as string)
-      : null
-  return { key, summary }
-}
-
-/** 把一筆母票 issue 投影成 PlanningOverviewItem（含自身 type、Epic 推導）。 */
-function projectOverviewItem(issue: {
-  key: string
-  fields: Record<string, unknown>
-}): PlanningOverviewItem {
-  return {
-    key: issue.key,
-    summary: typeof issue.fields.summary === "string" ? issue.fields.summary : null,
-    issueType: recordFieldName(issue.fields),
-    status: statusName(issue.fields.status),
-    points: pointsOrNull(issue.fields[STORY_POINTS_FIELD]),
-    assigneeDisplayName: assigneeDisplayName(issue.fields.assignee),
-    assigneeAccountId: assigneeAccountId(issue.fields.assignee),
-    reporter: assigneeDisplayName(issue.fields.reporter),
-    epic: epicOfParent(issue.fields.parent),
-  }
-}
-
 /**
- * 撈此 sprint 的母票再撈其下全部 Dev-Task，回列表（估計＋未估計，含 status）。
- * 只重用 `sprintParentIssuesJql`／`sprintDevTasksJql`，不手刻 JQL。
+ * 撈此 sprint 的母票（Story / Task / Bug）再撈其下全部工作單（Dev-Task + QA-Task），
+ * 回列表（估計＋未估計，含 status）。只重用 `sprintParentIssuesJql`／
+ * `sprintChildTasksJql`，不手刻 JQL。
  */
 export async function getPlanningData(sprint: SprintRecord): Promise<PlanningData> {
   let credentials: JiraCredentials
@@ -203,19 +213,19 @@ export async function getPlanningData(sprint: SprintRecord): Promise<PlanningDat
     throw new JiraPlanningError("request_failed", "無法取得 Jira 登入資料。")
   }
 
-  // 1. 撈此 sprint 的母票（Story / Task / Bug）。
-  const parentKeys = await fetchSprintParentKeys(credentials, sprint)
+  // 1. 撈此 sprint 的母票（Story / Task / Bug），連同其 Epic。
+  const { parentKeys, motherMap } = await fetchSprintMothers(credentials, sprint)
 
-  // 2. 撈全部 Dev-Task，投影成 PlanningTask（含 status）。
+  // 2. 撈全部工作單（Dev-Task + QA-Task），投影成 PlanningTask（含 status、母票/Epic）。
   const tasks: PlanningTask[] = []
   if (parentKeys.size > 0) {
     for await (const issues of searchJiraIssues(
       credentials,
-      sprintDevTasksJql([...parentKeys]),
+      sprintChildTasksJql([...parentKeys]),
       PLANNING_FIELDS
     )) {
       for (const issue of issues) {
-        tasks.push(projectPlanningTask(issue))
+        tasks.push(projectPlanningTask(issue, motherMap))
         if (tasks.length > MAX_DEVTASKS) {
           throw new JiraPlanningError("limit", "此 Sprint 的票數過多，無法提供精確結果。")
         }
@@ -226,76 +236,42 @@ export async function getPlanningData(sprint: SprintRecord): Promise<PlanningDat
   return { taskCount: tasks.length, tasks, parentKeys: [...parentKeys] }
 }
 
-/**
- * 撈此 sprint 的母票（Story / Task / Bug）明細，供「任務規劃總覽」的任務清單與
- * 票種圓餅圖使用。只重用 `sprintParentIssuesJql`，不手刻 JQL；Epic 由母票的
- * `parent` 欄位推導，因此不需新增自訂欄位或改查詢。
- */
-export async function getPlanningOverview(sprint: SprintRecord): Promise<PlanningOverviewItem[]> {
-  let credentials: JiraCredentials
-  try {
-    credentials = await getJiraToken()
-  } catch (error) {
-    if (error instanceof JiraAuthorizationError) {
-      throw new JiraPlanningError(
-        error.code === "invalid_configuration" ? "request_failed" : "reauthorize",
-        "無法讀取 Jira 登入狀態，請重新授權。"
-      )
-    }
-    throw new JiraPlanningError("request_failed", "無法取得 Jira 登入資料。")
-  }
-
-  const items: PlanningOverviewItem[] = []
-  for await (const issues of searchJiraIssues(
-    credentials,
-    sprintParentIssuesJql(sprint.id),
-    OVERVIEW_FIELDS
-  )) {
-    for (const issue of issues) {
-      items.push(projectOverviewItem(issue))
-      if (items.length > MAX_DEVTASKS) {
-        throw new JiraPlanningError("limit", "此 Sprint 的票數過多，無法提供精確結果。")
-      }
-    }
-  }
-  return items
-}
-
-export { dashboardJiraBaseUrl as planningJiraBaseUrl }
-
-/**
- * 撈 Planning 彈窗的子集合（未估時／未分派）之 Dev-Task，投影成跟主表一致的
- * `PlanningTask[]`。只用 `sprintUnestimatedJql`／`sprintUnassignedJql`，不手刻 JQL。
- */
-/** 撈此 sprint 的母票（Story / Task / Bug）key；超過限制拋 `JiraPlanningError`。 */
-async function fetchSprintParentKeys(
+/** 撈此 sprint 的母票（Story / Task / Bug）key 及其 Epic；超過限制拋 `JiraPlanningError`。 */
+async function fetchSprintMothers(
   credentials: JiraCredentials,
   sprint: SprintRecord
-): Promise<Set<string>> {
+): Promise<{ parentKeys: Set<string>; motherMap: Map<string, MotherInfo> }> {
   const parentKeys = new Set<string>()
+  const motherMap = new Map<string, MotherInfo>()
   let parents = 0
   for await (const issues of searchJiraIssues(
     credentials,
     sprintParentIssuesJql(sprint.id),
-    []
+    MOTHER_FIELDS
   )) {
     for (const issue of issues) {
       parents += 1
       parentKeys.add(issue.key)
+      motherMap.set(issue.key, {
+        summary: typeof issue.fields.summary === "string" ? issue.fields.summary : null,
+        issueType: recordFieldName(issue.fields.issuetype),
+        epic: epicOf(issue.fields.parent),
+      })
       if (parents > MAX_DEVTASKS) {
         throw new JiraPlanningError("limit", "此 Sprint 的票數過多，無法提供精確結果。")
       }
     }
   }
-  return parentKeys
+  return { parentKeys, motherMap }
 }
 
 /**
  * 撈 Planning 彈窗的子集合：
- * - `unestimated`／`unassigned`：母票之下的 Dev-Task（分別為未估時／未分派）；
- * - `no-subtasks`：該 sprint 的 Story/Task/Bug 母票中，**沒有**任何 Dev-Task 子票的母票
- *   （Jira 原生 JQL 沒有「無子單」運算子，故由 server 端以「全部母票 − 有子票的母票」
- *   比對出來）。統一投影成跟主表一致的 `PlanningTask[]`，只重用既有 builder，不手刻 JQL。
+ * - `unestimated`／`unassigned`：母票之下的工作單（分別為未估時／未分派，Dev+QA）；
+ * - `no-subtasks`：該 sprint 的 Story/Task/Bug 母票中，**沒有**任何 Dev-Task 或
+ *   QA-Task 子票的母票（Jira 原生 JQL 沒有「無子單」運算子，故由 server 端以
+ *   「全部母票 − 有子票的母票」比對出來）。統一投影成跟主表一致的 `PlanningTask[]`，
+ *   只重用既有 builder，不手刻 JQL。
  */
 export async function getPlanningSubset(
   sprint: SprintRecord,
@@ -314,20 +290,20 @@ export async function getPlanningSubset(
     throw new JiraPlanningError("request_failed", "無法取得 Jira 登入資料。")
   }
 
-  // 「未開子單」是母票層級的比對：撈全部母票與全部 Dev-Task，把「沒有子票」的母票
-  // 列出來（Jira 原生 JQL 沒有「無子單」運算子，故以集合差集在 server 端計算）。
+  // 「未開子單」是母票層級的比對：撈全部母票與全部工作單（Dev+QA），把「沒有子票」
+  // 的母票列出來（Jira 原生 JQL 沒有「無子單」運算子，故以集合差集在 server 端計算）。
   if (kind === "no-subtasks") {
     return fetchNoSubtaskParents(credentials, sprint)
   }
 
-  // 先撈母票 key，再用對應 builder 撈子集合的 Dev-Task。
-  const parentKeys = await fetchSprintParentKeys(credentials, sprint)
+  // 先撈母票 key，再用對應 builder 撈子集合的工作單。
+  const { parentKeys } = await fetchSprintMothers(credentials, sprint)
   const parentKeysList = [...parentKeys]
 
   const jql =
     kind === "unestimated"
-      ? sprintUnestimatedJql(parentKeysList)
-      : sprintUnassignedJql(parentKeysList)
+      ? sprintChildTasksUnestimatedJql(parentKeysList)
+      : sprintChildTasksUnassignedJql(parentKeysList)
 
   const tasks: PlanningTask[] = []
   if (parentKeysList.length > 0) {
@@ -345,9 +321,10 @@ export async function getPlanningSubset(
 }
 
 /**
- * 撈此 sprint 的母票（含明細欄位），再把「沒有任何 Dev-Task 子票」的那些母票
- * 投影成 `PlanningTask[]`，供「未開子單」彈窗顯示。Jira 原生無「無子單」運算子，
- * 故以「全部母票 − 有子票的母票」的集合差集比對，只重用既有 builder，不手刻 JQL。
+ * 撈此 sprint 的母票（含明細欄位），再把「沒有任何工作單（Dev-Task 或 QA-Task）
+ * 子票」的那些母票投影成 `PlanningTask[]`，供「未開子單」彈窗顯示。Jira 原生無
+ * 「無子單」運算子，故以「全部母票 − 有子票的母票」的集合差集比對，只重用既有
+ * builder，不手刻 JQL。
  */
 async function fetchNoSubtaskParents(
   credentials: JiraCredentials,
@@ -370,13 +347,13 @@ async function fetchNoSubtaskParents(
   }
   const parentKeysList = [...parents.keys()]
 
-  // 2. 撈全部 Dev-Task，收集「有子票」的母票 key（以 parent.fields.issuetype.name 取母票 key）。
+  // 2. 撈全部工作單（Dev+QA），收集「有子票」的母票 key（以 parent.fields.issuetype.name 取母票 key）。
   const parentsWithSubtask = new Set<string>()
   if (parentKeysList.length > 0) {
     let devTaskCount = 0
     for await (const issues of searchJiraIssues(
       credentials,
-      sprintDevTasksJql(parentKeysList),
+      sprintChildTasksJql(parentKeysList),
       PLANNING_FIELDS
     )) {
       for (const issue of issues) {

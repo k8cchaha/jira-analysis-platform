@@ -1,9 +1,12 @@
 import { MISSING_DATA_LIMIT, type MissingDataError } from "./jira-missing-data.ts"
 
 /**
- * Planning 明細表的一列 Dev-Task。與燃盡圖不同，這裡把「估計＋未估計」的單
- * 都放同一張表：未估計的 `points` 為 `null`（顯示「—」），不因此中斷。
+ * Planning 明細表的一列工作單（Dev-Task 或 QA-Task）。與燃盡圖不同，這裡把「估計
+ * ＋未估計」的單都放同一張表：未估計的 `points` 為 `null`（顯示「—」），不因此中斷。
  * `status` 是 Jira 目前的工作流狀態名稱（Planning 只展示，不做群組/圖表）。
+ *
+ * 母票與 Epic 資訊去正則座化到每張子票上（`parentKey`／`parentSummary`／`epic`），
+ * 讓 client 純函式可直接組「Epic → 母票 → 子票」階層，無需另做 server join。
  *
  * 這個 DTO 放在 client-safe 模組（無 `server-only`），供 server（`planning-data.ts`）
  * 與 client（`planning-client.tsx` 的彈窗/驗證器）共用，避免兩處重複定義。
@@ -21,6 +24,16 @@ export interface PlanningTask {
   reporter: string | null
   /** Component 名稱清單；無或讀不到為空陣列。 */
   components: string[]
+  /** 子票自身的 Issue Type 名稱（"Dev-Task"／"QA-Task"）；讀不到為 null。 */
+  issueType: string | null
+  /** 工作單的「Dev Type」欄位值（Spike／Pre-Spike／OP-Task／OP-Bug／Dev／Bug 等）；讀不到為 null。 */
+  devType: string | null
+  /** 母票 key（此子票所屬的 Story/Task/Bug）；讀不到為 null。 */
+  parentKey: string | null
+  /** 母票 summary（母票表頭用）；讀不到為 null。 */
+  parentSummary: string | null
+  /** 母票所屬的 Epic（階層群組表頭）；無 Epic 或讀不到為 null。 */
+  epic: { key: string; summary: string | null } | null
   parentIssueType:
     | { status: "known"; name: string }
     | { status: "none" | "unknown" }
@@ -50,6 +63,17 @@ function optionalString(value: unknown, maxLength = 200): string | null {
   if (value === null) return null
   if (typeof value !== "string" || value.length > maxLength) invalidResult()
   return value as string
+}
+
+/** 解碼 Epic 物件 `{ key, summary }`；null／缺欄／畸形回 null（階層退化成無 Epic 表頭）。 */
+function epicObject(value: unknown): { key: string; summary: string | null } | null {
+  if (value === null) return null
+  if (!record(value)) invalidResult()
+  const key = value.key
+  if (typeof key !== "string" || key.length === 0 || key.length > 200) invalidResult()
+  const summary = value.summary
+  if (summary !== null && typeof summary !== "string") invalidResult()
+  return { key, summary: optionalString(summary) }
 }
 
 function pointsOrNull(value: unknown): number | null {
@@ -96,6 +120,11 @@ export function parsePlanningSubsetResult(value: unknown): PlanningSubsetResult 
       assigneeAccountId: optionalString(task.assigneeAccountId, 100),
       reporter: optionalString(task.reporter),
       components: stringList(task.components),
+      issueType: optionalString(task.issueType),
+      devType: optionalString(task.devType),
+      parentKey: optionalString(task.parentKey, 100),
+      parentSummary: optionalString(task.parentSummary),
+      epic: epicObject(task.epic),
       parentIssueType: parentIssueType(task.parentIssueType),
     }
   })
