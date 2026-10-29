@@ -15,6 +15,8 @@ export async function getDashboardAlertCounts<K extends DashboardAlertKind>(kind
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
   const queries = DASHBOARD_ALERT_KEYS[kind].map((key) => ({ key, jql: dashboardAlertJql(key, scope) }))
+  const jql: Partial<Record<DashboardAlertKey, string>> = {}
+  queries.forEach((query) => { jql[query.key] = query.jql })
   const counts: Partial<Record<DashboardAlertKey, number>> = {}
   let cursor = 0
   let failed = false
@@ -26,13 +28,14 @@ export async function getDashboardAlertCounts<K extends DashboardAlertKind>(kind
       catch (error) { failed = true; throw error }
     }
   }))
+  const baseUrl = dashboardJiraBaseUrl()
   if (kind === "bugs") {
-    return { s0s1: counts.s0s1!, s2: counts.s2! } as DashboardAlertCountsByKind[K]
+    return { s0s1: counts.s0s1!, s2: counts.s2!, jql: { s0s1: jql.s0s1!, s2: jql.s2! }, jiraBaseUrl: baseUrl } as DashboardAlertCountsByKind[K]
   }
   if (kind === "due") {
-    return { overdue: counts.overdue!, upcoming: counts.upcoming! } as DashboardAlertCountsByKind[K]
+    return { overdue: counts.overdue!, upcoming: counts.upcoming!, jql: { overdue: jql.overdue!, upcoming: jql.upcoming! }, jiraBaseUrl: baseUrl } as DashboardAlertCountsByKind[K]
   }
-  return { inReview: counts.inReview!, requestInfo: counts.requestInfo! } as DashboardAlertCountsByKind[K]
+  return { inReview: counts.inReview!, requestInfo: counts.requestInfo!, jql: { inReview: jql.inReview!, requestInfo: jql.requestInfo! }, jiraBaseUrl: baseUrl } as DashboardAlertCountsByKind[K]
 }
 
 export async function getBugAlertDetails(filter: DashboardFilter = SELF_FILTER): Promise<BugAlertDetails> {

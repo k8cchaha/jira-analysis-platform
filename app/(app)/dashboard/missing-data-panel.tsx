@@ -11,6 +11,7 @@ import { BugAlertDialog } from "./bug-alert-dialog"
 import { DueReminderDialog } from "./due-reminder-dialog"
 import { PendingIssueDialog } from "./pending-issue-dialog"
 import { reauthorizeDashboardAction } from "./actions"
+import { JiraOpenLink } from "./jira-open-link"
 import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missing-data"
 
 type CardState = { status: "loading" } | MissingDataSummaryResult
@@ -112,8 +113,11 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
           const card: CardState = cardsQuery === query ? cards[kind] : { status: "loading" }
           const title = kind === "points" ? "(Actual) Story Points 缺失" : "Defect Cause 缺失"
           return (
-            <article key={kind} aria-busy={card.status === "loading"} className="relative flex min-w-0 flex-col rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <h3 id={`${cardId}-${kind}-title`} className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
+            <article key={kind} aria-busy={card.status === "loading"} className="group relative flex min-w-0 flex-col rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2">
+                <h3 id={`${cardId}-${kind}-title`} className="text-base font-semibold text-slate-950 dark:text-white">{title}</h3>
+                {card.status === "success" && <JiraOpenLink jiraBaseUrl={card.summary.jiraBaseUrl} jql={card.summary.jql} label={title} />}
+              </div>
               {card.status === "loading" ? <MissingDataCardSkeleton /> : card.status === "error" ? (
                 <div role="alert" className="mt-5 flex-1">
                   <p className="flex items-start gap-2 text-sm leading-6 text-slate-800 dark:text-slate-200"><WarningIcon /><span>無法取得精確筆數：{card.error.message}</span></p>

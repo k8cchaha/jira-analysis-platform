@@ -240,7 +240,7 @@ export async function getMissingDataSummary(kind: MissingDataKind, filter: Dashb
   const scope = await resolveDashboardScope(filter, credentials)
   const jql = missingDataListJql(kind, scope)
   const fields = await getFields(credentials, kind)
-  const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0 }
+  const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0, jql, jiraBaseUrl: baseUrl() }
   const seen = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | null = null

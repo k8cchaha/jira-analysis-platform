@@ -76,9 +76,9 @@ export function DashboardAlertCards({ query, onOpenBugs, onOpenDue, onOpenPendin
   const dueCounts = due.state.status === "success" && due.state.kind === "due" ? due.state.counts : null
   return (
     <>
-      <BugAlertCard onOpen={onOpenBugs} s0s1Count={bugCounts?.s0s1} s2Count={bugCounts?.s2} loading={bugs.state.status === "loading"} feedback={bugs.state.status === "error" ? <AlertError key={query} error={bugs.state.error} query={query} retry={bugs.retry} /> : null} />
-      <DueReminderCard onOpen={onOpenDue} overdueCount={dueCounts?.overdue} upcomingCount={dueCounts?.upcoming} loading={due.state.status === "loading"} feedback={due.state.status === "error" ? <AlertError key={query} error={due.state.error} query={query} retry={due.retry} /> : null} />
-      <PendingIssueCard onOpen={onOpenPending} inReviewCount={pendingCounts?.inReview} requestInfoCount={pendingCounts?.requestInfo} loading={pending.state.status === "loading"} feedback={pending.state.status === "error" ? <AlertError key={query} error={pending.state.error} query={query} retry={pending.retry} /> : null} />
+      <BugAlertCard onOpen={onOpenBugs} s0s1Count={bugCounts?.s0s1} s2Count={bugCounts?.s2} jiraBaseUrl={bugCounts?.jiraBaseUrl ?? null} jql={bugCounts?.jql ?? null} loading={bugs.state.status === "loading"} feedback={bugs.state.status === "error" ? <AlertError key={query} error={bugs.state.error} query={query} retry={bugs.retry} /> : null} />
+      <DueReminderCard onOpen={onOpenDue} overdueCount={dueCounts?.overdue} upcomingCount={dueCounts?.upcoming} jiraBaseUrl={dueCounts?.jiraBaseUrl ?? null} jql={dueCounts?.jql ?? null} loading={due.state.status === "loading"} feedback={due.state.status === "error" ? <AlertError key={query} error={due.state.error} query={query} retry={due.retry} /> : null} />
+      <PendingIssueCard onOpen={onOpenPending} inReviewCount={pendingCounts?.inReview} requestInfoCount={pendingCounts?.requestInfo} jiraBaseUrl={pendingCounts?.jiraBaseUrl ?? null} jql={pendingCounts?.jql ?? null} loading={pending.state.status === "loading"} feedback={pending.state.status === "error" ? <AlertError key={query} error={pending.state.error} query={query} retry={pending.retry} /> : null} />
     </>
   )
 }

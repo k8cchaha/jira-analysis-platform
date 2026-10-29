@@ -2,9 +2,23 @@ export { DASHBOARD_ALERT_JQL, DASHBOARD_ALERT_KEYS, dashboardAlertJql, type Dash
 import { MISSING_DATA_LIMIT, type MissingDataError } from "./jira-missing-data.ts"
 
 export type DashboardAlertKind = "bugs" | "pending" | "due"
-export interface BugAlertCounts { s0s1: number; s2: number }
-export interface PendingIssueCounts { inReview: number; requestInfo: number }
-export interface DueReminderCounts { overdue: number; upcoming: number }
+export interface BugAlertCounts {
+  s0s1: number; s2: number
+  /** 各子查詢的完整 JQL（依當下 kind/子 key 與已解析 scope），供 UI 以 Jira search 深連結開啟。 */
+  jql: { s0s1: string; s2: string }
+  /** Jira 站台 origin；null 代表無法解析，UI 應隱藏深連結。 */
+  jiraBaseUrl: string | null
+}
+export interface PendingIssueCounts {
+  inReview: number; requestInfo: number
+  jql: { inReview: string; requestInfo: string }
+  jiraBaseUrl: string | null
+}
+export interface DueReminderCounts {
+  overdue: number; upcoming: number
+  jql: { overdue: string; upcoming: string }
+  jiraBaseUrl: string | null
+}
 export interface DashboardAlertCountsByKind { bugs: BugAlertCounts; pending: PendingIssueCounts; due: DueReminderCounts }
 export type DashboardAlertResult =
   | { status: "success"; kind: "bugs"; counts: BugAlertCounts }
@@ -82,6 +96,18 @@ function count(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= MISSING_DATA_LIMIT
 }
 function invalidResult(): never { throw new Error("警示筆數回應不完整，請重新載入。") }
+function alertJql(value: unknown): string {
+  if (typeof value !== "string" || !value.trim() || value.length > 8_000) invalidResult()
+  return value
+}
+function alertBaseUrl(value: unknown): string | null {
+  if (value === null) return null
+  if (typeof value !== "string") invalidResult()
+  let url: URL
+  try { url = new URL(value) } catch { invalidResult() }
+  if (url.protocol !== "https:" || url.origin !== value) invalidResult()
+  return url.origin
+}
 
 export function parseBugAlertDetailsResult(value: unknown): BugAlertDetailsResult {
   if (!record(value)) invalidResult()
@@ -208,14 +234,16 @@ export function parseDashboardAlertResult(kind: DashboardAlertKind, value: unkno
   }
   if (value.status !== "success" || value.kind !== kind || !record(value.counts)) invalidResult()
   const values = value.counts
+  const jiraBaseUrl = alertBaseUrl(values.jiraBaseUrl ?? null)
+  const jqlValues = record(values.jql) ? values.jql : {}
   if (kind === "bugs") {
     if (!count(values.s0s1) || !count(values.s2)) invalidResult()
-    return { status: "success", kind, counts: { s0s1: values.s0s1, s2: values.s2 } }
+    return { status: "success", kind, counts: { s0s1: values.s0s1, s2: values.s2, jql: { s0s1: alertJql(jqlValues.s0s1), s2: alertJql(jqlValues.s2) }, jiraBaseUrl } }
   }
   if (kind === "due") {
     if (!count(values.overdue) || !count(values.upcoming)) invalidResult()
-    return { status: "success", kind, counts: { overdue: values.overdue, upcoming: values.upcoming } }
+    return { status: "success", kind, counts: { overdue: values.overdue, upcoming: values.upcoming, jql: { overdue: alertJql(jqlValues.overdue), upcoming: alertJql(jqlValues.upcoming) }, jiraBaseUrl } }
   }
   if (!count(values.inReview) || !count(values.requestInfo)) invalidResult()
-  return { status: "success", kind, counts: { inReview: values.inReview, requestInfo: values.requestInfo } }
+  return { status: "success", kind, counts: { inReview: values.inReview, requestInfo: values.requestInfo, jql: { inReview: alertJql(jqlValues.inReview), requestInfo: alertJql(jqlValues.requestInfo) }, jiraBaseUrl } }
 }

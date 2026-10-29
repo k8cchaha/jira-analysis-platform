@@ -27,6 +27,10 @@ export interface MissingDataSummary {
   total: number
   storyPointsMissing: number
   actualStoryPointsMissing: number
+  /** 產生此次概覽的完整 JQL（依當下 kind 與已解析 scope），供 UI 以 Jira search 深連結開啟。 */
+  jql: string
+  /** Jira 站台 origin；null 代表無法解析，UI 應隱藏深連結。 */
+  jiraBaseUrl: string | null
 }
 
 export interface MissingIssue {
