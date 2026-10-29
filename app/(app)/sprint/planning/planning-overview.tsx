@@ -241,8 +241,8 @@ function RadioGroup({
   onModeChange: (mode: OverviewGroupMode) => void
 }) {
   const options: { value: OverviewGroupMode; label: string }[] = [
-    { value: "team", label: "Team" },
-    { value: "reporter", label: "Reporter" },
+    { value: "team", label: "Team View" },
+    { value: "reporter", label: "Reporter View" },
   ]
   return (
     <fieldset className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-800">

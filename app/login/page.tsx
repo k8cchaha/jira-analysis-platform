@@ -23,7 +23,23 @@ export default async function LoginPage({
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-indigo-950">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-10 w-full max-w-sm text-center">
-        <div className="text-5xl mb-4">📊</div>
+        <div className="mb-4 flex justify-center">
+          <svg
+            aria-hidden="true"
+            className="h-14 w-14"
+            viewBox="0 0 64 64"
+            role="img"
+            aria-label="分析圖標誌"
+          >
+            <rect width="64" height="64" rx="14" fill="#4f46e5"/>
+            <g fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 46 V28" stroke="#f87171"/>
+              <path d="M32 46 V20" stroke="#facc15"/>
+              <path d="M44 46 V34" stroke="#4ade80"/>
+            </g>
+            <path d="M16 50 H48" stroke="#c7d2fe" stroke-width="4" stroke-linecap="round"/>
+          </svg>
+        </div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
           Jira Analysis Platform
         </h1>
@@ -42,7 +58,8 @@ export default async function LoginPage({
             授權時請選擇正確的 Jira 站台
           </p>
           <p className="mt-1 text-sm text-amber-800 dark:text-amber-300">
-            在「Install app on」選擇「{jiraHostname}」。
+            在「Install app on」選擇「
+            <span className="font-semibold text-red-600 dark:text-red-400">{jiraHostname}</span>」。
           </p>
         </div>
 

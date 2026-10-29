@@ -295,16 +295,18 @@ function SidebarContent({
           title="Jira Analysis Platform"
           onNavigate={onNavigate}
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm">
             <svg
               aria-hidden="true"
-              className="h-5 w-5"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
+              className="h-6 w-6"
+              viewBox="0 0 64 64"
             >
-              <path d="M5 18V9M12 18V5M19 18v-6" />
+              <g fill="none" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 46 V28" stroke="#f87171"/>
+                <path d="M32 46 V18" stroke="#facc15"/>
+                <path d="M46 46 V34" stroke="#4ade80"/>
+              </g>
+              <path d="M14 51 H50" stroke="rgba(255,255,255,0.55)" strokeWidth="4" strokeLinecap="round"/>
             </svg>
           </span>
           {!collapsed ? (
