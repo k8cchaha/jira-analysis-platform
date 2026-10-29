@@ -192,7 +192,7 @@ export const MISSING_POINTS_JQL =
   `${POINTS_SCOPE_JQL} and ((status = Done and ${actualStoryPointsJql} in (EMPTY, 0)) or (statusCategory not in ("To Do") and ${storyPointsJql} in (EMPTY, 0))) and assignee = currentUser()`
 
 export const MISSING_DEFECT_CAUSE_JQL =
-  `issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
+  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
 
 export function missingDataJql(kind: MissingDataKind) {
   return kind === "points" ? MISSING_POINTS_JQL : MISSING_DEFECT_CAUSE_JQL
