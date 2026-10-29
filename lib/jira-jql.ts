@@ -64,6 +64,16 @@ export function sprintChildTasksJql(parentKeys: readonly string[]): string {
   return `parent in (${keys}) AND issuetype in ("Dev-Task", "QA-Task")`
 }
 
+/**
+ * 以 key 選取一群 Epic（Reporter View 需依「Epic 的 Reporter」分群）。只取 Epic，
+ * 避免把其他票型誤帶入。空 key 清單回空字串（呼叫端應跳過查詢）。
+ */
+export function epicIssuesByKeyJql(epicKeys: readonly string[]): string {
+  const keys = enforcedSortedKeys(epicKeys)
+  if (!keys) return ""
+  return `key in (${keys}) AND issuetype = "Epic"`
+}
+
 /** 某組母票之下、某單一母票票種（Story/Task/Bug）底下的全部工作單（圓餅圖深連結）。 */
 export function sprintChildTasksOfParentTypeJql(
   sprintId: number,

@@ -1,4 +1,4 @@
-import type { PlanningTask } from "./planning-subset.ts"
+import type { PlanningTask, ReporterParent } from "./planning-subset.ts"
 
 /**
  * Planning「任務規劃總覽」的統計與分群（client-safe，無 I/O、無 `server-only`）。
@@ -92,6 +92,109 @@ function sortTeamLabels(labels: string[], teamOrder: readonly string[]): string[
     if (ra === undefined) return 1
     if (rb === undefined) return -1
     return ra - rb
+  })
+}
+
+/** Reporter View 的一個母票群組：某位 Reporter 開的所有母票。 */
+export interface ReporterGroup {
+  /** Reporter 顯示名；null / 未指定 → `UNNAMED_REPORTER_LABEL`。 */
+  label: string
+  /** 排序權重：fpm=0、opm=1、其他=2、未指定=3（升序）。 */
+  rank: number
+  /** Reporter 的 accountId；無 Reporter 為 null。 */
+  reporterAccountId: string | null
+  /** 有 Epic 的母票，依 Epic 分群（Epic 依 key 排序）。 */
+  epicGroups: ReporterEpicGroup[]
+  /** 此 Reporter 下、無 Epic 的母票（依 key 排序）。 */
+  noEpic: ReporterParent[]
+}
+
+/** 某位 Reporter 底下、同屬一個 Epic 的母票。 */
+export interface ReporterEpicGroup {
+  epic: { key: string; summary: string | null }
+  parents: ReporterParent[]
+}
+
+/** Reporter 的 PM 位階；不在 PM 群內（或無 accountId）為 null。 */
+export type PmRank = "fpm" | "opm"
+
+/** Reporter View 分群的排序權重：fpm → opm → 其他 → 未指定。 */
+const PM_RANK_ORDER: Readonly<Record<PmRank, number>> = { fpm: 0, opm: 1 }
+
+/**
+ * 把一組母票（Story/Task/Bug）組成 Reporter View 的階層清單（純函式，無 I/O）。
+ *
+ * - 依母票的 **分群歸屬者** 分群：`ReporterParent.reporterAccountId` 已由 server 解析為
+ *   「Epic 的 Reporter」（母票有 Epic 時）或「母票自身 Reporter」（無 Epic 時）。排序：
+ *   PM 優先（fpm → opm）→ 其他 Reporter 依顯示名 → 未指定 Reporter 殿後。
+ * - 每個群內：有 Epic 的母票先依 Epic（key）分群，無 Epic 的集中到 `noEpic`。
+ * - `pmRank` 依 accountId 判定該群歸屬者是否為 PM（`ent-fpm`／`ent-opm`）；無 accountId
+ *   者永非 PM。
+ */
+export function buildReporterHierarchy(input: {
+  parents: readonly ReporterParent[]
+  pmRank?: (accountId: string | null) => PmRank | null
+}): ReporterGroup[] {
+  const { parents, pmRank } = input
+  const rankOfAccount = (accountId: string | null): number => {
+    if (accountId === null) return 3
+    const rank = pmRank?.(accountId)
+    return rank === undefined || rank === null ? 2 : PM_RANK_ORDER[rank]
+  }
+
+  // 1. 依 Reporter 分 bucket；每一 bucket 記憶該 Reporter 的顯示名與 accountId。
+  const buckets = new Map<string, { label: string; reporterAccountId: string | null; parents: ReporterParent[] }>()
+  for (const parent of parents) {
+    const key = parent.reporterAccountId ?? "__unreported__"
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = {
+        label: parent.reporter ?? UNNAMED_REPORTER_LABEL,
+        reporterAccountId: parent.reporterAccountId,
+        parents: [],
+      }
+      buckets.set(key, bucket)
+    }
+    bucket.parents.push(parent)
+  }
+
+  // 2. 依 rank（fpm→opm→其他→未指定）排序；同 rank 的其他 Reporter 依顯示名排序。
+  const sortedBuckets = [...buckets.values()].sort((a, b) => {
+    const ra = rankOfAccount(a.reporterAccountId)
+    const rb = rankOfAccount(b.reporterAccountId)
+    if (ra !== rb) return ra - rb
+    return a.label.localeCompare(b.label, "zh")
+  })
+
+  // 3. 每個群內：有 Epic 的分組，其餘收進 noEpic；母票依 key 排序。
+  return sortedBuckets.map((bucket) => {
+    const epicBuckets = new Map<string, ReporterParent[]>()
+    const noEpic: ReporterParent[] = []
+    for (const parent of [...bucket.parents].sort((a, b) => compareKeys(a.key, b.key))) {
+      if (parent.epic !== null) {
+        let list = epicBuckets.get(parent.epic.key)
+        if (!list) {
+          list = []
+          epicBuckets.set(parent.epic.key, list)
+        }
+        list.push(parent)
+      } else {
+        noEpic.push(parent)
+      }
+    }
+    const epicGroups: ReporterEpicGroup[] = [...epicBuckets.entries()]
+      .sort((a, b) => compareKeys(a[0], b[0]))
+      .map(([key, groupParents]) => ({
+        epic: bucket.parents.find((parent) => parent.epic?.key === key)?.epic ?? { key, summary: null },
+        parents: groupParents,
+      }))
+    return {
+      label: bucket.label,
+      rank: rankOfAccount(bucket.reporterAccountId),
+      reporterAccountId: bucket.reporterAccountId,
+      epicGroups,
+      noEpic,
+    }
   })
 }
 

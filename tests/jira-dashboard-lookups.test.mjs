@@ -322,6 +322,18 @@ describe("complete bounded group pagination", () => {
     })
   }
 
+  it("accepts a PM group only through an explicit allowlist, never via the default", async (t) => {
+    // 預設 allowlist（DASHBOARD_TEAMS）不允許 PM 群：不打 Jira。
+    const h = harness(t)
+    await assert.rejects(() => h.service.getDashboardGroupMembers("ent-fpm", credentials))
+    assert.equal(h.calls.length, 0)
+    // server 端內部以 options.allowlist 明確許可 → 允許並取得成員（供 Planning PM 排序）。
+    const allowed = harness(t, { response: () => ({ values: [user("pm-admin", { displayName: "PM Admin" })], startAt: 0, total: 1, isLast: true }) })
+    const members = await allowed.service.getDashboardGroupMembers("ent-fpm", credentials, { allowlist: new Set(["ent-fpm", "ent-opm"]) })
+    assert.deepEqual(plain(members.map((item) => item.accountId)), ["pm-admin"])
+    assert.equal(allowed.calls[0].params.get("groupname"), "ent-fpm")
+  })
+
   it("rejects total above 1,000 before returning any partial members", async (t) => {
     const h = harness(t, { response: () => ({ values: [user()], total: 1_001, isLast: false }) })
     await rejectsCode(() => h.service.getDashboardGroupMembers("ent-web", credentials), "limit")

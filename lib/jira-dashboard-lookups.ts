@@ -51,8 +51,8 @@ function record(value: unknown): value is Record<string, unknown> {
 function nonnegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
 }
-function validateGroup(group: string) {
-  if (!allowedGroups.has(group)) throw new DashboardFilterError("請選擇有效的團隊。")
+function validateGroup(group: string, allowlist: ReadonlySet<string>) {
+  if (!allowlist.has(group)) throw new DashboardFilterError("請選擇有效的團隊。")
 }
 
 export function validateDashboardUserQuery(query: string): string {
@@ -116,8 +116,17 @@ export async function searchDashboardUsers(query: string, credentials: JiraCrede
   return exactMatches.length ? exactMatches : results
 }
 
-export async function getDashboardGroupMembers(group: string, credentials: JiraCredentials): Promise<DashboardUser[]> {
-  validateGroup(group)
+/**
+ * 撈單一 Jira 群組的成員（完整分頁、總量與去重驗證）。預設只允許 `DASHBOARD_TEAMS`
+ * 的團隊群；`options.allowlist` 可提供額外的許可群組（例如 Planning 的 PM 群），
+ * 用於 server 端內部解析，不影響儀表板團隊下拉的暴露範圍。
+ */
+export async function getDashboardGroupMembers(
+  group: string,
+  credentials: JiraCredentials,
+  options: { allowlist?: ReadonlySet<string> } = {}
+): Promise<DashboardUser[]> {
+  validateGroup(group, options.allowlist ?? allowedGroups)
   const members: DashboardUser[] = []
   const seen = new Set<string>()
   let startAt = 0

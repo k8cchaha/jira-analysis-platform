@@ -52,7 +52,7 @@ export type NavigationCategory = Readonly<{
 }>
 
 /** 擁有全部頁面權限的管理員 email 清單。非管理員僅能看到儀表板（其餘類別一律隱藏）。 */
-export const ADMIN_EMAILS = ["alexwcwang@kkcompany.com", "kennylin@kkcompany.com"]
+export const ADMIN_EMAILS = ["alexwcwang@kkcompany.com", "kennylin@kkcompany.com", "nickchen@kkcompany.com"]
 
 /** 依使用者權限回傳應顯示的導覽類別：在管理員清單內看全部，其餘一律不顯示任何類別（只剩儀表板）。 */
 export function visibleNavigationCategories(

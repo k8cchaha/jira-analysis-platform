@@ -105,7 +105,8 @@ function harness(t, options = {}) {
         // 母票搜尋：sprint = … 。`getPlanningSubset` 用 MOTHER_FIELDS（summary+issuetype+parent），
         // 「未開子單」的 `fetchNoSubtaskParents` 用完整 PLANNING_FIELDS。
         if (/\bsprint = \d+/.test(body.jql)) {
-          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "customfield_10005"])
+          // MOTHER_FIELDS：母票（Story/Task/Bug）投影含 report、components（供 Reporter View 分群）。
+          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "reporter", "components", "customfield_10005"])
           if (JSON.stringify(body.fields) === motherFields) {
             return new Response(JSON.stringify({ issues: options.parents ?? parents, isLast: true }), { status: 200 })
           }
@@ -372,5 +373,51 @@ describe("planning subset client validator (parsePlanningSubsetResult)", () => {
     const parsed = h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), parentIssueType: { status: "known" } }] } })
     assert.equal(parsed.status, "success")
     if (parsed.status === "success") assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[0].parentIssueType)), { status: "unknown" })
+  })
+})
+
+describe("planning reporter parents projector (projectReporterParents)", () => {
+  const validParent = (over = {}) => ({
+    key: "SUN-100",
+    summary: "Story 1",
+    points: 3.5,
+    components: ["Frontend"],
+    reporter: "Reporter",
+    reporterAccountId: "aa1",
+    issueType: "Story",
+    epic: null,
+    ...over,
+  })
+  const project = (t, parents) => harness(t).model.projectReporterParents(parents)
+
+  it("投影合法母票、去重複 key、非 record 跳過", (t) => {
+    const out = project(t, [validParent(), validParent({ key: "SUN-100" }), validParent({ key: "SUN-101" }), "not-object", null])
+    assert.equal(out.length, 2)
+    assert.deepEqual(JSON.parse(JSON.stringify(out[0])), JSON.parse(JSON.stringify(validParent())))
+  })
+
+  it("壞值寬鬆收斂：負點數→null、超長字串→null、超 32 元件→[]、畸形 epic→null", (t) => {
+    const out = project(t, [
+      validParent({ key: "SUN-200", points: -1 }),
+      validParent({ key: "SUN-201", reporter: "x".repeat(201), reporterAccountId: "y".repeat(201) }),
+      validParent({ key: "SUN-202", components: Array.from({ length: 33 }, (_, i) => `c${i}`) }),
+      validParent({ key: "SUN-203", epic: "SUN-20" }),
+      validParent({ key: "SUN-204", epic: { summary: "no key" } }),
+    ])
+    assert.equal(out[0].points, null)
+    assert.equal(out[1].reporter, null)
+    assert.equal(out[1].reporterAccountId, null)
+    assert.equal(out[2].components.length, 0)
+    assert.equal(out[3].epic, null)
+    assert.equal(out[4].epic, null)
+  })
+
+  it("不 throw：null／undefined／非陣列／超 MISSING_DATA_LIMIT 全回 []", (t) => {
+    const h = harness(t)
+    assert.equal(h.model.projectReporterParents(null).length, 0)
+    assert.equal(h.model.projectReporterParents(undefined).length, 0)
+    assert.equal(h.model.projectReporterParents({ not: "array" }).length, 0)
+    const many = Array.from({ length: 5001 }, (_, i) => validParent({ key: `SUN-${i}` }))
+    assert.equal(h.model.projectReporterParents(many).length, 0)
   })
 })

@@ -15,7 +15,7 @@ import {
   JiraPlanningError,
 } from "@/lib/planning-data"
 import { dashboardJiraBaseUrl } from "@/lib/jira-dashboard"
-import type { PlanningTask } from "@/lib/planning-subset"
+import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
 
 export const metadata = {
   title: "Planning",
@@ -46,11 +46,17 @@ export default async function PlanningPage({
   )
 
   let tasks: PlanningTask[] = []
+  let parents: ReporterParent[] = []
+  let pmFpmAccountIds: string[] = []
+  let pmOpmAccountIds: string[] = []
   let dataError: { code: string; message: string } | null = null
   if (project && selectedSprint) {
     try {
       const data = await getPlanningData(selectedSprint)
       tasks = data.tasks
+      parents = data.parents
+      pmFpmAccountIds = data.pmRanking.fpmAccountIds
+      pmOpmAccountIds = data.pmRanking.opmAccountIds
     } catch (error) {
       dataError =
         error instanceof JiraPlanningError
@@ -71,6 +77,9 @@ export default async function PlanningPage({
         selectedSprintId={selectedSprint?.id ?? null}
         sprint={selectedSprint ?? null}
         tasks={tasks}
+        parents={parents}
+        pmFpmAccountIds={pmFpmAccountIds}
+        pmOpmAccountIds={pmOpmAccountIds}
         dataError={dataError}
         jiraBaseUrl={dashboardJiraBaseUrl()}
         viewerAccountId={viewerAccountId}

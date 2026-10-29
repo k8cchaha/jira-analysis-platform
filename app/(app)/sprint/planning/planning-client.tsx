@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import type { SprintProjectKey } from "@/lib/jira-jql"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { PlanningTab } from "@/lib/burndown-params"
-import type { PlanningTask } from "@/lib/planning-subset"
+import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
@@ -36,6 +36,9 @@ export function PlanningClient({
   dataError,
   jiraBaseUrl,
   viewerAccountId,
+  parents,
+  pmFpmAccountIds,
+  pmOpmAccountIds,
 }: {
   project: SprintProjectKey | null
   sprints: readonly SprintRecord[]
@@ -45,6 +48,12 @@ export function PlanningClient({
   dataError: { code: string; message: string } | null
   jiraBaseUrl: string | null
   viewerAccountId: string
+  /** 全部母票（Story/Task/Bug，含無子單者），供 Reporter View。 */
+  parents: readonly ReporterParent[]
+  /** group ent-fpm 成員 accountId；fpm 優先於 opm。 */
+  pmFpmAccountIds: readonly string[]
+  /** group ent-opm 成員 accountId。 */
+  pmOpmAccountIds: readonly string[]
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -189,6 +198,9 @@ export function PlanningClient({
                 jiraBaseUrl={jiraBaseUrl}
                 sprintId={sprint?.id ?? null}
                 tasks={filtered}
+                parents={parents}
+                pmFpmAccountIds={pmFpmAccountIds}
+                pmOpmAccountIds={pmOpmAccountIds}
               />
             ) : (
               <>

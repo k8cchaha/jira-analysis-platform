@@ -70,6 +70,21 @@ const known = (name) => ({ status: "known", name })
 const none = { status: "none", name: null }
 const unknown = { status: "unknown", name: null }
 
+/** 造一張母票（Reporter View；純函式只用 key/summary/points/reporter/reporterAccountId/issueType/epic/components）。 */
+function parent(key, over = {}) {
+  return {
+    key,
+    summary: null,
+    points: null,
+    components: [],
+    reporter: null,
+    reporterAccountId: null,
+    issueType: "Story",
+    epic: null,
+    ...over,
+  }
+}
+
 describe("devTaskTypeOf", () => {
   it("known 且為 Story/Task/Bug → 對應票種（大小寫不敏感）", (t) => {
     const m = harness(t)
@@ -163,6 +178,91 @@ describe("buildPlanningGroups", () => {
   it("空輸入 → 空群組", (t) => {
     const m = harness(t)
     assert.deepEqual(plain(m.buildPlanningGroups({ tasks: [], mode: "team", teamOf, teamOrder: [] })), [])
+  })
+})
+
+describe("buildReporterHierarchy", () => {
+  const pmRank = (accountId) =>
+    accountId === "fpm1" ? "fpm" : accountId === "opm1" ? "opm" : null
+
+  it("空輸入 → 空列表", (t) => {
+    const m = harness(t)
+    assert.deepEqual(plain(m.buildReporterHierarchy({ parents: [], pmRank })), [])
+  })
+
+  it("依 Reporter 分群：PM(fpm→opm)→其他(顯示名)→未指定殿後", (t) => {
+    const m = harness(t)
+    const groups = m.buildReporterHierarchy({
+      parents: [
+        parent("SUN-104", { reporter: "OPM One", reporterAccountId: "opm1" }),
+        parent("SUN-101", { reporter: "Dev Three", reporterAccountId: "d3" }),
+        parent("SUN-102", { reporter: null, reporterAccountId: null }),
+        parent("SUN-105", { reporter: "Dev One", reporterAccountId: "d1" }),
+        parent("SUN-100", { reporter: "FPM One", reporterAccountId: "fpm1" }),
+        parent("SUN-103", { reporter: "Dev Two", reporterAccountId: "d2" }),
+      ],
+      pmRank,
+    })
+    // fpm 前、opm 次、其他（Dev One/Two/Three 依 zh 顯示名）、未指定殿後
+    assert.deepEqual(plain(groups.map((g) => g.label)), [
+      "FPM One",
+      "OPM One",
+      "Dev One",
+      "Dev Three",
+      "Dev Two",
+      "未指定 Reporter",
+    ])
+    assert.deepEqual(plain(groups.map((g) => g.rank)), [0, 1, 2, 2, 2, 3])
+    // 每群無 Epic（此用例未給 epic）；epicGroups 空、noEpic 依 key 排序
+    assert.deepEqual(plain(groups[0].epicGroups), [])
+    assert.deepEqual(plain(groups[0].noEpic.map((p) => p.key)), ["SUN-100"])
+  })
+
+  it("每群內：有 Epic 的母票依 Epic 分組～無 Epic 收進 noEpic；母票依 key 排序", (t) => {
+    const m = harness(t)
+    const epicA = { key: "SUN-E1", summary: "Epic One" }
+    const epicB = { key: "SUN-E2", summary: "Epic Two" }
+    const groups = m.buildReporterHierarchy({
+      parents: [
+        parent("SUN-10", { reporterAccountId: "fpm1", epic: epicB }),
+        parent("SUN-2", { reporterAccountId: "fpm1", epic: null }),
+        parent("SUN-1", { reporterAccountId: "fpm1", epic: epicA }),
+        parent("SUN-11", { reporterAccountId: "fpm1", epic: epicA }),
+      ],
+      pmRank,
+    })
+    const group = groups[0]
+    // 有 Epic 者依 key 分組（E1 前於 E2）
+    assert.deepEqual(plain(group.epicGroups.map((g) => g.epic.key)), ["SUN-E1", "SUN-E2"])
+    assert.deepEqual(plain(group.epicGroups[0].parents.map((p) => p.key)), ["SUN-1", "SUN-11"])
+    assert.deepEqual(plain(group.epicGroups[0].epic), epicA)
+    // 無 Epic 者收進 noEpic（依 key 排序）
+    assert.deepEqual(plain(group.noEpic.map((p) => p.key)), ["SUN-2"])
+  })
+
+  it("pmRank 依 accountId 判定 PM；fpm 與 opm 即使名稱順序顛倒仍到最前", (t) => {
+    const m = harness(t)
+    const groups = m.buildReporterHierarchy({
+      parents: [
+        parent("SUN-1", { reporter: "Zulu Dev", reporterAccountId: "z" }),
+        parent("SUN-2", { reporter: "AAA PM", reporterAccountId: "opm1" }),
+        parent("SUN-3", { reporter: "Mid FPM", reporterAccountId: "fpm1" }),
+      ],
+      pmRank,
+    })
+    assert.deepEqual(plain(groups.map((g) => g.label)), ["Mid FPM", "AAA PM", "Zulu Dev"])
+  })
+
+  it("pmRank 不傳：所有有 accountId 的 Reporter 皆非 PM，仍依顯示名排序", (t) => {
+    const m = harness(t)
+    const groups = m.buildReporterHierarchy({
+      parents: [
+        parent("SUN-1", { reporter: "Beta", reporterAccountId: "b" }),
+        parent("SUN-2", { reporter: "Alpha", reporterAccountId: "a" }),
+      ],
+    })
+    assert.deepEqual(plain(groups.map((g) => g.rank)), [2, 2])
+    assert.deepEqual(plain(groups.map((g) => g.label)), ["Alpha", "Beta"])
   })
 })
 

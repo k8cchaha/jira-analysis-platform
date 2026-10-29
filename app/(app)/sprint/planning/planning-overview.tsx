@@ -1,10 +1,11 @@
 "use client"
 
-import { Fragment, useMemo, useRef, useState } from "react"
-import type { PlanningTask } from "@/lib/planning-subset"
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react"
+import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
+import { projectReporterParents } from "@/lib/planning-subset"
 import {
-  buildPlanningGroups,
   buildPlanningDevTypeGroups,
+  buildReporterHierarchy,
   buildDevTaskTypeTeamBreakdown,
   buildDevTypeLabelTeamBreakdown,
   countDevTaskTypes,
@@ -16,6 +17,7 @@ import {
   UNCLASSIFIED_DEV_TYPE_LABEL,
   type OverviewGroupMode,
   type OverviewMetric,
+  type ReporterGroup,
   type TypeTeamBreakdown,
 } from "@/lib/planning-overview"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
@@ -36,13 +38,14 @@ function round1(value: number): number {
 /**
  * 任務規劃總覽：左 2/3 任務清單、右 1/3 票種比例圓餅圖。
  *
- * 資料直接吃 `PlanningClient` 已過濾好的工作單（Dev-Task + QA-Task，`filtered`，
- * 與「任務分派狀況」同源），因此點數加總與分派狀況一致，也不另發 server 查詢。
- *
- * - **Team 模式**（預設）：顯示 **Epic → 母票 → 子票** 三層階層；點數顯示在子票
- *   （Dev 與 QA 都有），子票附 Assignee 欄（放在 SP 左方）；母票只當表頭（不顯示
- *   聚合點數）。
- * - **Reporter 模式**：維持 flat 列表（只是資料源已是 Dev+QA），暫不做階層（延後）。
+ * - 左側任務清單：**Team 模式**吃 `PlanningClient` 已依團隊過濾好的工作單
+ *   （Dev-Task + QA-Task，`filtered`，與「任務分派狀況」同源）；**Reporter 模式**
+ *   吃 server 端 RSC 傳入的全量母票（`parents`，含無子單者，不受 Team 過濾影響）。
+ * - **Team 模式**（預設）：顯示 **Team → Dev Type** 兩層，一列一張工作單；點數顯示在
+ *   子票（Dev 與 QA 都有），子票附 Assignee 欄（放在 SP 左方）。
+ * - **Reporter 模式**（以開單人為出發點、主要給 PM）：顯示 **Reporter → Epic → 母票**
+ *   階層；Reporter 依 PM 群（`ent-fpm` → `ent-opm`）→ 其他（依顯示名）→ 未指定排序；
+ *   母票列為 Issue type Icon | Ticket | Summary | Component | SP。
  */
 export function PlanningOverview({
   teamOf,
@@ -50,6 +53,9 @@ export function PlanningOverview({
   jiraBaseUrl,
   sprintId,
   tasks,
+  parents,
+  pmFpmAccountIds = [],
+  pmOpmAccountIds = [],
 }: {
   /** accountId → 團隊 label（由團隊選單載入；供 Team 分群）。 */
   teamOf: Record<string, string>
@@ -60,21 +66,44 @@ export function PlanningOverview({
   sprintId: number | null
   /** 此 sprint 的工作單（已由 `PlanningClient` 依所選團隊過濾）。 */
   tasks: readonly PlanningTask[] | null
+  /** 全部母票（Story/Task/Bug，含無子單者），供 Reporter View 依開單人（PM）分群。 */
+  parents: readonly ReporterParent[] | null
+  /** group ent-fpm 成員 accountId；供 Reporter View 判定 PM（fpm 優先）。 */
+  pmFpmAccountIds?: readonly string[]
+  /** group ent-opm 成員 accountId。 */
+  pmOpmAccountIds?: readonly string[]
 }) {
   const [mode, setMode] = useState<OverviewGroupMode>("team")
 
   // 資料已由 `PlanningClient` 依團隊過濾好；此處只防 null（仍以 useMemo 穩定參考）。
   const filtered = useMemo(() => tasks ?? [], [tasks])
 
+  // Reporter View 的母票：由 server 端 RSC 傳入（全量、含無子單母票），不受 Team 過濾影響。
+  // `parents` 是 server-trusted 的 typed 資料，此處只做寬鬆投影（壞值收斂成 null／[]），
+  // 不跑嚴格解碼器——避免單一母票的邊界值讓整頁崩潰。
+  const reporterParents = useMemo(() => projectReporterParents(parents ?? []), [parents])
+
+  // Reporter 的 PM 位階：依母票的 Reporter accountId 判定是否為 fpm／opm。
+  const pmRank = useMemo(() => {
+    const fpm = new Set(pmFpmAccountIds)
+    const opm = new Set(pmOpmAccountIds)
+    return (accountId: string | null): "fpm" | "opm" | null => {
+      if (accountId === null) return null
+      if (fpm.has(accountId)) return "fpm"
+      if (opm.has(accountId)) return "opm"
+      return null
+    }
+  }, [pmFpmAccountIds, pmOpmAccountIds])
+
   const teamOfFn = useMemo(
     () => (accountId: string | null) => (accountId === null ? undefined : teamOf[accountId]),
     [teamOf]
   )
 
-  const groups = useMemo(
-    () =>
-      buildPlanningGroups({ tasks: filtered, mode, teamOf: teamOfFn, teamOrder }),
-    [filtered, mode, teamOfFn, teamOrder]
+  // Reporter View 的階層（fpm→opm→其他→未指定；每群內 Epic→無 Epic）。
+  const reporterGroups = useMemo(
+    () => buildReporterHierarchy({ parents: reporterParents, pmRank }),
+    [reporterParents, pmRank]
   )
 
   // Team 模式的「Team → Dev Type」兩層（Reporter 模式不走）。
@@ -83,20 +112,68 @@ export function PlanningOverview({
     [filtered, mode, teamOfFn, teamOrder]
   )
 
+  // Reporter 模式吃「所有母票」（含無子單者），不受 Team 過濾影響；空狀態依各模式判斷。
+  const isEmpty = mode === "reporter" ? reporterParents.length === 0 : filtered.length === 0
+
+  // 每張卡各自的展開狀態：`openGroups[key]` 缺省視為展開；「收合」把所有卡設為收起，
+  // 「展開」全設回展開。個別卡點開只影響那一張（修復「點一張全開」的 bug）。
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+
+  const groupKeys = useMemo(
+    () =>
+      mode === "team"
+        ? devTypeGroups.map((g) => g.label)
+        : reporterGroups.map((g) => g.reporterAccountId ?? g.label),
+    [mode, devTypeGroups, reporterGroups]
+  )
+  const isCardOpen = (key: string) => openGroups[key] !== false
+
+  // 只有「目前全部卡片都收起」時顯示「展開」；任一卡片展開（含個別點開）就顯示「收合」。
+  const allCollapsed = groupKeys.length > 0 && groupKeys.every((key) => openGroups[key] === false)
+
+  const collapseAll = () => {
+    setOpenGroups((prev) => {
+      const next = { ...prev }
+      for (const key of groupKeys) next[key] = false
+      return next
+    })
+  }
+  const expandAll = () => {
+    setOpenGroups((prev) => {
+      const next = { ...prev }
+      for (const key of groupKeys) next[key] = true
+      return next
+    })
+  }
+  const toggleCard = (key: string) => {
+    setOpenGroups((prev) => ({ ...prev, [key]: !(prev[key] !== false) }))
+  }
+
+  const toolbar = (
+    <div className="flex items-center justify-between gap-2">
+      <RadioGroup mode={mode} onModeChange={setMode} />
+      <button
+        type="button"
+        onClick={allCollapsed ? expandAll : collapseAll}
+        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+      >
+        {allCollapsed ? "展開" : "收合"}
+      </button>
+    </div>
+  )
+
   return (
     <div>
-      <div className="mb-4">
-        <RadioGroup mode={mode} onModeChange={setMode} />
-      </div>
+      <div className="mb-4">{toolbar}</div>
 
-      {filtered.length === 0 ? (
+      {isEmpty ? (
         <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-          此 Sprint 尚未有對應的工作單。
+          {mode === "reporter" ? "此 Sprint 尚未有母票可供顯示。" : "此 Sprint 尚未有對應的工作單。"}
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
-            {/* Team 模式＝Team→Dev Type 兩層；Reporter 模式＝flat 分群列表。 */}
+            {/* Team 模式＝Team→Dev Type 兩層；Reporter 模式＝依開單人(PM)分群的 Epic→母票階層。 */}
             {mode === "team"
               ? devTypeGroups.length === 0 ? (
                   <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
@@ -109,22 +186,28 @@ export function PlanningOverview({
                       label={group.label}
                       typeGroups={group.typeGroups}
                       jiraBaseUrl={jiraBaseUrl}
+                      open={isCardOpen(group.label)}
+                      onToggle={() => toggleCard(group.label)}
                     />
                   ))
                 )
-              : groups.length === 0 ? (
+              : reporterGroups.length === 0 ? (
                   <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-                    沒有符合所選團隊的工作單。
+                    沒有母票可供顯示。
                   </p>
                 ) : (
-                  groups.map((group) => (
-                    <GroupSection
-                      key={group.label}
-                      label={group.label}
-                      tasks={group.tasks}
-                      jiraBaseUrl={jiraBaseUrl}
-                    />
-                  ))
+                  reporterGroups.map((group) => {
+                    const key = group.reporterAccountId ?? group.label
+                    return (
+                      <ReporterGroupSection
+                        key={key}
+                        group={group}
+                        jiraBaseUrl={jiraBaseUrl}
+                        open={isCardOpen(key)}
+                        onToggle={() => toggleCard(key)}
+                      />
+                    )
+                  })
                 )}
           </div>
           <div className="space-y-4">
@@ -196,6 +279,8 @@ function DevTypeGroupSection({
   label,
   typeGroups,
   jiraBaseUrl,
+  open,
+  onToggle,
 }: {
   label: string
   typeGroups: readonly {
@@ -203,14 +288,16 @@ function DevTypeGroupSection({
     tasks: readonly PlanningTask[]
   }[]
   jiraBaseUrl: string | null
+  /** 此卡的展開狀態（由父層 `PlanningOverview` 控制，配合「收合／展開」全卡與個別點開）。 */
+  open: boolean
+  onToggle: () => void
 }) {
-  const [open, setOpen] = useState(true)
   const count = typeGroups.reduce((sum, group) => sum + group.tasks.length, 0)
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={onToggle}
         className="flex w-full items-center gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left dark:border-slate-800 dark:bg-slate-900/60"
         aria-expanded={open}
       >
@@ -286,22 +373,28 @@ function DevTypeGroupBlock({
   )
 }
 
-/** 一群工作單的可收合區塊（Reporter flat 版）。 */
-function GroupSection({
-  label,
-  tasks,
+/** 一位 Reporter 開的全部母票之可收合區塊（Reporter View）：header（Reporter＋角色徽章）
+ * → 逐個 Epic 的表頭與母票 → 非空時附「無 Epic」區塊。 */
+function ReporterGroupSection({
+  group,
   jiraBaseUrl,
+  open,
+  onToggle,
 }: {
-  label: string
-  tasks: readonly PlanningTask[]
+  group: ReporterGroup
   jiraBaseUrl: string | null
+  /** 此卡的展開狀態（由父層 `PlanningOverview` 控制，配合「收合／展開」全卡與個別點開）。 */
+  open: boolean
+  onToggle: () => void
 }) {
-  const [open, setOpen] = useState(true)
+  const allParents = group.epicGroups.flatMap((epic) => epic.parents).concat(group.noEpic)
+  const count = allParents.length
+  const points = round1(allParents.reduce((sum, parent) => sum + (parent.points ?? 0), 0))
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
       <button
         type="button"
-        onClick={() => setOpen((value) => !value)}
+        onClick={onToggle}
         className="flex w-full items-center gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-left dark:border-slate-800 dark:bg-slate-900/60"
         aria-expanded={open}
       >
@@ -317,27 +410,43 @@ function GroupSection({
         >
           <path d="m6 4 4 4-4 4" />
         </svg>
-        <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</h4>
+        <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{group.label}</h4>
+        {roleBadge(group.rank)}
         <span className="ml-auto tabular-nums text-xs text-slate-400 dark:text-slate-500">
-          {tasks.length} 張
+          {count} 張 · {points} 點
         </span>
       </button>
       {open && (
-        <table className="w-full text-left text-xs">
-          <caption className="sr-only">{label} 的工作單</caption>
+        <table className="w-full table-fixed text-left text-xs">
+          <caption className="sr-only">{group.label} 開的母票</caption>
           <thead>
             <tr className="border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:text-slate-500">
-              <th scope="col" className="w-8 py-2 pl-4"><span className="sr-only">Parent Issue type</span></th>
-              <th scope="col" className="w-24 py-2 pr-2 font-semibold">Ticket</th>
-              <th scope="col" className="py-2 pr-2 font-semibold">Summary</th>
-              <th scope="col" className="w-[5.5rem] py-2 pr-2 text-center font-semibold">Status</th>
-              <th scope="col" className="w-14 py-2 pr-4 text-right font-semibold" title="Story Points">SP</th>
+              <th scope="col" className="w-[3rem] py-2 pl-4"><span className="sr-only">Issue type</span></th>
+              <th scope="col" className="w-[7rem] py-2 pl-1 pr-2 text-center font-semibold">Ticket</th>
+              <th scope="col" className="w-[38%] py-2 pr-2 text-center font-semibold">Summary</th>
+              <th scope="col" className="w-[26%] py-2 pl-1 pr-2 text-center font-semibold">Component</th>
+              <th scope="col" className="w-[3.5rem] py-2 pr-4 text-center font-semibold" title="Story Points">SP</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-            {tasks.map((task) => (
-              <DevTaskRow key={task.key} task={task} jiraBaseUrl={jiraBaseUrl} />
+            {group.epicGroups.map((epicGroup) => (
+              <EpicBlock key={epicGroup.epic.key} epicGroup={epicGroup} jiraBaseUrl={jiraBaseUrl} />
             ))}
+            {group.noEpic.length > 0 && (
+              <Fragment>
+                <tr>
+                  <td className="bg-slate-50/70 px-4 py-1.5 dark:bg-slate-900/40" colSpan={5}>
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">無 Epic</span>
+                    <span className="ml-2 text-[11px] font-normal text-slate-400 dark:text-slate-500">
+                      {group.noEpic.length} 張
+                    </span>
+                  </td>
+                </tr>
+                {group.noEpic.map((parent) => (
+                  <ParentRow key={parent.key} parent={parent} jiraBaseUrl={jiraBaseUrl} />
+                ))}
+              </Fragment>
+            )}
           </tbody>
         </table>
       )}
@@ -345,20 +454,95 @@ function GroupSection({
   )
 }
 
-function DevTaskRow({
-  task,
+/** Reporter 的角色徽章：fpm（rank 0）／opm（rank 1）／其他（無徽章）。 */
+function roleBadge(rank: number): ReactNode {
+  if (rank === 0) {
+    return (
+      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+        FPM
+      </span>
+    )
+  }
+  if (rank === 1) {
+    return (
+      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+        OPM
+      </span>
+    )
+  }
+  return null
+}
+
+/** 一個 Epic 下的母票：合併列表頭（Epic key＋summary）＋其下母票列。 */
+function EpicBlock({
+  epicGroup,
   jiraBaseUrl,
 }: {
-  task: PlanningTask
+  epicGroup: {
+    epic: { key: string; summary: string | null }
+    parents: readonly ReporterParent[]
+  }
   jiraBaseUrl: string | null
 }) {
   return (
+    <Fragment>
+      <tr>
+        <td colSpan={5} className="bg-slate-50/70 px-4 py-1.5 dark:bg-slate-900/40">
+          <span className="flex min-w-0 items-center gap-1.5">
+            {jiraBaseUrl ? (
+              <a
+                href={`${jiraBaseUrl.replace(/\/$/, "")}/browse/${encodeURIComponent(epicGroup.epic.key)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="shrink-0 whitespace-nowrap text-xs font-semibold text-purple-600 hover:underline focus-visible:outline-2 dark:text-purple-400"
+              >
+                {epicGroup.epic.key}
+              </a>
+            ) : (
+              <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-purple-600 dark:text-purple-400">{epicGroup.epic.key}</span>
+            )}
+            {epicGroup.epic.summary ? (
+              <span
+                title={epicGroup.epic.summary}
+                className="min-w-0 truncate text-xs font-semibold text-purple-600 dark:text-purple-400"
+              >{`· ${epicGroup.epic.summary}`}</span>
+            ) : null}
+            <span className="ml-auto shrink-0 text-[11px] font-normal text-slate-400 dark:text-slate-500">
+              {epicGroup.parents.length} 張
+            </span>
+          </span>
+        </td>
+      </tr>
+      {epicGroup.parents.map((parent) => (
+        <ParentRow key={parent.key} parent={parent} jiraBaseUrl={jiraBaseUrl} />
+      ))}
+    </Fragment>
+  )
+}
+
+/** 母票列（Reporter View）：Issue type icon | Ticket | Summary | Component | SP。 */
+function ParentRow({
+  parent,
+  jiraBaseUrl,
+}: {
+  parent: ReporterParent
+  jiraBaseUrl: string | null
+}) {
+  const type: { status: "known"; name: string } | { status: "unknown" } =
+    parent.issueType !== null ? { status: "known", name: parent.issueType } : { status: "unknown" }
+  return (
     <tr className="align-top">
-      <td className="py-2 pl-4"><ParentIssueTypeIcon parent={task.parentIssueType} /></td>
-      <td className="py-2 pr-2"><TicketLink task={task} jiraBaseUrl={jiraBaseUrl} /></td>
-      <td className="max-w-0 truncate py-2 pr-2 text-slate-700 dark:text-slate-200" title={task.summary ?? ""}>{task.summary || "—"}</td>
-      <td className={`whitespace-nowrap py-2 pr-2 text-center ${statusColorClass(task.status)}`}>{task.status ?? "—"}</td>
-      <td className="py-2 pr-4 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(task.points)}</td>
+      <td className="py-2 pl-4"><ParentIssueTypeIcon parent={type} /></td>
+      <td className="py-2 pl-1 pr-2 text-center"><span className="block truncate"><TicketLink task={parent} jiraBaseUrl={jiraBaseUrl} /></span></td>
+      <td className="truncate py-2 pr-2 text-center text-slate-700 dark:text-slate-200" title={parent.summary ?? ""}>{parent.summary || "—"}</td>
+      <td className="truncate py-2 pl-1 pr-2 text-center text-slate-500 dark:text-slate-400">
+        {parent.components.length ? (
+          <span title={parent.components.join(", ")}>{parent.components.join(", ")}</span>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td className="py-2 pr-4 text-center tabular-nums text-slate-600 dark:text-slate-300">{formatPoints(parent.points)}</td>
     </tr>
   )
 }

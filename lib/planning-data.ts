@@ -11,11 +11,13 @@ import {
   sprintChildTasksJql,
   sprintChildTasksUnassignedJql,
   sprintChildTasksUnestimatedJql,
+  epicIssuesByKeyJql,
 } from "@/lib/jira-jql"
 import { STORY_POINTS_FIELD, DEV_TYPE_FIELD } from "@/lib/jira-fields"
+import { getDashboardGroupMembers } from "@/lib/jira-dashboard-lookups"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
-import type { PlanningTask } from "@/lib/planning-subset"
+import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
 
 export class JiraPlanningError extends Error {
   constructor(
@@ -32,6 +34,10 @@ export interface PlanningData {
   tasks: PlanningTask[]
   /** 此 sprint 的母票 key 清單（供 Page 組 Planning 的 JQL 條件用）。 */
   parentKeys: string[]
+  /** 全部母票（Story/Task/Bug，含無子單者），供 Reporter View 依開單人（PM）分群。 */
+  parents: ReporterParent[]
+  /** PM 群成員的 accountId（fpm 優先於 opm，重疊者歸 fpm）。 */
+  pmRanking: { fpmAccountIds: string[]; opmAccountIds: string[] }
 }
 
 const MAX_DEVTASKS = 5_000
@@ -135,19 +141,26 @@ const PLANNING_FIELDS = [
   DEV_TYPE_FIELD,
 ]
 
-/** 母票（Story/Task/Bug）自身要請求的欄位：summary、issuetype、parent（＝其 Epic）。 */
+/** 母票（Story/Task/Bug）自身要請求的欄位：summary、issuetype、parent（＝其 Epic）、
+ * Story Points、reporter、components（後二者供 Reporter View 依開單人分群）。 */
 const MOTHER_FIELDS = [
   "summary",
   "issuetype",
   "parent",
+  "reporter",
+  "components",
   STORY_POINTS_FIELD,
 ]
 
-/** 一筆母票的投影（key 之外建立母票表頭／Epic 階層所需的欄位）。 */
+/** 一筆母票的投影（key 之外建立母票表頭／Epic 階層／Reporter View 所需的欄位）。 */
 interface MotherInfo {
   summary: string | null
   issueType: string | null
   epic: { key: string; summary: string | null } | null
+  reporter: string | null
+  reporterAccountId: string | null
+  components: string[]
+  points: number | null
 }
 
 /** 從 Jira response 的母票欄位物件取出其 Epic（`parent` 欄位的 `issuetype` 為 Epic）。 */
@@ -233,7 +246,106 @@ export async function getPlanningData(sprint: SprintRecord): Promise<PlanningDat
     }
   }
 
-  return { taskCount: tasks.length, tasks, parentKeys: [...parentKeys] }
+  // 3. 撈 Epic 的 Reporter（供 Reporter View：有 Epic 的母票以「Epic 的 Reporter」分群）。
+  const epicReporters = await fetchEpicReporters(credentials, motherMap)
+
+  return {
+    taskCount: tasks.length,
+    tasks,
+    parentKeys: [...parentKeys],
+    parents: [...motherMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], "en", { numeric: true }))
+      .map(([key, info]) => projectReporterParent(key, info, epicReporters)),
+    pmRanking: await resolvePmRanking(credentials),
+  }
+}
+
+/**
+ * 撈一群 Epic 的 Reporter 顯示名/accountId。Reporter View 的分群規則是：母票有 Epic 時
+ * 以「Epic 的 Reporter」為主（Epic 下所有 Story/Task/Bug 歸給開 Epic 的人），無 Epic 才看
+ * 母票自身的 Reporter。母票查詢內嵌的 `parent` 只帶 summary/issuetype，故需另撈 Epic。
+ * 撈取失敗吞掉回空 map（層級上的歸屬退化成以母票自身的 Reporter 分群，不讓整頁失敗）。
+ */
+async function fetchEpicReporters(
+  credentials: JiraCredentials,
+  motherMap: ReadonlyMap<string, MotherInfo>
+): Promise<Map<string, { reporter: string | null; reporterAccountId: string | null }>> {
+  const epicKeys = [...motherMap.values()]
+    .map((info) => info.epic?.key)
+    .filter((key): key is string => typeof key === "string")
+  if (epicKeys.length === 0) return new Map()
+  const jql = epicIssuesByKeyJql(epicKeys)
+  if (!jql) return new Map()
+  try {
+    const reporters = new Map<string, { reporter: string | null; reporterAccountId: string | null }>()
+    for await (const issues of searchJiraIssues(credentials, jql, ["summary", "reporter"])) {
+      for (const issue of issues) {
+        reporters.set(issue.key, {
+          reporter: assigneeDisplayName(issue.fields.reporter),
+          reporterAccountId: assigneeAccountId(issue.fields.reporter),
+        })
+      }
+    }
+    return reporters
+  } catch {
+    return new Map()
+  }
+}
+
+/**
+ * 把一筆母票資訊投影成 Reporter View 的一列母票。`reporter`／`reporterAccountId` 為
+ * 「分群歸屬者」：母票有 Epic 時取 Epic 的 Reporter（`epicReporters`），否則取母票自身
+ * 的 Reporter。
+ */
+function projectReporterParent(
+  key: string,
+  info: MotherInfo,
+  epicReporters: ReadonlyMap<string, { reporter: string | null; reporterAccountId: string | null }>
+): ReporterParent {
+  const owner = info.epic !== null
+    ? epicReporters.get(info.epic.key) ?? null
+    : null
+  return {
+    key,
+    summary: info.summary,
+    points: info.points,
+    components: info.components,
+    reporter: owner ? owner.reporter : info.reporter,
+    reporterAccountId: owner ? owner.reporterAccountId : info.reporterAccountId,
+    issueType: info.issueType,
+    epic: info.epic,
+  }
+}
+
+/** Planning 的 PM 群（fpm／opm）。從 Jira 撈群成員；失敗吞掉回空，讓頁面照常渲染。 */
+const PM_GROUPS = { fpm: "ent-fpm", opm: "ent-opm" } as const
+
+/**
+ * 解析 Planning 的 PM 群成員 accountId（依 `ent-fpm`／`ent-opm`）。任一群撈取失敗即
+ * 回空集合（不讓整頁失敗）；fpm 優先於 opm，帳號同時在兩群時歸 fpm。
+ */
+async function resolvePmRanking(
+  credentials: JiraCredentials
+): Promise<{ fpmAccountIds: string[]; opmAccountIds: string[] }> {
+  const allowlist = new Set<string>([PM_GROUPS.fpm, PM_GROUPS.opm])
+  const fpmSet = new Set<string>()
+  const opmSet = new Set<string>()
+  try {
+    for (const member of await getDashboardGroupMembers(PM_GROUPS.fpm, credentials, { allowlist })) {
+      fpmSet.add(member.accountId)
+    }
+  } catch {
+    // 群撈取失敗（權限／連線）不影響母票顯示：所有 Reporter 皆以非 PM 排序。
+    fpmSet.clear()
+  }
+  try {
+    for (const member of await getDashboardGroupMembers(PM_GROUPS.opm, credentials, { allowlist })) {
+      if (!fpmSet.has(member.accountId)) opmSet.add(member.accountId)
+    }
+  } catch {
+    opmSet.clear()
+  }
+  return { fpmAccountIds: [...fpmSet].sort(), opmAccountIds: [...opmSet].sort() }
 }
 
 /** 撈此 sprint 的母票（Story / Task / Bug）key 及其 Epic；超過限制拋 `JiraPlanningError`。 */
@@ -254,8 +366,12 @@ async function fetchSprintMothers(
       parentKeys.add(issue.key)
       motherMap.set(issue.key, {
         summary: typeof issue.fields.summary === "string" ? issue.fields.summary : null,
-        issueType: recordFieldName(issue.fields.issuetype),
+        issueType: recordFieldName(issue.fields),
         epic: epicOf(issue.fields.parent),
+        reporter: assigneeDisplayName(issue.fields.reporter),
+        reporterAccountId: assigneeAccountId(issue.fields.reporter),
+        components: componentNames(issue.fields.components),
+        points: pointsOrNull(issue.fields[STORY_POINTS_FIELD]),
       })
       if (parents > MAX_DEVTASKS) {
         throw new JiraPlanningError("limit", "此 Sprint 的票數過多，無法提供精確結果。")

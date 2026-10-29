@@ -58,6 +58,12 @@ describe("visibleNavigationCategories（依登入使用者權限）", () => {
     assert.deepEqual(categoryIds(visible), ALL_IDS)
   })
 
+  it("管理員 nickchen（nickchen@kkcompany.com）→ 顯示全部類別", () => {
+    const nav = harness()
+    const visible = nav.visibleNavigationCategories(nav.navigationCategories, "nickchen@kkcompany.com")
+    assert.deepEqual(categoryIds(visible), ALL_IDS)
+  })
+
   it("管理員 email 大小寫／前後空白被忽略", () => {
     const nav = harness()
     const visible = nav.visibleNavigationCategories(
