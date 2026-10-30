@@ -14,6 +14,7 @@ import {
 } from "@/lib/jira-dashboard-filter"
 import { JiraAuthorizationError, type JiraCredentials } from "@/lib/jira-token"
 import type { MissingDataError } from "@/lib/jira-missing-data"
+import { jiraFetch as httpJiraFetch, JiraTransportError } from "@/lib/jira-http"
 
 const PAGE_SIZE = 50
 const USER_SEARCH_LIMIT = 20
@@ -65,17 +66,24 @@ export function validateDashboardUserQuery(query: string): string {
 }
 
 async function jiraLookup(credentials: JiraCredentials, path: string, params: URLSearchParams, group = false): Promise<unknown> {
+  const query = params.toString()
   let response: Response
   try {
-    response = await fetch(`https://api.atlassian.com/ex/jira/${encodeURIComponent(credentials.cloudId)}/rest/api/3/${path}?${params}`, {
-      method: "GET",
-      headers: { Accept: "application/json", Authorization: `Bearer ${credentials.accessToken}` },
-      cache: "no-store",
-      redirect: "error",
-      signal: AbortSignal.timeout(20_000),
-    })
-  } catch {
-    throw new JiraDashboardLookupError("retry", "暫時無法連線至 Jira，請稍後重試。")
+    response = await httpJiraFetch(
+      credentials,
+      `/rest/api/3/${path}${query ? `?${query}` : ""}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+      }
+    )
+  } catch (cause) {
+    if (cause instanceof JiraTransportError) {
+      throw new JiraDashboardLookupError("retry", "暫時無法連線至 Jira，請稍後重試。")
+    }
+    throw cause
   }
   if (!response.ok) {
     if (response.status === 401) throw new JiraDashboardLookupError("reauthorize", "Jira 授權已失效，請重新授權。")

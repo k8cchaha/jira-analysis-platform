@@ -52,7 +52,7 @@ function harness(t, options = {}) {
   })
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-dashboard-lookups.ts", "lib/jira-dashboard-filter.ts", "lib/atlassian-oauth.ts", "app/api/dashboard/lookups/route.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-http.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-dashboard-filter.ts", "lib/atlassian-oauth.ts", "app/api/dashboard/lookups/route.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -76,7 +76,7 @@ function harness(t, options = {}) {
           return credentials
         },
       }
-      if (["@/lib/jira-dashboard-lookups", "@/lib/jira-dashboard-filter"].includes(specifier)) return load(specifier.slice(2) + ".ts")
+      if (["@/lib/jira-dashboard-lookups", "@/lib/jira-dashboard-filter", "@/lib/jira-http"].includes(specifier)) return load(specifier.slice(2) + ".ts")
       return fail(`Unexpected require: ${specifier}`)
     }
     vm.runInContext(`(function(require,module,exports) {\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)

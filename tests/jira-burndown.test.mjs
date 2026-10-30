@@ -100,7 +100,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-burndown.ts", "lib/burndown-series.ts", "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-http.ts", "lib/jira-burndown.ts", "lib/burndown-series.ts", "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -127,7 +127,7 @@ function harness(t, options = {}) {
       if (specifier === "./jira-dashboard-filter.ts") return load("lib/jira-dashboard-filter.ts")
       if (specifier === "./jira-dashboard.ts") return load("lib/jira-dashboard.ts")
       if (specifier === "./jira-sprint-data.ts") return load("lib/jira-sprint-data.ts")
-      if (["@/lib/jira-dashboard", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
+      if (["@/lib/jira-http", "@/lib/jira-dashboard", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
       if (specifier === "@/lib/burndown-series") return load("lib/burndown-series.ts")
       return fail(`Unexpected require: ${specifier}`)
     }

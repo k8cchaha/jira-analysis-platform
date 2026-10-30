@@ -91,7 +91,7 @@ function harness(t, options = {}) {
   }
   const sandbox = vm.createContext(globals)
   const allowed = [
-    "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts",
+    "lib/jira-http.ts", "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts",
     "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts",
     "lib/jira-scrum-board.ts", "lib/jira-scrum-board-server.ts",
   ]

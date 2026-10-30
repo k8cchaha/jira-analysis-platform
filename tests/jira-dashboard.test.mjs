@@ -134,7 +134,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts", "app/(app)/dashboard/actions.ts", "app/api/dashboard/missing-data/route.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-http.ts", "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts", "app/(app)/dashboard/actions.ts", "app/api/dashboard/missing-data/route.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -164,7 +164,7 @@ function harness(t, options = {}) {
       if (specifier === "./jira-jql.ts") return load("lib/jira-jql.ts")
       if (specifier === "./jira-fields.ts") return load("lib/jira-fields.ts")
       if (specifier === "./jira-dashboard-filter.ts") return load("lib/jira-dashboard-filter.ts")
-      if (["@/lib/jira-dashboard", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
+      if (["@/lib/jira-http", "@/lib/jira-dashboard", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token"].includes(specifier)) return load(specifier.slice(2) + ".ts")
       return fail(`Unexpected require: ${specifier}`)
     }
     vm.runInContext(`(function(require,module,exports) {\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)

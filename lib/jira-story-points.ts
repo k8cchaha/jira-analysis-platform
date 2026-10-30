@@ -6,10 +6,10 @@ import {
   type JiraCredentials,
 } from "@/lib/jira-token"
 import { recentAssignedIssuesUpdateJql } from "@/lib/jira-jql"
+import { jiraFetch as httpJiraFetch, JiraTransportError } from "@/lib/jira-http"
 
 export { RECENT_ASSIGNED_ISSUES_JQL } from "@/lib/jira-jql"
 
-const JIRA_API_ROOT = "https://api.atlassian.com/ex/jira"
 const UPDATE_CONCURRENCY = 4
 
 export interface JiraStoryPointsField {
@@ -361,20 +361,12 @@ async function jiraFetch(
   init: RequestInit = {}
 ) {
   try {
-    return await fetch(
-      `${JIRA_API_ROOT}/${encodeURIComponent(credentials.cloudId)}${path}`,
-      {
-        ...init,
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${credentials.accessToken}`,
-          ...init.headers,
-        },
-        cache: "no-store",
-      }
-    )
-  } catch {
-    throw new JiraStoryPointsError("Unable to reach Jira", "request_failed")
+    return await httpJiraFetch(credentials, path, init)
+  } catch (cause) {
+    if (cause instanceof JiraTransportError) {
+      throw new JiraStoryPointsError("Unable to reach Jira", "request_failed")
+    }
+    throw cause
   }
 }
 

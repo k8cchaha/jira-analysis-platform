@@ -20,6 +20,7 @@ import { missingDataListJql, missingDataUpdateJql } from "@/lib/jira-jql"
 import { initialPageCursor, openPageToken, sealPageToken } from "@/lib/jira-page-token"
 import { DashboardFilterError, SELF_FILTER, serializeDashboardFilter, type DashboardFilter } from "@/lib/jira-dashboard-filter"
 import { resolveDashboardScope, JiraDashboardLookupError, lookupError } from "@/lib/jira-dashboard-lookups"
+import { jiraFetch as httpJiraFetch, JiraTransportError } from "@/lib/jira-http"
 
 export class JiraDashboardError extends Error {
   constructor(readonly code: MissingDataError["code"], message: string) {
@@ -79,19 +80,15 @@ export function dashboardError(error: unknown): MissingDataError {
 async function jiraFetch(credentials: JiraCredentials, path: string, init: RequestInit = {}) {
   let response: Response
   try {
-    response = await fetch(`https://api.atlassian.com/ex/jira/${encodeURIComponent(credentials.cloudId)}${path}`, {
+    response = await httpJiraFetch(credentials, path, {
       ...init,
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${credentials.accessToken}`,
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
-      },
-      cache: "no-store",
       signal: AbortSignal.timeout(20_000),
     })
-  } catch {
-    throw new JiraDashboardError("retry", "暫時無法連線至 Jira，請稍後重試。")
+  } catch (cause) {
+    if (cause instanceof JiraTransportError) {
+      throw new JiraDashboardError("retry", "暫時無法連線至 Jira，請稍後重試。")
+    }
+    throw cause
   }
   if (!response.ok) {
     if (response.status === 401) throw new JiraDashboardError("reauthorize", "Jira 授權已失效，請重新授權。")
