@@ -29,9 +29,10 @@ export async function getScrumBoardData(filter: DashboardFilter = SELF_FILTER, b
     todo: [], inProgress: [], inReview: [],
   }
 
+  const jql = scrumBoardDevTasksJql(scope, boardDays)
   for await (const issues of searchJiraIssues(
     credentials,
-    scrumBoardDevTasksJql(scope, boardDays),
+    jql,
     ["summary", "status", "parent", ...(showAssignee ? ["assignee"] : [])]
   )) {
     for (const issue of issues) {
@@ -50,7 +51,7 @@ export async function getScrumBoardData(filter: DashboardFilter = SELF_FILTER, b
     }
   }
 
-  return { columns, jiraBaseUrl: dashboardJiraBaseUrl(), readOnly: true }
+  return { columns, jiraBaseUrl: dashboardJiraBaseUrl(), jql, readOnly: true }
 }
 
 /** 正整數（看板自己的「近 X 天建立/更新」）。沿用 dashboardDays 的校驗，但允許 null=不套。 */

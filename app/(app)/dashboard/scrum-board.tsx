@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { parseScrumBoardResult, type ScrumBoardCard, type ScrumColumnKey } from "@/lib/jira-scrum-board"
 import { serializeDashboardFilter, type DashboardFilter } from "@/lib/jira-dashboard-filter"
+import { JiraOpenLink } from "./jira-open-link"
 
 const COLUMNS: { key: ScrumColumnKey; label: string }[] = [
   { key: "todo", label: "To Do" },
@@ -46,6 +47,7 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
   /** input 的數字（字串保留輸入樣式）；僅在 nearEnabled 且 filter 有效時送給 server。 */
   const [days, setDays] = useState("30")
   const [columns, setColumns] = useState<Record<ScrumColumnKey, ScrumBoardCard[]> | null>(null)
+  const [boardJql, setBoardJql] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
@@ -67,6 +69,7 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
       const parsed = parseScrumBoardResult(result)
       if (parsed.status !== "success") throw new Error(parsed.error.message)
       setColumns(parsed.data.columns)
+      setBoardJql(parsed.data.jql)
     } catch {
       if (sequence === seq.current) {
         setError("無法載入任務看板，請重試。")
@@ -91,12 +94,14 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
   const total = COLUMNS.reduce((sum, { key }) => sum + effective[key].length, 0)
 
   return (
-    <section aria-label="任務看板" className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
+    <section aria-label="任務看板" className="group mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-950 dark:text-white">
           任務看板 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">（共 {total} 張開發/測試單）</span>
         </h2>
-        {isSelf && (
+        <div className="flex items-center gap-3">
+          <JiraOpenLink jiraBaseUrl={jiraBaseUrl} jql={boardJql ?? ""} label="任務看板" />
+          {isSelf && (
           <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
           <input
             type="checkbox"
@@ -118,6 +123,7 @@ export function DashboardScrumBoard({ filter, jiraBaseUrl }: { filter: Dashboard
           天建立/更新
           </label>
         )}
+        </div>
       </div>
 
       {!filter ? (

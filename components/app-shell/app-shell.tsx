@@ -148,7 +148,7 @@ export function AppShell({ children, user }: AppShellProps) {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <aside
-        className={`fixed inset-y-0 left-0 z-50 hidden border-r border-slate-200 bg-white transition-[width] duration-200 lg:block dark:border-slate-800 dark:bg-slate-900 ${collapsed ? "w-20" : "w-72"}`}
+        className={`fixed inset-y-0 left-0 z-50 hidden border-r border-slate-200 bg-white transition-[width] duration-200 lg:block dark:border-slate-800 dark:bg-slate-900 ${collapsed ? "w-20" : "w-64"}`}
       >
         <SidebarContent
           collapsed={collapsed}
@@ -190,7 +190,7 @@ export function AppShell({ children, user }: AppShellProps) {
       ) : null}
 
       <div
-        className={`transition-[padding] duration-200 ${collapsed ? "lg:pl-20" : "lg:pl-72"}`}
+        className={`transition-[padding] duration-200 ${collapsed ? "lg:pl-20" : "lg:pl-64"}`}
       >
         <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6 dark:border-slate-800 dark:bg-slate-900/95">
           <button
@@ -287,11 +287,11 @@ function SidebarContent({
   return (
     <div className="flex h-full flex-col">
       <div
-        className={`flex h-16 items-center border-b border-slate-200 dark:border-slate-800 ${collapsed ? "justify-center px-3" : "px-5"}`}
+        className="flex h-16 items-center border-b border-slate-200 dark:border-slate-800 px-5"
       >
         <GuardedLink
           href="/dashboard"
-          className={`flex min-w-0 flex-1 items-center gap-3 ${collapsed ? "justify-center" : ""}`}
+          className="flex min-w-0 flex-1 items-center gap-3"
           title="Jira Analysis Platform"
           onNavigate={onNavigate}
         >
@@ -332,7 +332,7 @@ function SidebarContent({
           href={dashboardNavigation.href}
           title={collapsed ? dashboardNavigation.label : undefined}
           aria-current={pathname === dashboardNavigation.href ? "page" : undefined}
-          className={`app-nav-item ${pathname === dashboardNavigation.href ? "app-nav-item-active" : ""} ${collapsed ? "justify-center px-2" : ""}`}
+          className={`app-nav-item ${pathname === dashboardNavigation.href ? "app-nav-item-active" : ""}`}
           onNavigate={onNavigate}
         >
           <NavigationIconGlyph name={dashboardNavigation.icon} />
@@ -412,7 +412,7 @@ function FeatureNavigation({
         href={canonical.href}
         title={collapsed ? feature.label : undefined}
         aria-current={pathname === canonical.href ? "page" : undefined}
-        className={`app-nav-item ${active ? "app-nav-item-active" : ""} ${collapsed ? "justify-center px-2" : ""}`}
+        className={`app-nav-item ${active ? "app-nav-item-active" : ""}`}
         onNavigate={onNavigate}
       >
         <NavigationIconGlyph name={feature.icon} />

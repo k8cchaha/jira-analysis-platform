@@ -21,6 +21,8 @@ export interface ScrumBoardCard {
 export interface ScrumBoardData {
   columns: Record<ScrumColumnKey, ScrumBoardCard[]>
   jiraBaseUrl: string | null
+  /** 產生整個任務看板（未分欄）的完整 JQL（依當下 scope 與 boardDays），供 UI 以 Jira search 深連結開啟。 */
+  jql: string
   readOnly: true
 }
 
@@ -32,6 +34,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 function invalidResult(): never { throw new Error("Scrum Board 回應不完整，請重新載入。") }
+function scrumJql(value: unknown): string {
+  if (typeof value !== "string" || !value.trim() || value.length > 8_000) invalidResult()
+  return value
+}
 
 /** 解碼 server 已解析好的母票 Issue Type（`{status,name}` DTO 形狀），非 Jira 原始封包。 */
 function parentIssueType(value: unknown): ScrumBoardCard["parentIssueType"] {
@@ -95,5 +101,5 @@ export function parseScrumBoardResult(value: unknown): ScrumBoardResult {
   const todo = column(data.columns.todo)
   const inProgress = column(data.columns.inProgress)
   const inReview = column(data.columns.inReview)
-  return { status: "success", data: { columns: { todo, inProgress, inReview }, jiraBaseUrl, readOnly: true } }
+  return { status: "success", data: { columns: { todo, inProgress, inReview }, jiraBaseUrl, jql: scrumJql(data.jql), readOnly: true } }
 }
