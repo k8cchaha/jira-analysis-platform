@@ -1,24 +1,19 @@
 "use client"
 
-import { useCallback, useEffect, useId, useRef, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
+import { useTeamMembers } from "@/components/team-members-provider"
 import {
   DASHBOARD_TEAMS,
   includedDashboardMembers,
-  isDashboardAccountId,
   type DashboardUser,
 } from "@/lib/jira-dashboard-filter"
-import { Chevron, FilterDropdown } from "@/components/filter-dropdown"
-
-type LookupResult =
-  | { status: "success"; members: DashboardUser[] }
-  | { status: "error"; message: string }
-type GroupState = { status: "loading" } | LookupResult
+import { Chevron, FilterDropdown, FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
 
 const choiceClass = "h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
 
 /**
  * 團隊選擇（站內過濾）。模型同儀表板的團隊下拉：多選 Jira group、可展開逐人
- * 排除；成員名單經 `/api/dashboard/lookups?view=group` 讀取。
+ * 排除；成員名單由登入區域預載並保存在共用記憶體 store，跨頁／彈窗重開沿用。
  *
  * 為受控元件：`groups` 由上層持有；每次變更以 `includedDashboardMembers` 算出
  * 命中的成員 accountId 集合，分別回傳給上層。**不發任何 JQL、不改 URL。**
@@ -37,104 +32,26 @@ export function TeamSelect({
   onMembersReady?: (byAccountId: Record<string, string>) => void
 }) {
   const id = useId()
-  const mounted = useRef(false)
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState<string[]>([])
   const [exclusions, setExclusions] = useState<Record<string, string[]>>({})
-  const [groupStates, setGroupStates] = useState<Record<string, GroupState>>({})
+  const { groupStates, loadGroup, retryGroup } = useTeamMembers()
   const [error, setError] = useState<string | null>(null)
-
-  const groupCache = useRef<Record<string, GroupState>>({})
-  const groupControllers = useRef<Record<string, AbortController>>({})
-  const groupRequests = useRef<Partial<Record<string, Promise<void>>>>({})
-  const groupSequences = useRef<Record<string, number>>({})
-
-  useEffect(() => {
-    mounted.current = true
-    const sequences = groupSequences.current
-    const controllers = groupControllers.current
-    const requests = groupRequests.current
-    const cache = groupCache.current
-    return () => {
-      mounted.current = false
-      for (const group of Object.keys(controllers)) {
-        sequences[group] = (sequences[group] ?? 0) + 1
-        controllers[group].abort()
-        delete controllers[group]
-        delete requests[group]
-        delete cache[group]
-      }
-    }
-  }, [])
 
   // 已勾選團隊的成員全部載入成功後，以最新 groupStates 重新通知上層（同步 memberIds）。
   // 否則勾選後只有起初的 notify（當時未載入 → accountIds 空），載入完成不會再更新。
   const notifiedKeyRef = useRef<string>("")
   useEffect(() => {
-    if (groups.length === 0) return
-    const allReady = groups.every((group) => groupStates[group]?.status === "success")
-    if (!allReady) return
+    const allReady = groups.length > 0 && groups.every((group) => groupStates[group]?.status === "success")
+    if (!allReady) {
+      notifiedKeyRef.current = ""
+      return
+    }
     const key = [...groups].sort().join("\u0000")
     if (notifiedKeyRef.current === key) return
     notifiedKeyRef.current = key
     notify([...groups], exclusions)
   })
-
-  async function lookupGroup(group: string, signal: AbortSignal): Promise<LookupResult> {
-    try {
-      const response = await fetch(`/api/dashboard/lookups?view=group&group=${encodeURIComponent(group)}`, { cache: "no-store", signal })
-      const value: unknown = await response.json()
-      if (!value || typeof value !== "object") throw new Error("Invalid lookup response")
-      const result = value as Record<string, unknown>
-      if (result.status === "error" && result.error && typeof result.error === "object") {
-        const message = (result.error as Record<string, unknown>).message
-        return { status: "error", message: typeof message === "string" ? message : "無法載入團隊成員，請重試。" }
-      }
-      if (!response.ok || result.status !== "success" || !Array.isArray(result.members)) throw new Error("Invalid lookup response")
-      const members = new Map<string, DashboardUser>()
-      for (const item of result.members) {
-        if (!item || typeof item !== "object" || !isDashboardAccountId((item as Record<string, unknown>).accountId) || typeof (item as Record<string, unknown>).displayName !== "string") throw new Error("Invalid lookup user")
-        const member = item as DashboardUser
-        members.set(member.accountId, member)
-      }
-      return { status: "success", members: [...members.values()] }
-    } catch (cause) {
-      if (signal.aborted) throw cause
-      return { status: "error", message: "無法載入團隊成員，請重試。" }
-    }
-  }
-
-  const loadGroup = useCallback((group: string, retry = false): Promise<void> => {
-    if (!retry && groupCache.current[group]?.status === "success") return Promise.resolve()
-    if (!retry && groupRequests.current[group]) return groupRequests.current[group]
-    const sequence = (groupSequences.current[group] ?? 0) + 1
-    groupSequences.current[group] = sequence
-    groupControllers.current[group]?.abort()
-    const controller = new AbortController()
-    groupControllers.current[group] = controller
-    groupCache.current[group] = { status: "loading" }
-    setGroupStates((current) => ({ ...current, [group]: { status: "loading" } }))
-    const request = Promise.resolve().then(async () => {
-      try {
-        const result = await lookupGroup(group, controller.signal)
-        groupCache.current[group] = result
-        if (mounted.current && groupSequences.current[group] === sequence) setGroupStates((current) => ({ ...current, [group]: result }))
-      } catch {
-        if (mounted.current && groupSequences.current[group] === sequence) {
-          const result: GroupState = { status: "error", message: "無法載入團隊成員，請重試。" }
-          groupCache.current[group] = result
-          setGroupStates((current) => ({ ...current, [group]: result }))
-        }
-      } finally {
-        if (groupSequences.current[group] === sequence) {
-          delete groupRequests.current[group]
-          delete groupControllers.current[group]
-        }
-      }
-    })
-    groupRequests.current[group] = request
-    return request
-  }, [])
 
   function notify(groupsNext: string[], exclusionsNext: Record<string, string[]>) {
     try {
@@ -151,6 +68,8 @@ export function TeamSelect({
       } else {
         accountIds = includedDashboardMembers(groupsNext, exclusionsNext, members)
       }
+      // 記錄已同步的選取，避免快取命中時 effect 重複通知並覆蓋當次排除結果。
+      notifiedKeyRef.current = groupsNext.length && ready ? [...groupsNext].sort().join("\u0000") : ""
       onGroupsChange([...groupsNext], accountIds, ready)
       setError(null)
     } catch (failure) {
@@ -159,15 +78,8 @@ export function TeamSelect({
     }
   }
 
-  // 一次載入全部團隊的成員名單，供下方「成員開發狀況」以團隊分組顯示。
+  // 登入區域已背景預載全部團隊；此處僅衍生成員分組，不擁有載入生命周期。
   const reportedKeyRef = useRef("")
-  // 掛載時就預先載入所有團隊（不只已勾選的），否則「未選團隊＝顯示全體」時沒有可用的分組資料。
-  useEffect(() => {
-    if (!onMembersReady) return
-    for (const team of DASHBOARD_TEAMS) {
-      if (groupCache.current[team.group]?.status !== "success") void loadGroup(team.group)
-    }
-  }, [onMembersReady, loadGroup])
   // 當所有團隊的成員都載入成功時，組出 accountId → label 映射並回報一次。
   useEffect(() => {
     if (!onMembersReady) return
@@ -189,17 +101,16 @@ export function TeamSelect({
     const next = checked ? [...new Set([...groups, group])] : groups.filter((item) => item !== group)
     const exclusionsNext = { ...exclusions }
     delete exclusionsNext[group]
+    setExclusions(exclusionsNext)
     notify(next, exclusionsNext)
-    // 勾選即載入成員名單，才能在團隊為單位時算出對應的 accountId。
-    if (checked && groupCache.current[group]?.status !== "success") {
-      void loadGroup(group)
-    }
+    // 預載尚未完成時沿用共享請求；已成功時不再讀取 API。
+    if (checked) void loadGroup(group)
   }
 
   function toggleMember(group: string, accountId: string, checked: boolean) {
     const state = groupStates[group]
     if (state?.status !== "success") return
-    const excluded = new Set(exclusions[group] ?? [])
+    const excluded = new Set(groups.includes(group) ? exclusions[group] ?? [] : state.members.map((member) => member.accountId))
     if (checked) excluded.delete(accountId)
     else excluded.add(accountId)
     const next = { ...exclusions }
@@ -223,13 +134,13 @@ export function TeamSelect({
   return (
     <FilterDropdown
       id={id}
+      className={FILTER_SELECT_WIDTH_CLASS}
       label="團隊"
       value={label}
       open={open}
       onOpenChange={setOpen}
       describedBy={`${id}-help`}
     >
-      <p className="px-3 py-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{perMember ? "勾選團隊選取全部成員；展開可逐人排除。" : "勾選團隊，以團隊全體成員為單位過濾。"}</p>
       {DASHBOARD_TEAMS.map((team) => {
         const selected = groups.includes(team.group)
         const isOpen = expanded.includes(team.group)
@@ -237,7 +148,7 @@ export function TeamSelect({
         const selectedCount = state?.status === "success" && selected ? state.members.filter((user) => !(exclusions[team.group] ?? []).includes(user.accountId)).length : 0
         return (
           <div key={team.group} className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800">
+            <div className="flex min-w-0 items-stretch">
               {perMember && (
                 <button
                   type="button"
@@ -247,36 +158,43 @@ export function TeamSelect({
                     setExpanded(isOpen ? expanded.filter((group) => group !== team.group) : [...expanded, team.group])
                     if (!isOpen) void loadGroup(team.group)
                   }}
-                  className="shrink-0 rounded p-1 text-slate-500 focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-400"
+                  className="shrink-0 rounded px-2 py-2 text-slate-500 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-400 dark:hover:bg-slate-800"
                 >
                   <Chevron open={isOpen} />
                 </button>
               )}
-              <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
+              <label className="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                 <input
                   type="checkbox"
                   checked={selected}
+                  ref={(element) => { if (element) element.indeterminate = selected && state?.status === "success" && selectedCount > 0 && selectedCount < state.members.length }}
                   onChange={(event) => toggleGroup(team.group, event.target.checked)}
                   className={choiceClass}
                 />
                 <span>{team.label}</span>
+                {selected && <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400">{state?.status === "success" ? `${selectedCount}/${state.members.length}` : state?.status === "error" ? "載入失敗" : "載入中…"}</span>}
               </label>
-              {selected && <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400">{state?.status === "success" ? `${selectedCount}/${state.members.length}` : state?.status === "error" ? "載入失敗" : "載入中…"}</span>}
             </div>
+            {!perMember && state?.status === "error" && (
+              <div className="space-y-2 px-3 py-2">
+                <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{state.error.message}</p>
+                <button type="button" onClick={() => { void retryGroup(team.group) }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">重試 {team.label}</button>
+              </div>
+            )}
             {perMember && (
-              <div hidden={!isOpen} className="space-y-2 py-2 pr-3 pl-10">
-                {(!state || state.status === "loading") && <p role="status" className="text-xs text-slate-600 dark:text-slate-400">正在載入完整成員名單…</p>}
+              <div hidden={!isOpen} className="space-y-2 py-2">
+                {(!state || state.status === "loading") && <p role="status" className="pr-3 pl-10 text-xs text-slate-600 dark:text-slate-400">正在載入完整成員名單…</p>}
                 {state?.status === "error" && (
-                  <div className="space-y-2">
-                    <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{state.message}</p>
-                    <button type="button" onClick={() => { void loadGroup(team.group, true) }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">重試 {team.label}</button>
+                  <div className="space-y-2 pr-3 pl-10">
+                    <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{state.error.message}</p>
+                    <button type="button" onClick={() => { void retryGroup(team.group) }} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">重試 {team.label}</button>
                   </div>
                 )}
                 {state?.status === "success" && (
                   <>
-                    {!state.members.length && <p className="text-xs text-slate-600 dark:text-slate-400">此團隊沒有可選取的成員。</p>}
+                    {!state.members.length && <p className="pr-3 pl-10 text-xs text-slate-600 dark:text-slate-400">此團隊沒有可選取的成員。</p>}
                     {state.members.map((user) => (
-                      <label key={user.accountId} className="flex min-w-0 cursor-pointer items-start gap-2 text-sm text-slate-800 dark:text-slate-200">
+                      <label key={user.accountId} className="flex min-h-10 w-full min-w-0 cursor-pointer items-start gap-2 py-2 pr-3 pl-10 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                         <input type="checkbox" checked={selected && !(exclusions[team.group] ?? []).includes(user.accountId)} onChange={(event) => toggleMember(team.group, user.accountId, event.target.checked)} className={`${choiceClass} mt-1`} />
                         <span className="min-w-0 break-words">{user.displayName}</span>
                       </label>

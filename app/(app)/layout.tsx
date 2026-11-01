@@ -1,6 +1,7 @@
 import { auth } from "@/auth"
 import { AppShell } from "@/components/app-shell/app-shell"
 import { NavigationBlockerProvider } from "@/components/navigation-blocker"
+import { TeamMembersProvider } from "@/components/team-members-provider"
 import { redirect } from "next/navigation"
 
 export default async function ApplicationLayout({ children }: LayoutProps<"/">) {
@@ -12,7 +13,7 @@ export default async function ApplicationLayout({ children }: LayoutProps<"/">) 
     redirect("/login")
   }
 
-  if (!session?.user) redirect("/login")
+  if (!session?.user?.id) redirect("/login")
 
   const user = {
     name: session.user.name?.trim() || "Jira user",
@@ -22,7 +23,9 @@ export default async function ApplicationLayout({ children }: LayoutProps<"/">) 
 
   return (
     <NavigationBlockerProvider>
-      <AppShell user={user}>{children}</AppShell>
+      <TeamMembersProvider viewerId={session.user.id}>
+        <AppShell user={user}>{children}</AppShell>
+      </TeamMembersProvider>
     </NavigationBlockerProvider>
   )
 }

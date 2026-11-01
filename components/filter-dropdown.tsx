@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, type ReactNode } from "react"
 
+/** Shared trigger/panel width for team, project and Sprint filters, clamped by available space. */
+export const FILTER_SELECT_WIDTH_CLASS = "w-56 max-w-full min-w-0 shrink-0"
+
 export function Chevron({ open }: { open: boolean }) {
   return (
     <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={open ? "rotate-180" : ""}>
@@ -10,13 +13,14 @@ export function Chevron({ open }: { open: boolean }) {
   )
 }
 
-export function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, children }: {
+export function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, className = "", children }: {
   id: string
   label: string
   value: string
   open: boolean
   onOpenChange: (open: boolean) => void
   describedBy: string
+  className?: string
   children: ReactNode
 }) {
   const wrapper = useRef<HTMLDivElement>(null)
@@ -44,8 +48,11 @@ export function FilterDropdown({ id, label, value, open, onOpenChange, described
   }, [open, onOpenChange])
 
   return (
-    <div ref={wrapper} className="relative min-w-0" onBlur={(event) => {
-      if (open && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
+    <div ref={wrapper} className={`relative min-w-0 ${className}`} onBlur={(event) => {
+      // Clicking non-focusable label text/padding briefly blurs to null before the
+      // browser activates its checkbox. Do not hide the row before that click.
+      // Outside pointerdown/focusin listeners still close the dropdown normally.
+      if (open && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
     }}>
       <span id={`${id}-label`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{label}</span>
       <button ref={trigger} id={`${id}-trigger`} type="button" aria-expanded={open} aria-controls={`${id}-options`} aria-labelledby={`${id}-label ${id}-value`} aria-describedby={describedBy} onClick={() => onOpenChange(!open)} className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white">

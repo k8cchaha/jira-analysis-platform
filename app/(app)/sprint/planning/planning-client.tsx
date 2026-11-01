@@ -112,7 +112,6 @@ export function PlanningClient({
         selectedSprintId={selectedSprintId}
         basePath="/sprint/planning"
         onNavigate={navigate}
-        teamSlotClassName="w-full min-w-0 lg:w-40 lg:shrink-0"
         teamSlot={
           <TeamSelect groups={groups} onMembersReady={setTeamOf} onGroupsChange={onGroupsChange} perMember={false} />
         }

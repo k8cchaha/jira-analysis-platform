@@ -93,7 +93,7 @@ export function DayTasksDialog({
       onClose={onClose}
     >
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-6 dark:border-slate-800">
-        <div className="w-full max-w-xs">
+        <div className="w-fit max-w-full">
           <TeamSelect
             groups={groups}
             perMember={false}

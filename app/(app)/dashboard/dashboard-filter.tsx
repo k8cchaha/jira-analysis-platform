@@ -1,6 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react"
+import { useTeamMembers } from "@/components/team-members-provider"
+import { FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
 import {
   DASHBOARD_PROJECTS,
   DASHBOARD_TEAMS,
@@ -16,7 +18,6 @@ import { reauthorizeDashboardAction } from "./actions"
 
 type LookupError = { code: string; message: string }
 type LookupResult = { status: "success"; users: DashboardUser[] } | { status: "error"; error: LookupError }
-type GroupState = { status: "loading" } | LookupResult
 type RememberedDraft = {
   groups: string[]
   exclusions: Record<string, string[]>
@@ -86,7 +87,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   const [projects, setProjects] = useState<string[]>(filter?.mode === "team-project" ? filter.projects : [])
   const [expanded, setExpanded] = useState<string[]>([])
   const [dropdown, setDropdown] = useState<"teams" | "projects" | null>(null)
-  const [groupStates, setGroupStates] = useState<Record<string, GroupState>>({})
+  const { groupStates, loadGroup, retryGroup } = useTeamMembers()
   const [error, setError] = useState<LookupError | null>(null)
   const [storageReady, setStorageReady] = useState(false)
   const [reauthorizing, startReauthorization] = useTransition()
@@ -95,51 +96,11 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   const edited = useRef(false)
   const personSequence = useRef(0)
   const personController = useRef<AbortController | null>(null)
-  const groupSequences = useRef<Record<string, number>>({})
-  const groupCache = useRef<Record<string, GroupState>>({})
-  const groupControllers = useRef<Record<string, AbortController>>({})
-  const groupRequests = useRef<Partial<Record<string, Promise<void>>>>({})
   const storageKey = `jira-dashboard-filter:${viewerId}`
-
-  const loadGroup = useCallback((group: string, retry = false): Promise<void> => {
-    if (!retry && groupCache.current[group]?.status === "success") return Promise.resolve()
-    if (!retry && groupRequests.current[group]) return groupRequests.current[group]
-    const sequence = (groupSequences.current[group] ?? 0) + 1
-    groupSequences.current[group] = sequence
-    groupControllers.current[group]?.abort()
-    const controller = new AbortController()
-    groupControllers.current[group] = controller
-    groupCache.current[group] = { status: "loading" }
-    setGroupStates((current) => ({ ...current, [group]: { status: "loading" } }))
-    const request = Promise.resolve().then(async () => {
-      try {
-        const result = await lookupUsers(new URLSearchParams({ view: "group", group }), "members", controller.signal)
-        if (!mounted.current || groupSequences.current[group] !== sequence) return
-        groupCache.current[group] = result
-        setGroupStates((current) => ({ ...current, [group]: result }))
-      } catch {
-        if (!mounted.current || groupSequences.current[group] !== sequence) return
-        const result: GroupState = { status: "error", error: { code: "retry", message: "無法完整載入團隊成員，請重試。" } }
-        groupCache.current[group] = result
-        setGroupStates((current) => ({ ...current, [group]: result }))
-      } finally {
-        if (groupSequences.current[group] === sequence) {
-          delete groupRequests.current[group]
-          delete groupControllers.current[group]
-        }
-      }
-    })
-    groupRequests.current[group] = request
-    return request
-  }, [])
 
   useEffect(() => {
     mounted.current = true
     let active = true
-    const sequences = groupSequences.current
-    const controllers = groupControllers.current
-    const requests = groupRequests.current
-    const cache = groupCache.current
     queueMicrotask(() => {
       if (!active) return
       try {
@@ -161,13 +122,6 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
       mounted.current = false
       personSequence.current += 1
       personController.current?.abort()
-      for (const group of Object.keys(controllers)) {
-        sequences[group] = (sequences[group] ?? 0) + 1
-        controllers[group].abort()
-        delete controllers[group]
-        delete requests[group]
-        delete cache[group]
-      }
     }
   }, [appliedFilter, storageKey])
 
@@ -202,15 +156,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
 
   function changeMode(next: DashboardFilterValue["mode"]) {
     editDraft()
-    // A late group failure must not leak into a newer mode/request.
-    for (const group of Object.keys(groupControllers.current)) {
-      groupSequences.current[group] = (groupSequences.current[group] ?? 0) + 1
-      groupControllers.current[group].abort()
-      delete groupControllers.current[group]
-      delete groupRequests.current[group]
-      delete groupCache.current[group]
-    }
-    setGroupStates((current) => Object.fromEntries(Object.entries(current).filter(([, state]) => state.status !== "loading")))
+    // Membership preloads belong to the application, not this draft mode.
     setDropdown(null)
     setMode(next)
     if (next === "self") apply(SELF_FILTER)
@@ -228,11 +174,11 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
     const state = groupStates[group]
     if (state?.status !== "success") return
     editDraft()
-    const excluded = new Set(groups.includes(group) ? exclusions[group] ?? [] : state.users.map((user) => user.accountId))
+    const excluded = new Set(groups.includes(group) ? exclusions[group] ?? [] : state.members.map((user) => user.accountId))
     if (checked) excluded.delete(accountId)
     else excluded.add(accountId)
     const next = { ...exclusions }
-    if (state.users.every((user) => excluded.has(user.accountId))) {
+    if (state.members.every((user) => excluded.has(user.accountId))) {
       setGroups(groups.filter((item) => item !== group))
       delete next[group]
     } else {
@@ -273,7 +219,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
         for (const group of groups) {
           const state = groupStates[group]
           if (state?.status !== "success") throw new Error("所選團隊成員尚未完整載入，請等待載入完成或重試。")
-          members[group] = state.users
+          members[group] = state.members
         }
         includedDashboardMembers(groups, exclusions, members)
         const selectedExclusions: Record<string, string[]> = {}
@@ -344,7 +290,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
       const members: Record<string, DashboardUser[]> = {}
       for (const group of groups) {
         const state = groupStates[group]
-        if (state.status === "success") members[group] = state.users
+        if (state?.status === "success") members[group] = state.members
       }
       memberCount = includedDashboardMembers(groups, exclusions, members).length
       teamHint = `已選 ${groups.length} 個團隊、${memberCount} 名不重複成員`
@@ -377,7 +323,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
             ))}
           </div>
         </fieldset>
-        {mode !== "self" && <div className={mode === "team-project" ? "grid min-w-0 grid-cols-2 items-end gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto]" : "grid min-w-0 grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"}>
+        {mode !== "self" && <div className={mode === "team-project" ? "grid min-w-0 grid-cols-2 items-end gap-2 lg:grid-cols-[14rem_14rem_auto_auto]" : "grid min-w-0 grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"}>
           {mode === "person" && (
             <div className="col-span-2 min-w-0 sm:col-span-1">
               <label htmlFor={`${id}-name`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Jira 顯示名稱</label>
@@ -386,41 +332,40 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
           )}
           {mode === "team-project" && (
             <>
-              <FilterDropdown id={`${id}-teams`} label="團隊" value={teamLabel} open={dropdown === "teams"} onOpenChange={(open) => setDropdown(open ? "teams" : null)} describedBy={`${id}-help ${id}-team-help`}>
-                <p className="px-3 py-2 text-xs leading-5 text-slate-500 dark:text-slate-400">勾選團隊選取全部成員；展開可逐人勾選。</p>
+              <FilterDropdown id={`${id}-teams`} className={FILTER_SELECT_WIDTH_CLASS} label="團隊" value={teamLabel} open={dropdown === "teams"} onOpenChange={(open) => setDropdown(open ? "teams" : null)} describedBy={`${id}-help ${id}-team-help`}>
                 {DASHBOARD_TEAMS.map((team) => {
                   const selected = groups.includes(team.group)
                   const open = expanded.includes(team.group)
                   const state = groupStates[team.group]
-                  const selectedCount = state?.status === "success" && selected ? state.users.filter((user) => !(exclusions[team.group] ?? []).includes(user.accountId)).length : 0
+                  const selectedCount = state?.status === "success" && selected ? state.members.filter((user) => !(exclusions[team.group] ?? []).includes(user.accountId)).length : 0
                   return (
                     <div key={team.group} className="min-w-0">
-                      <div className="flex min-w-0 items-center gap-2 px-2 py-1 hover:bg-slate-50 dark:hover:bg-slate-800">
+                      <div className="flex min-w-0 items-stretch">
                         <button type="button" aria-label={`${open ? "收合" : "展開"} ${team.label} 成員`} aria-expanded={open} aria-controls={`${id}-${team.group}-members`} onClick={() => {
                           setExpanded(open ? expanded.filter((group) => group !== team.group) : [...expanded, team.group])
                           if (!open) void loadGroup(team.group)
-                        }} className="shrink-0 rounded p-1 text-slate-500 focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-400">
+                        }} className="shrink-0 rounded px-2 py-2 text-slate-500 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-400 dark:hover:bg-slate-800">
                           <Chevron open={open} sideways />
                         </button>
-                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
-                          <input type="checkbox" checked={selected} ref={(element) => { if (element) element.indeterminate = selected && state?.status === "success" && selectedCount > 0 && selectedCount < state.users.length }} onChange={(event) => toggleGroup(team.group, event.target.checked)} className={choiceClass} />
+                        <label className="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
+                          <input type="checkbox" checked={selected} ref={(element) => { if (element) element.indeterminate = selected && state?.status === "success" && selectedCount > 0 && selectedCount < state.members.length }} onChange={(event) => toggleGroup(team.group, event.target.checked)} className={choiceClass} />
                           <span>{team.label}</span>
+                          {selected && <span className="ml-auto shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400">{state?.status === "success" ? `${selectedCount}/${state.members.length}` : state?.status === "error" ? "載入失敗" : "載入中…"}</span>}
                         </label>
-                        {selected && <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs tabular-nums text-slate-600 dark:bg-slate-800 dark:text-slate-400">{state?.status === "success" ? `${selectedCount}/${state.users.length}` : state?.status === "error" ? "載入失敗" : "載入中…"}</span>}
                       </div>
-                      <div id={`${id}-${team.group}-members`} hidden={!open} className="space-y-2 py-2 pr-3 pl-10">
-                        {(!state || state.status === "loading") && <p role="status" className="text-xs text-slate-600 dark:text-slate-400">正在載入完整成員名單…</p>}
+                      <div id={`${id}-${team.group}-members`} hidden={!open} className="space-y-2 py-2">
+                        {(!state || state.status === "loading") && <p role="status" className="pr-3 pl-10 text-xs text-slate-600 dark:text-slate-400">正在載入完整成員名單…</p>}
                         {state?.status === "error" && (
-                          <div className="space-y-2">
+                          <div className="space-y-2 pr-3 pl-10">
                             <FilterError error={state.error} reauthorizing={reauthorizing} onReauthorize={reauthorize} />
-                            <button type="button" onClick={() => { setError(null); void loadGroup(team.group, true) }} className={buttonClass}>重試 {team.label}</button>
+                            <button type="button" onClick={() => { setError(null); void retryGroup(team.group) }} className={buttonClass}>重試 {team.label}</button>
                           </div>
                         )}
                         {state?.status === "success" && (
                           <>
-                            {!state.users.length && <p className="text-xs text-slate-600 dark:text-slate-400">此團隊沒有可選取的成員。</p>}
-                            {state.users.map((user) => (
-                              <label key={user.accountId} className="flex min-w-0 cursor-pointer items-start gap-2 text-sm text-slate-800 dark:text-slate-200">
+                            {!state.members.length && <p className="pr-3 pl-10 text-xs text-slate-600 dark:text-slate-400">此團隊沒有可選取的成員。</p>}
+                            {state.members.map((user) => (
+                              <label key={user.accountId} className="flex min-h-10 w-full min-w-0 cursor-pointer items-start gap-2 py-2 pr-3 pl-10 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                                 <input type="checkbox" checked={selected && !(exclusions[team.group] ?? []).includes(user.accountId)} onChange={(event) => toggleMember(team.group, user.accountId, event.target.checked)} className={`${choiceClass} mt-1`} />
                                 <span className="min-w-0 break-words">{user.displayName}</span>
                               </label>
@@ -432,7 +377,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
                   )
                 })}
               </FilterDropdown>
-              <FilterDropdown id={`${id}-projects`} label="專案" value={projectLabel} open={dropdown === "projects"} onOpenChange={(open) => setDropdown(open ? "projects" : null)} describedBy={`${id}-project-help`}>
+              <FilterDropdown id={`${id}-projects`} className={FILTER_SELECT_WIDTH_CLASS} label="專案" value={projectLabel} open={dropdown === "projects"} onOpenChange={(open) => setDropdown(open ? "projects" : null)} describedBy={`${id}-project-help`}>
                 {DASHBOARD_PROJECTS.map((project) => (
                   <label key={project.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                     <input type="checkbox" checked={projects.includes(project.key)} onChange={(event) => { editDraft(); setProjects(event.target.checked ? [...projects, project.key] : projects.filter((key) => key !== project.key)) }} className={choiceClass} />
@@ -487,7 +432,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
                 <div key={team.group} className="space-y-2">
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{team.label} 成員載入失敗</p>
                   <FilterError error={state.error} reauthorizing={reauthorizing} onReauthorize={reauthorize} />
-                  <button type="button" onClick={() => { setError(null); void loadGroup(team.group, true) }} className={buttonClass}>重試 {team.label}</button>
+                  <button type="button" onClick={() => { setError(null); void retryGroup(team.group) }} className={buttonClass}>重試 {team.label}</button>
                 </div>
               )
             })}
@@ -507,13 +452,14 @@ function Chevron({ open, sideways = false }: { open: boolean; sideways?: boolean
   )
 }
 
-function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, children }: {
+function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, className = "", children }: {
   id: string
   label: string
   value: string
   open: boolean
   onOpenChange: (open: boolean) => void
   describedBy: string
+  className?: string
   children: ReactNode
 }) {
   const wrapper = useRef<HTMLDivElement>(null)
@@ -541,8 +487,10 @@ function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, chi
   }, [open, onOpenChange])
 
   return (
-    <div ref={wrapper} className="relative min-w-0" onBlur={(event) => {
-      if (open && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
+    <div ref={wrapper} className={`relative min-w-0 ${className}`} onBlur={(event) => {
+      // Label text/padding blurs to null before native checkbox activation.
+      // Closing here would swallow that click; outside listeners handle dismissal.
+      if (open && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
     }}>
       <span id={`${id}-label`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{label}</span>
       <button ref={trigger} id={`${id}-trigger`} type="button" aria-expanded={open} aria-controls={`${id}-options`} aria-labelledby={`${id}-label ${id}-value`} aria-describedby={describedBy} onClick={() => onOpenChange(!open)} className={`${inputClass} flex h-10 items-center justify-between gap-2 text-left`}>
