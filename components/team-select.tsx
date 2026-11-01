@@ -7,7 +7,7 @@ import {
   includedDashboardMembers,
   type DashboardUser,
 } from "@/lib/jira-dashboard-filter"
-import { Chevron, FilterDropdown, FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
+import { Chevron, FilterDropdown } from "@/components/filter-dropdown"
 
 const choiceClass = "h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
 
@@ -134,7 +134,7 @@ export function TeamSelect({
   return (
     <FilterDropdown
       id={id}
-      className={FILTER_SELECT_WIDTH_CLASS}
+      kind="team"
       label="團隊"
       value={label}
       open={open}

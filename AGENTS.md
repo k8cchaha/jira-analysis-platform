@@ -20,6 +20,13 @@ These rules apply to human contributors and AI coding agents. Read [README.md](R
 - Counts and details must share the same query builder. Updates must retain their original self eligibility query AND the submitted issue-ID restriction, plus existing original-value, field-schema, permission, and option validation. Do not broaden write eligibility while refactoring queries.
 - Do not accept arbitrary client-supplied JQL or interpolate unvalidated client values. Query builders consume validated/resolved inputs; preserve caller validation as well as builder checks.
 
+## Selector and search-action widths
+
+- Keep widths consistent **within each kind**, not across all kinds: team and Sprint selectors are 224px (14rem), project selectors are 160px (10rem), and search/query buttons are 96px (6rem). Narrow containers may clamp controls to available space; dropdown panels must match their triggers and long values must truncate.
+- Selector dimensions belong to `FILTER_SELECT_WIDTH_CLASS` in `components/filter-dropdown.tsx`. New pages must reuse `TeamSelect` or `FilterDropdown` with its required `kind`; do not define page-specific selector widths or add width overrides. Layout wrappers should use the same kind's definition. Dashboard's existing private dropdown must also use that definition while preserving its fieldset semantics.
+- Search/query submits must reuse `components/search-button.tsx` (`SearchButton`), whose fixed width applies during both idle and loading states. This rule does not apply to save, retry, detail-dialog or external Jira buttons.
+- When intentionally changing a kind's size, update its central definition, dependent layouts and regression expectations together. Cover no-width-prop usage and narrow-container behavior; do not rely on each new caller remembering a class.
+
 ## Change checklist
 
 1. Field mapping change → edit `jira-fields.ts`; retain runtime discovery/schema checks.

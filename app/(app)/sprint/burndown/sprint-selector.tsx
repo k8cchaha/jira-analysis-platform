@@ -51,8 +51,9 @@ export function SprintSelector({
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-      <div className={FILTER_SELECT_WIDTH_CLASS}>
+      <div className={FILTER_SELECT_WIDTH_CLASS.project}>
         <FilterDropdown
+          kind="project"
           id="sprint-project"
           label="專案"
           value={projectLabel}
@@ -97,8 +98,9 @@ export function SprintSelector({
         </p>
       </div>
 
-      <div className={FILTER_SELECT_WIDTH_CLASS}>
+      <div className={FILTER_SELECT_WIDTH_CLASS.sprint}>
         <FilterDropdown
+          kind="sprint"
           id="sprint"
           label="Sprint"
           value={sprintLabel}
@@ -140,7 +142,7 @@ export function SprintSelector({
           選擇要查看燃盡圖的 Sprint。
         </p>
       </div>
-      {teamSlot ? <div className={FILTER_SELECT_WIDTH_CLASS}>{teamSlot}</div> : null}
+      {teamSlot ? <div className={FILTER_SELECT_WIDTH_CLASS.team}>{teamSlot}</div> : null}
       {trailing ? <div className="w-auto lg:ml-auto">{trailing}</div> : null}
     </div>
   )

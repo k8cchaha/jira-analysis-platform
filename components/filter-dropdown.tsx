@@ -2,8 +2,13 @@
 
 import { useEffect, useRef, type ReactNode } from "react"
 
-/** Shared trigger/panel width for team, project and Sprint filters, clamped by available space. */
-export const FILTER_SELECT_WIDTH_CLASS = "w-56 max-w-full min-w-0 shrink-0"
+/** Same selector kind uses the same width everywhere; narrow containers may clamp it. */
+export const FILTER_SELECT_WIDTH_CLASS = {
+  team: "w-56 max-w-full min-w-0 shrink-0",
+  project: "w-40 max-w-full min-w-0 shrink-0",
+  sprint: "w-56 max-w-full min-w-0 shrink-0",
+} as const
+export type FilterSelectKind = keyof typeof FILTER_SELECT_WIDTH_CLASS
 
 export function Chevron({ open }: { open: boolean }) {
   return (
@@ -13,14 +18,14 @@ export function Chevron({ open }: { open: boolean }) {
   )
 }
 
-export function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, className = "", children }: {
+export function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, kind, children }: {
   id: string
   label: string
   value: string
   open: boolean
   onOpenChange: (open: boolean) => void
   describedBy: string
-  className?: string
+  kind: FilterSelectKind
   children: ReactNode
 }) {
   const wrapper = useRef<HTMLDivElement>(null)
@@ -48,7 +53,7 @@ export function FilterDropdown({ id, label, value, open, onOpenChange, described
   }, [open, onOpenChange])
 
   return (
-    <div ref={wrapper} className={`relative min-w-0 ${className}`} onBlur={(event) => {
+    <div ref={wrapper} className={`relative ${FILTER_SELECT_WIDTH_CLASS[kind]}`} onBlur={(event) => {
       // Clicking non-focusable label text/padding briefly blurs to null before the
       // browser activates its checkbox. Do not hide the row before that click.
       // Outside pointerdown/focusin listeners still close the dropdown normally.

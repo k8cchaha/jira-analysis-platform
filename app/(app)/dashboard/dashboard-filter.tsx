@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type ReactNode } from "react"
 import { useTeamMembers } from "@/components/team-members-provider"
-import { FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
+import { FILTER_SELECT_WIDTH_CLASS, type FilterSelectKind } from "@/components/filter-dropdown"
+import { SearchButton } from "@/components/search-button"
 import {
   DASHBOARD_PROJECTS,
   DASHBOARD_TEAMS,
@@ -323,7 +324,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
             ))}
           </div>
         </fieldset>
-        {mode !== "self" && <div className={mode === "team-project" ? "grid min-w-0 grid-cols-2 items-end gap-2 lg:grid-cols-[14rem_14rem_auto_auto]" : "grid min-w-0 grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"}>
+        {mode !== "self" && <div className={mode === "team-project" ? "grid min-w-0 grid-cols-2 items-end gap-2 lg:grid-cols-[14rem_10rem_max-content_max-content]" : "grid min-w-0 grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"}>
           {mode === "person" && (
             <div className="col-span-2 min-w-0 sm:col-span-1">
               <label htmlFor={`${id}-name`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Jira 顯示名稱</label>
@@ -332,7 +333,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
           )}
           {mode === "team-project" && (
             <>
-              <FilterDropdown id={`${id}-teams`} className={FILTER_SELECT_WIDTH_CLASS} label="團隊" value={teamLabel} open={dropdown === "teams"} onOpenChange={(open) => setDropdown(open ? "teams" : null)} describedBy={`${id}-help ${id}-team-help`}>
+              <FilterDropdown id={`${id}-teams`} kind="team" label="團隊" value={teamLabel} open={dropdown === "teams"} onOpenChange={(open) => setDropdown(open ? "teams" : null)} describedBy={`${id}-help ${id}-team-help`}>
                 {DASHBOARD_TEAMS.map((team) => {
                   const selected = groups.includes(team.group)
                   const open = expanded.includes(team.group)
@@ -377,7 +378,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
                   )
                 })}
               </FilterDropdown>
-              <FilterDropdown id={`${id}-projects`} className={FILTER_SELECT_WIDTH_CLASS} label="專案" value={projectLabel} open={dropdown === "projects"} onOpenChange={(open) => setDropdown(open ? "projects" : null)} describedBy={`${id}-project-help`}>
+              <FilterDropdown id={`${id}-projects`} kind="project" label="專案" value={projectLabel} open={dropdown === "projects"} onOpenChange={(open) => setDropdown(open ? "projects" : null)} describedBy={`${id}-project-help`}>
                 {DASHBOARD_PROJECTS.map((project) => (
                   <label key={project.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                     <input type="checkbox" checked={projects.includes(project.key)} onChange={(event) => { editDraft(); setProjects(event.target.checked ? [...projects, project.key] : projects.filter((key) => key !== project.key)) }} className={choiceClass} />
@@ -398,7 +399,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
               <span aria-hidden="true">天</span>
             </label>
           </div>
-          <button type="submit" disabled={personLoading || (mode === "team-project" && (!allGroupsLoaded || memberCount === 0))} aria-describedby={mode === "team-project" ? `${id}-team-help` : `${id}-help`} className="h-10 cursor-pointer rounded-lg bg-blue-600 px-5 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50">{personLoading ? "查詢中…" : "查詢"}</button>
+          <SearchButton loading={personLoading} disabled={mode === "team-project" && (!allGroupsLoaded || memberCount === 0)} aria-describedby={mode === "team-project" ? `${id}-team-help` : `${id}-help`} />
         </div>}
         {mode !== "self" && <p id={`${id}-help`} className="sr-only">{mode === "person" ? "按「查詢」或 Enter 搜尋；多人時選擇後再查詢。近 X 天須為正整數，預設 30 天。" : "按「查詢」套用團隊與專案；近 X 天須為正整數，預設 30 天。"}</p>}
 
@@ -452,14 +453,14 @@ function Chevron({ open, sideways = false }: { open: boolean; sideways?: boolean
   )
 }
 
-function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, className = "", children }: {
+function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, kind, children }: {
   id: string
   label: string
   value: string
   open: boolean
   onOpenChange: (open: boolean) => void
   describedBy: string
-  className?: string
+  kind: Extract<FilterSelectKind, "team" | "project">
   children: ReactNode
 }) {
   const wrapper = useRef<HTMLDivElement>(null)
@@ -487,7 +488,7 @@ function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, cla
   }, [open, onOpenChange])
 
   return (
-    <div ref={wrapper} className={`relative min-w-0 ${className}`} onBlur={(event) => {
+    <div ref={wrapper} className={`relative ${FILTER_SELECT_WIDTH_CLASS[kind]}`} onBlur={(event) => {
       // Label text/padding blurs to null before native checkbox activation.
       // Closing here would swallow that click; outside listeners handle dismissal.
       if (open && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)

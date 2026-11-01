@@ -49,7 +49,7 @@ function harness(fetcher = async () => success(), hookSnapshot, effects, reactOv
       if (name === "@/components/team-members-provider" && hookSnapshot) {
         return { useTeamMembers: () => ({ groupStates: hookSnapshot, loadGroup: () => Promise.resolve(), retryGroup: () => Promise.resolve() }) }
       }
-      const owned = ["@/lib/jira-dashboard-filter", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown"]
+      const owned = ["@/lib/jira-dashboard-filter", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown", "@/components/search-button"]
       if (owned.includes(name)) return load(`${name.slice(2)}.${name.startsWith("@/components/") ? "tsx" : "ts"}`)
       throw new Error(`Unexpected import: ${name}`)
     }
@@ -336,7 +336,7 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     })
     const { FilterDropdown } = h.load("components/filter-dropdown.tsx")
     const changes = []
-    const tree = FilterDropdown({ id: "fixture", label: "團隊", value: "Web", open: true, onOpenChange: (value) => changes.push(value), describedBy: "help" })
+    const tree = FilterDropdown({ id: "fixture", kind: "team", label: "團隊", value: "Web", open: true, onOpenChange: (value) => changes.push(value), describedBy: "help" })
     const inside = {}
     const outside = {}
     const wrapper = { contains: (target) => target === inside }
@@ -346,6 +346,38 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     assert.deepEqual(changes, [])
     tree.props.onBlur({ currentTarget: wrapper, relatedTarget: outside })
     assert.deepEqual(changes, [false])
+  })
+
+  it("automatically sizes each dropdown kind without caller width props", () => {
+    const h = harness()
+    const { FilterDropdown, FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
+    for (const [kind, width] of [["team", "w-56"], ["project", "w-40"], ["sprint", "w-56"]]) {
+      const markup = render(FilterDropdown, { id: kind, kind, label: kind, value: "Long selection", open: true, onOpenChange: () => {}, describedBy: "help" })
+      assert.ok(markup.startsWith(`<div class="relative ${FILTER_SELECT_WIDTH_CLASS[kind]}">`))
+      assert.match(FILTER_SELECT_WIDTH_CLASS[kind], new RegExp(`^${width} max-w-full min-w-0 shrink-0$`))
+      assert.match(markup, /class="truncate"/)
+    }
+  })
+
+  it("keeps search submits the same width in idle, loading, and both Dashboard modes", () => {
+    const h = harness(undefined, {})
+    const { SearchButton } = h.load("components/search-button.tsx")
+    const { DashboardFilter } = h.load("app/(app)/dashboard/dashboard-filter.tsx")
+    for (const loading of [false, true]) {
+      const markup = render(SearchButton, { loading, "aria-describedby": "help" })
+      assert.match(markup, /type="submit"/)
+      assert.match(markup, /h-10 w-24 max-w-full min-w-0/)
+      assert.match(markup, /aria-describedby="help"/)
+      assert.equal(markup.includes('disabled=""'), loading)
+      assert.ok(markup.includes(loading ? "查詢中…" : "查詢"))
+    }
+    for (const filter of [
+      { mode: "team-project", groups: [], exclusions: {}, projects: [], days: 30 },
+      { mode: "person", accountId: "fixture-member", name: "Fixture", days: 30 },
+    ]) {
+      const markup = render(DashboardFilter, { viewerId: "fixture-viewer", filter, onApply: () => {} })
+      assert.match(markup.match(/<button[^>]*type="submit"[^>]*>/)?.[0] ?? "", /h-10 w-24 max-w-full min-w-0/)
+    }
   })
 
   it("uses the same bounded width for both Sprint modes and Dashboard team filters", () => {
@@ -358,10 +390,10 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
       render(TeamSelect, { groups: ["ent-web"], perMember: false, onGroupsChange: () => {} }),
       render(DashboardFilter, { viewerId: "fixture-viewer", filter: { mode: "team-project", groups: ["ent-web"], exclusions: {}, projects: [], days: 30 }, onApply: () => {} }),
     ]) {
-      assert.ok(markup.includes(`class="relative min-w-0 ${FILTER_SELECT_WIDTH_CLASS}"`))
+      assert.ok(markup.includes(`class="relative ${FILTER_SELECT_WIDTH_CLASS.team}"`))
       assert.match(markup, /class="truncate"/)
     }
-    assert.match(FILTER_SELECT_WIDTH_CLASS, /w-56 max-w-full/)
+    assert.match(FILTER_SELECT_WIDTH_CLASS.team, /w-56 max-w-full/)
   })
 
   it("uses the shared bounded width for Dashboard projects and both Sprint project selectors", () => {
@@ -374,16 +406,16 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
       filter: { mode: "team-project", groups: [], exclusions: {}, projects: [], days: 30 },
       onApply: () => {},
     })
-    assert.match(dashboard, /lg:grid-cols-\[14rem_14rem_auto_auto\]/)
-    const projectDropdown = dashboard.match(/<div class="relative min-w-0 [^"]+"><span id="[^"]+-projects-label"[\s\S]*?<\/fieldset><\/div>/)?.[0]
+    assert.match(dashboard, /lg:grid-cols-\[14rem_10rem_max-content_max-content\]/)
+    const projectDropdown = dashboard.match(/<div class="relative [^"]+"><span id="[^"]+-projects-label"[\s\S]*?<\/fieldset><\/div>/)?.[0]
     assert.ok(projectDropdown)
-    assert.ok(projectDropdown.startsWith(`<div class="relative min-w-0 ${FILTER_SELECT_WIDTH_CLASS}">`))
+    assert.ok(projectDropdown.startsWith(`<div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}">`))
     assert.match(projectDropdown, /class="truncate"/)
     for (const basePath of ["/sprint/burndown", "/sprint/planning"]) {
       const markup = render(SprintSelector, { basePath, project: null, sprints: [], selectedSprintId: null })
-      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS}"><div class="relative min-w-0 "><span id="sprint-project-label"`))
-      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS}"><div class="relative min-w-0 "><span id="sprint-label"`))
-      assert.doesNotMatch(markup, /lg:w-44|lg:w-40/)
+      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.project}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}"><span id="sprint-project-label"`))
+      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.sprint}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.sprint}"><span id="sprint-label"`))
+      assert.doesNotMatch(markup, /lg:w-44|lg:w-40/) // No per-page breakpoint width overrides.
     }
   })
 
@@ -473,7 +505,7 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
       const props = { viewerId: "fixture-viewer", filter: { mode: "team-project", groups: ["ent-web", "ent-be1"], exclusions: {}, projects: [], days: 30 }, onApply: () => {} }
       for (let mount = 0; mount < 2; mount++) {
         const markup = render(DashboardFilter, props)
-        const queryButton = markup.match(/<button type="submit"[^>]*>/)?.[0]
+        const queryButton = markup.match(/<button[^>]*type="submit"[^>]*>/)?.[0]
         assert.ok(queryButton)
         assert.equal(queryButton.includes('disabled=""'), !complete)
         if (complete) assert.match(markup, /2 名不重複成員/)
