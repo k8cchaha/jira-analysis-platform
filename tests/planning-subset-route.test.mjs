@@ -90,6 +90,9 @@ function harness(t, options = {}) {
 
   const globals = {
     Buffer, URL, URLSearchParams, AbortSignal, Request, Response,
+    Date: class extends Date {
+      constructor(...args) { super(...(args.length ? args : [`${options.today ?? TODAY}T12:00:00Z`])) }
+    },
     process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
     console: { error: () => {} },
     fetch: async (url, init = {}) => {
@@ -100,13 +103,22 @@ function harness(t, options = {}) {
       const path = url.slice(prefix.length)
       const method = init.method ?? "GET"
       const body = init.body ? JSON.parse(init.body) : null
+      if (path.startsWith("/rest/api/3/group/member?") && method === "GET") {
+        const group = new URL(url).searchParams.get("groupname")
+        if (!["ent-fpm", "ent-opm"].includes(group)) return fail("Unexpected PM group")
+        return Response.json({ values: [], startAt: 0, maxResults: 50, total: 0, isLast: true })
+      }
       if (path === "/rest/api/3/search/jql" && method === "POST") {
         if (body.maxResults !== 100) return fail("Search must use maxResults 100")
+        if (JSON.stringify(body.fields) === JSON.stringify(["project", "summary", "reporter"])) {
+          if (!/key in \(/.test(body.jql)) return fail("Epic search must restrict keys")
+          return Response.json({ issues: options.epics ?? [], isLast: true })
+        }
         // 母票搜尋：sprint = … 。`getPlanningSubset` 用 MOTHER_FIELDS（summary+issuetype+parent），
         // 「未開子單」的 `fetchNoSubtaskParents` 用完整 PLANNING_FIELDS。
         if (/\bsprint = \d+/.test(body.jql)) {
-          // MOTHER_FIELDS：母票（Story/Task/Bug）投影含 report、components（供 Reporter View 分群）。
-          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "reporter", "components", "customfield_10005"])
+          // MOTHER_FIELDS：Reporter 分群、母票自身 Assignee 篩選與 Component 顯示。
+          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "reporter", "assignee", "components", "customfield_10005"])
           if (JSON.stringify(body.fields) === motherFields) {
             return new Response(JSON.stringify({ issues: options.parents ?? parents, isLast: true }), { status: 200 })
           }
@@ -132,7 +144,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   const allowed = [
     "lib/jira-dashboard.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts",
-    "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts",
+    "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-http.ts",
     "lib/jira-sprint-data.ts", "lib/burndown-params.ts", "lib/planning-data.ts",
     "lib/planning-subset.ts", "app/api/sprint/planning/subset/route.ts",
   ]
@@ -171,7 +183,7 @@ function harness(t, options = {}) {
   t.after(() => assert.deepEqual(violations, []))
   const route = load("app/api/sprint/planning/subset/route.ts")
   const model = load("lib/planning-subset.ts")
-  return { route, model, tokenCalls }
+  return { route, model, tokenCalls, service: load("lib/planning-data.ts") }
 }
 
 function GETroute(route, params) {
@@ -199,7 +211,7 @@ describe("planning subset route — auth & params", () => {
   })
 
   it("專案無進行中/未來 sprint（PRIDE）→ 400", async (t) => {
-    const h = harness(t)
+    const h = harness(t, { today: "2099-01-01" })
     const res = await GETroute(h.route, { project: "PRIDE", sprint: "7517", kind: "unestimated" })
     assert.equal(res.status, 400)
     assert.equal((await res.json()).error.code, "configuration")
@@ -297,6 +309,46 @@ describe("planning subset route — success", () => {
   })
 })
 
+describe("planning main data — mother Assignee", () => {
+  it("母票自身 Assignee 傳到 DTO，不被 Epic Reporter 或子票 Assignee 取代，保留無子票母票", async (t) => {
+    const mother = (key, assignee, parent = null) => ({
+      key, id: key.split("-")[1], fields: {
+        project: { id: "10" }, summary: key, issuetype: { name: "Story" },
+        reporter: { displayName: "Mother Reporter", accountId: "mother-reporter" },
+        assignee, parent, components: [], customfield_10005: 5,
+      },
+    })
+    const h = harness(t, {
+      parents: [
+        mother("SUN-100", { accountId: "mother-owner" }, { key: "SUN-90", fields: { summary: "Epic Alpha", issuetype: { name: "Epic" } } }),
+        mother("SUN-101", { accountId: "no-child-owner" }),
+        mother("SUN-104", null),
+        mother("SUN-105", { accountId: 42 }),
+      ],
+      epics: [{ id: "90", key: "SUN-90", fields: {
+        project: { id: "10" }, summary: "Epic Alpha",
+        reporter: { displayName: "Epic Reporter", accountId: "epic-reporter" },
+      } }],
+      subsetIssues: [{ id: "102", key: "SUN-102", fields: {
+        project: { id: "10" }, summary: "Child", issuetype: { name: "Dev-Task" },
+        assignee: { displayName: "Child Owner", accountId: "child-owner" },
+        parent: { key: "SUN-100", fields: { issuetype: { name: "Story" } } },
+      } }],
+    })
+    const data = await h.service.getPlanningData({
+      id: 7517, projectKey: "SUN", name: "Fixture sprint", startDate: "2026-10-21", endDate: "2026-11-04",
+    })
+    assert.deepEqual(plain(data.parents.map((parent) => [parent.key, parent.assigneeAccountId])), [
+      ["SUN-100", "mother-owner"], ["SUN-101", "no-child-owner"], ["SUN-104", null], ["SUN-105", null],
+    ])
+    assert.equal(data.parents[0].reporterAccountId, "epic-reporter")
+    assert.equal(data.parents[1].reporterAccountId, "mother-reporter")
+    assert.equal(data.tasks[0].assigneeAccountId, "child-owner")
+    const parsed = h.model.parsePlanningParentsResult({ status: "success", data: { parents: data.parents } })
+    assert.deepEqual(plain(parsed.data.parents), plain(data.parents))
+  })
+})
+
 describe("planning subset client validator (parsePlanningSubsetResult)", () => {
   const validTask = (over = {}) => ({
     key: "SUN-102",
@@ -384,6 +436,7 @@ describe("planning reporter parents projector (projectReporterParents)", () => {
     components: ["Frontend"],
     reporter: "Reporter",
     reporterAccountId: "aa1",
+    assigneeAccountId: "mother-owner",
     issueType: "Story",
     epic: null,
     ...over,
@@ -410,6 +463,29 @@ describe("planning reporter parents projector (projectReporterParents)", () => {
     assert.equal(out[2].components.length, 0)
     assert.equal(out[3].epic, null)
     assert.equal(out[4].epic, null)
+  })
+
+  it("保留母票 Assignee；null、缺漏、錯誤型別及超長值收斂成 null", (t) => {
+    const out = project(t, [
+      validParent(),
+      ...[null, undefined, 42, { accountId: "wrong-shape" }, "x".repeat(201)].map((assigneeAccountId, i) =>
+        validParent({ key: `SUN-${200 + i}`, assigneeAccountId })
+      ),
+    ])
+    assert.equal(out[0].assigneeAccountId, "mother-owner")
+    assert.ok(out.slice(1).every((parent) => parent.assigneeAccountId === null))
+  })
+
+  it("strict decoder 保留 Assignee string／null，拒絕缺漏、錯誤型別與超長 ID", (t) => {
+    const { model } = harness(t)
+    const parse = (assigneeAccountId) => model.parsePlanningParentsResult({
+      status: "success", data: { parents: [validParent({ assigneeAccountId })] },
+    })
+    assert.equal(parse("mother-owner").data.parents[0].assigneeAccountId, "mother-owner")
+    assert.equal(parse(null).data.parents[0].assigneeAccountId, null)
+    for (const invalid of [undefined, 42, {}, "x".repeat(101)]) {
+      assert.throws(() => parse(invalid))
+    }
   })
 
   it("不 throw：null／undefined／非陣列／超 MISSING_DATA_LIMIT 全回 []", (t) => {

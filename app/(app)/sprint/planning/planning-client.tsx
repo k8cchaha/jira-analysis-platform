@@ -200,6 +200,7 @@ export function PlanningClient({
                 sprintId={sprint?.id ?? null}
                 tasks={filtered}
                 parents={parents}
+                memberIds={memberIds}
                 pmFpmAccountIds={pmFpmAccountIds}
                 pmOpmAccountIds={pmOpmAccountIds}
               />

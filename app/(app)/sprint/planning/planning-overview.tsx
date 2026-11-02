@@ -40,7 +40,7 @@ function round1(value: number): number {
  *
  * - 左側任務清單：**Team 模式**吃 `PlanningClient` 已依團隊過濾好的工作單
  *   （Dev-Task + QA-Task，`filtered`，與「任務分派狀況」同源）；**Reporter 模式**
- *   吃 server 端 RSC 傳入的全量母票（`parents`，含無子單者，不受 Team 過濾影響）。
+ *   吃 server 端 RSC 傳入的母票（`parents`，含無子單者），依母票自身 Assignee 套用團隊過濾。
  * - **Team 模式**（預設）：顯示 **Team → Dev Type** 兩層，一列一張工作單；點數顯示在
  *   子票（Dev 與 QA 都有），子票附 Assignee 欄（放在 SP 左方）。
  * - **Reporter 模式**（以開單人為出發點、主要給 PM）：顯示 **Reporter → Epic → 母票**
@@ -54,6 +54,7 @@ export function PlanningOverview({
   sprintId,
   tasks,
   parents,
+  memberIds,
   pmFpmAccountIds = [],
   pmOpmAccountIds = [],
 }: {
@@ -68,6 +69,8 @@ export function PlanningOverview({
   tasks: readonly PlanningTask[] | null
   /** 全部母票（Story/Task/Bug，含無子單者），供 Reporter View 依開單人（PM）分群。 */
   parents: readonly ReporterParent[] | null
+  /** 與工作單共用的團隊成員範圍；null 表示不套用 Assignee 篩選。 */
+  memberIds: ReadonlySet<string> | null
   /** group ent-fpm 成員 accountId；供 Reporter View 判定 PM（fpm 優先）。 */
   pmFpmAccountIds?: readonly string[]
   /** group ent-opm 成員 accountId。 */
@@ -78,10 +81,17 @@ export function PlanningOverview({
   // 資料已由 `PlanningClient` 依團隊過濾好；此處只防 null（仍以 useMemo 穩定參考）。
   const filtered = useMemo(() => tasks ?? [], [tasks])
 
-  // Reporter View 的母票：由 server 端 RSC 傳入（全量、含無子單母票），不受 Team 過濾影響。
-  // `parents` 是 server-trusted 的 typed 資料，此處只做寬鬆投影（壞值收斂成 null／[]），
+  // Reporter View 先寬鬆投影 RSC 母票，再以母票自身 Assignee 套用與工作單相同的成員範圍。
+  // 不以 Reporter、Epic 或子票 Assignee 決定篩選；無子單母票也可命中。
   // 不跑嚴格解碼器——避免單一母票的邊界值讓整頁崩潰。
-  const reporterParents = useMemo(() => projectReporterParents(parents ?? []), [parents])
+  const reporterParents = useMemo(() => {
+    const projected = projectReporterParents(parents ?? [])
+    return memberIds === null
+      ? projected
+      : projected.filter(
+          (parent) => parent.assigneeAccountId !== null && memberIds.has(parent.assigneeAccountId)
+        )
+  }, [parents, memberIds])
 
   // Reporter 的 PM 位階：依母票的 Reporter accountId 判定是否為 fpm／opm。
   const pmRank = useMemo(() => {
@@ -112,7 +122,7 @@ export function PlanningOverview({
     [filtered, mode, teamOfFn, teamOrder]
   )
 
-  // Reporter 模式吃「所有母票」（含無子單者），不受 Team 過濾影響；空狀態依各模式判斷。
+  // Reporter 模式吃依母票 Assignee 過濾後的母票（含無子單者）；空狀態依各模式判斷。
   const isEmpty = mode === "reporter" ? reporterParents.length === 0 : filtered.length === 0
 
   // 每張卡各自的展開狀態：`openGroups[key]` 缺省視為展開；「收合」把所有卡設為收起，
@@ -155,8 +165,20 @@ export function PlanningOverview({
       <button
         type="button"
         onClick={allCollapsed ? expandAll : collapseAll}
-        className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100 hover:text-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:bg-blue-900/60 dark:hover:text-blue-200"
       >
+        <svg
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d={allCollapsed ? "m4 6 4 4 4-4" : "m4 10 4-4 4 4"} />
+        </svg>
         {allCollapsed ? "展開" : "收合"}
       </button>
     </div>
@@ -168,7 +190,7 @@ export function PlanningOverview({
 
       {isEmpty ? (
         <p className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
-          {mode === "reporter" ? "此 Sprint 尚未有母票可供顯示。" : "此 Sprint 尚未有對應的工作單。"}
+          {mode === "reporter" ? "沒有符合目前篩選條件的母票。" : "此 Sprint 尚未有對應的工作單。"}
         </p>
       ) : (
         <div className="grid gap-6 lg:grid-cols-3">
@@ -767,10 +789,10 @@ function PieChart({
             </g>
           )
         })}
-        <text x="60" y="57" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
+        <text x="60" y="61" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
           {round1(total)}
         </text>
-        <text x="60" y="73" textAnchor="middle" className="fill-slate-500 text-[10px] dark:fill-slate-400">
+        <text x="60" y="77" textAnchor="middle" className="fill-slate-500 text-[10px] dark:fill-slate-400">
           {unitLabel}
         </text>
       </svg>
@@ -1076,10 +1098,10 @@ function DevTypePieChart({
             </g>
           )
         })}
-        <text x="60" y="57" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
+        <text x="60" y="61" textAnchor="middle" className="fill-slate-900 text-[22px] font-semibold dark:fill-white">
           {round1(total)}
         </text>
-        <text x="60" y="73" textAnchor="middle" className="fill-slate-500 text-[10px] dark:fill-slate-400">
+        <text x="60" y="77" textAnchor="middle" className="fill-slate-500 text-[10px] dark:fill-slate-400">
           {unitLabel}
         </text>
       </svg>

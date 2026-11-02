@@ -60,6 +60,8 @@ export interface ReporterParent {
   points: number | null
   /** Component 名稱清單；無或讀不到為空陣列。 */
   components: string[]
+  /** 母票自身的 Assignee accountId，供團隊篩選；未指派／不可用為 null。 */
+  assigneeAccountId: string | null
   /** 分群歸屬者的顯示名（有 Epic 為 Epic 的 Reporter；否則為母票自身 Reporter）。 */
   reporter: string | null
   /** 分群歸屬者的 accountId（同上；用於 PM 群比對）。 */
@@ -197,6 +199,7 @@ export function parsePlanningParentsResult(value: unknown): PlanningParentsResul
       components: stringList(parent.components),
       reporter: optionalString(parent.reporter),
       reporterAccountId: optionalString(parent.reporterAccountId, 100),
+      assigneeAccountId: optionalString(parent.assigneeAccountId, 100),
       issueType: optionalString(parent.issueType),
       epic: epicObject(parent.epic),
     }
@@ -239,6 +242,7 @@ export function projectReporterParents(value: unknown): ReporterParent[] {
       components: stringListLenient(parent.components),
       reporter: stringOrNull(parent.reporter),
       reporterAccountId: stringOrNull(parent.reporterAccountId),
+      assigneeAccountId: stringOrNull(parent.assigneeAccountId),
       issueType: stringOrNull(parent.issueType),
       epic: epicObjectLenient(parent.epic),
     })

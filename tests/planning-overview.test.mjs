@@ -79,6 +79,7 @@ function parent(key, over = {}) {
     components: [],
     reporter: null,
     reporterAccountId: null,
+    assigneeAccountId: null,
     issueType: "Story",
     epic: null,
     ...over,

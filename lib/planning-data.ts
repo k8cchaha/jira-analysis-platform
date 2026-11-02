@@ -141,13 +141,14 @@ const PLANNING_FIELDS = [
   DEV_TYPE_FIELD,
 ]
 
-/** 母票（Story/Task/Bug）自身要請求的欄位：summary、issuetype、parent（＝其 Epic）、
- * Story Points、reporter、components（後二者供 Reporter View 依開單人分群）。 */
+/** 母票（Story/Task/Bug）自身要請求的欄位；Reporter View 依 reporter 分群、
+ * 依母票自身的 assignee 套用團隊篩選，components 僅供顯示。 */
 const MOTHER_FIELDS = [
   "summary",
   "issuetype",
   "parent",
   "reporter",
+  "assignee",
   "components",
   STORY_POINTS_FIELD,
 ]
@@ -159,6 +160,7 @@ interface MotherInfo {
   epic: { key: string; summary: string | null } | null
   reporter: string | null
   reporterAccountId: string | null
+  assigneeAccountId: string | null
   components: string[]
   points: number | null
 }
@@ -310,6 +312,7 @@ function projectReporterParent(
     summary: info.summary,
     points: info.points,
     components: info.components,
+    assigneeAccountId: info.assigneeAccountId,
     reporter: owner ? owner.reporter : info.reporter,
     reporterAccountId: owner ? owner.reporterAccountId : info.reporterAccountId,
     issueType: info.issueType,
@@ -370,6 +373,7 @@ async function fetchSprintMothers(
         epic: epicOf(issue.fields.parent),
         reporter: assigneeDisplayName(issue.fields.reporter),
         reporterAccountId: assigneeAccountId(issue.fields.reporter),
+        assigneeAccountId: assigneeAccountId(issue.fields.assignee),
         components: componentNames(issue.fields.components),
         points: pointsOrNull(issue.fields[STORY_POINTS_FIELD]),
       })
