@@ -32,12 +32,12 @@ export default async function LoginPage({
             aria-label="分析圖標誌"
           >
             <rect width="64" height="64" rx="14" fill="#4f46e5"/>
-            <g fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+            <g fill="none" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 46 V28" stroke="#f87171"/>
               <path d="M32 46 V20" stroke="#facc15"/>
               <path d="M44 46 V34" stroke="#4ade80"/>
             </g>
-            <path d="M16 50 H48" stroke="#c7d2fe" stroke-width="4" stroke-linecap="round"/>
+            <path d="M16 50 H48" stroke="#c7d2fe" strokeWidth="4" strokeLinecap="round"/>
           </svg>
         </div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
