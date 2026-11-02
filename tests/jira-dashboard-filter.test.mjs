@@ -20,11 +20,18 @@ describe("dashboard filter model", () => {
   })
   it("preserves all reference groups and projects", () => {
     assert.deepEqual(DASHBOARD_TEAMS.map(({ label, group }) => [label, group]), [
-      ["Web", "ent-web"], ["BE1", "ent-be1"], ["BE2", "ent-be2"], ["Android", "ent-android"],
-      ["Design", "ent-design"], ["EP", "ent-ep"], ["iOS", "ent-ios"], ["SDET", "ent-sdet"],
-      ["SRE", "ent-sre"], ["Pride", "ent-pride"], ["QA", "ent-qa"],
+      ["Android", "ent-android"], ["AndroidTV", "ent-androidtv"], ["BE1", "ent-be1"], ["BE2", "ent-be2"],
+      ["iOS", "ent-ios"], ["Web", "ent-web"], ["Pride", "ent-pride"], ["Design", "ent-design"],
+      ["QA1", "ent-qa1"], ["QA2", "ent-qa2"], ["EP", "ent-ep"], ["SDET", "ent-sdet"], ["SRE", "ent-sre"],
     ])
     assert.deepEqual(DASHBOARD_PROJECTS.map(({ label, key }) => [label, key]), [["Saku", "sun"], ["Telasa", "tkk"], ["Pride", "pride"]])
+  })
+  it("accepts QA1, QA2 and AndroidTV, but rejects the retired QA scope", () => {
+    const filter = parseDashboardFilter(new URLSearchParams("mode=team-project&group=ent-qa1&group=ent-qa2&group=ent-androidtv"))
+    assert.deepEqual(filter.groups, ["ent-androidtv", "ent-qa1", "ent-qa2"])
+    assert.deepEqual(parseDashboardFilter(new URLSearchParams(serializeDashboardFilter(filter))), filter)
+    assert.throws(() => parseDashboardFilter(new URLSearchParams("mode=team-project&group=ent-qa")), DashboardFilterError)
+    assert.throws(() => parseDashboardFilter(new URLSearchParams("mode=team-project&group=ent-qa&group=ent-qa1")), DashboardFilterError)
   })
   it("canonicalizes repeated params and round trips the selected scope", () => {
     const query = serializeDashboardFilter(team)

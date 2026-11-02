@@ -1,10 +1,11 @@
 export const DASHBOARD_TEAMS = [
-  { label: "Web", group: "ent-web" }, { label: "BE1", group: "ent-be1" },
-  { label: "BE2", group: "ent-be2" }, { label: "Android", group: "ent-android" },
-  { label: "Design", group: "ent-design" }, { label: "EP", group: "ent-ep" },
-  { label: "iOS", group: "ent-ios" }, { label: "SDET", group: "ent-sdet" },
-  { label: "SRE", group: "ent-sre" }, { label: "Pride", group: "ent-pride" },
-  { label: "QA", group: "ent-qa" },
+  { label: "Android", group: "ent-android" }, { label: "AndroidTV", group: "ent-androidtv" },
+  { label: "BE1", group: "ent-be1" }, { label: "BE2", group: "ent-be2" },
+  { label: "iOS", group: "ent-ios" }, { label: "Web", group: "ent-web" },
+  { label: "Pride", group: "ent-pride" }, { label: "Design", group: "ent-design" },
+  { label: "QA1", group: "ent-qa1" }, { label: "QA2", group: "ent-qa2" },
+  { label: "EP", group: "ent-ep" }, { label: "SDET", group: "ent-sdet" },
+  { label: "SRE", group: "ent-sre" },
 ] as const
 export const DASHBOARD_PROJECTS = [
   { label: "Saku", key: "sun" }, { label: "Telasa", key: "tkk" }, { label: "Pride", key: "pride" },

@@ -47,9 +47,9 @@ function harness(fetcher = async () => success(), hookSnapshot, effects, reactOv
       if (name === "./actions") return { reauthorizeDashboardAction: () => { throw new Error("No server action in tests") } }
       if (name === "@/lib/jira-jql") return { SPRINT_PROJECTS: [{ key: "SUN", label: "Fixture project" }] } // Rendering fixture only; no JQL execution.
       if (name === "@/components/team-members-provider" && hookSnapshot) {
-        return { useTeamMembers: () => ({ groupStates: hookSnapshot, loadGroup: () => Promise.resolve(), retryGroup: () => Promise.resolve() }) }
+        return { useTeamMembers: () => ({ groupStates: typeof hookSnapshot === "function" ? hookSnapshot() : hookSnapshot, loadGroup: () => Promise.resolve(), retryGroup: () => Promise.resolve() }) }
       }
-      const owned = ["@/lib/jira-dashboard-filter", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown", "@/components/search-button"]
+      const owned = ["@/lib/jira-dashboard-filter", "@/lib/assignment-status", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown", "@/components/search-button"]
       if (owned.includes(name)) return load(`${name.slice(2)}.${name.startsWith("@/components/") ? "tsx" : "ts"}`)
       throw new Error(`Unexpected import: ${name}`)
     }
@@ -81,6 +81,43 @@ function deferredNetwork() {
 
 const render = (component, props = {}) => renderToStaticMarkup(createElement(component, props))
 
+/** Persistent hook slots simulate callback wiring across snapshots, not browser lifecycle. */
+function teamMappingFixture(groups = []) {
+  let snapshot = {}
+  let cursor = 0
+  const slots = []
+  const effects = []
+  const labels = []
+  const selected = []
+  const h = harness(undefined, () => snapshot, undefined, {
+    useState: (initial) => {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial
+      return [slots[index], (next) => { slots[index] = typeof next === "function" ? next(slots[index]) : next }]
+    },
+    useRef: (initial) => {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = { current: initial }
+      return slots[index]
+    },
+    useId: () => "fixture-team-map",
+    useEffect: (effect) => { effects.push(effect) },
+  })
+  const { TeamSelect } = h.load("components/team-select.tsx")
+  const onMembersReady = (value) => labels.push(plain(value))
+  const onGroupsChange = (...args) => { selected.push(plain(args)); groups = args[0] }
+  return {
+    h, labels, selected,
+    draw(next) {
+      snapshot = next
+      cursor = 0
+      const tree = TeamSelect({ groups, onGroupsChange, onMembersReady, perMember: false })
+      effects.splice(0).forEach((effect) => effect())
+      return tree
+    },
+  }
+}
+
 describe("application-scoped team memberships", () => {
   it("constructs without fetching and has stable, empty SSR snapshots", () => {
     const h = harness()
@@ -97,7 +134,7 @@ describe("application-scoped team memberships", () => {
     const store = h.createStore()
     const release = store.retain()
     assert.equal(h.calls.length, 4)
-    assert.equal(Object.keys(store.getSnapshot()).length, 11)
+    assert.equal(Object.keys(store.getSnapshot()).length, h.teams.length)
     // Even a requested/retried queued group must use the same bounded queue.
     const queuedGroup = h.teams.at(-1).group
     const queued = store.ensure(queuedGroup)
@@ -211,7 +248,7 @@ describe("application-scoped team memberships", () => {
     assert.equal(h.calls.length, 4)
     assert.equal(h.calls[0].init.signal.aborted, false)
     await network.drain()
-    assert.equal(h.calls.length, 11)
+    assert.equal(h.calls.length, h.teams.length)
     secondRelease()
     secondRelease() // Releases are idempotent.
     await tick()
@@ -463,6 +500,48 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     }
   })
 
+  it("shows QA1, QA2 and AndroidTV in both selectors and preloads their exact Jira groups", async () => {
+    const h = harness()
+    const store = h.createStore()
+    await store.preload()
+    assert.equal(h.calls.length, 13)
+    const requested = h.calls.map(({ group }) => group)
+    for (const group of ["ent-qa1", "ent-qa2", "ent-androidtv"]) assert.ok(requested.includes(group))
+    assert.equal(requested.includes("ent-qa"), false)
+    assert.throws(() => store.ensure("ent-qa"), /Invalid team group/)
+
+    const snapshot = {
+      "ent-qa1": { status: "success", members: [member("qa-one")] },
+      "ent-qa2": { status: "success", members: [member("qa-two")] },
+      "ent-androidtv": { status: "success", members: [member("tv-one")] },
+    }
+    for (const perMember of [true, false]) {
+      const effects = []
+      const consumer = harness(undefined, snapshot, effects)
+      const labels = []
+      const selected = []
+      const markup = render(consumer.load("components/team-select.tsx").TeamSelect, {
+        groups: ["ent-qa1", "ent-qa2", "ent-androidtv"], perMember,
+        onMembersReady: (value) => labels.push(plain(value)), onGroupsChange: (...args) => selected.push(plain(args)),
+      })
+      for (const label of ["QA1", "QA2", "AndroidTV"]) assert.match(markup, new RegExp(`<span>${label}</span>`))
+      assert.doesNotMatch(markup, /<span>QA<\/span>/)
+      const positions = h.teams.map(({ label }) => markup.indexOf(`<span>${label}</span>`))
+      assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])))
+      effects.splice(0).forEach((effect) => effect())
+      assert.deepEqual(labels, [{ "tv-one": "AndroidTV", "qa-one": "QA1", "qa-two": "QA2" }])
+      assert.deepEqual(selected, [[["ent-qa1", "ent-qa2", "ent-androidtv"], ["qa-one", "qa-two", "tv-one"], true]])
+    }
+    const dashboard = harness(undefined, snapshot)
+    const markup = render(dashboard.load("app/(app)/dashboard/dashboard-filter.tsx").DashboardFilter, {
+      viewerId: "fixture-viewer", filter: { mode: "team-project", groups: ["ent-qa1"], exclusions: {}, projects: [], days: 30 }, onApply: () => {},
+    })
+    for (const label of ["QA1", "QA2", "AndroidTV"]) assert.match(markup, new RegExp(`<span>${label}</span>`))
+    assert.doesNotMatch(markup, /<span>QA<\/span>/)
+    const positions = h.teams.map(({ label }) => markup.indexOf(`<span>${label}</span>`))
+    assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])))
+  })
+
   it("reports already-cached selected members and team labels to a newly mounted consumer", () => {
     const effects = []
     const seed = harness()
@@ -484,6 +563,110 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
       assert.equal(labels[0]["ent-web"], "Web")
       assert.equal(h.calls.length, 0)
     }
+  })
+
+  for (const perMember of [true, false]) {
+    for (const blocked of [undefined, { status: "loading" }, { status: "error", error: { code: "retry", message: "Fixture error" } }]) {
+      it(`reports known teams when another group is ${blocked?.status ?? "missing"}, perMember=${perMember}`, () => {
+        const effects = []
+        const snapshot = Object.fromEntries(harness().teams.map(({ group }) => [group, { status: "success", members: [member(group)] }]))
+        if (blocked) snapshot["ent-qa2"] = blocked
+        else delete snapshot["ent-qa2"]
+        const h = harness(undefined, snapshot, effects)
+        const labels = []
+        render(h.load("components/team-select.tsx").TeamSelect, {
+          groups: [], perMember, onGroupsChange: () => {}, onMembersReady: (value) => labels.push(plain(value)),
+        })
+        effects.splice(0).forEach((effect) => effect())
+        assert.equal(labels.length, 1)
+        assert.equal(Object.keys(labels[0]).length, h.teams.length - 1)
+        assert.equal(labels[0]["ent-web"], "Web")
+        assert.equal(labels[0]["ent-be1"], "BE1")
+        assert.equal(labels[0]["ent-qa2"], undefined)
+        const { computeAssignmentStatus } = h.load("lib/assignment-status.ts")
+        const teams = computeAssignmentStatus({
+          tasks: [
+            { points: 5, assigneeAccountId: "ent-web", assigneeDisplayName: "Fixture Web" },
+            { points: 3, assigneeAccountId: "ent-be1", assigneeDisplayName: "Fixture BE1" },
+            { points: 2, assigneeAccountId: "unknown", assigneeDisplayName: "Fixture Unknown" },
+            { points: 1, assigneeAccountId: null, assigneeDisplayName: null },
+          ],
+          teamOf: (accountId) => labels[0][accountId], teamOrder: h.teams.map((team) => team.label), perPersonCapacity: 20,
+        })
+        assert.deepEqual(plain(teams.map((team) => [team.label, team.assignedPoints])), [["BE1", 3], ["Web", 5], ["其他", 3]])
+        assert.equal(h.calls.length, 0)
+      })
+    }
+  }
+
+  it("updates full team maps on arrivals and retry, including label-only changes, without duplicate reports", () => {
+    const fixture = teamMappingFixture()
+    fixture.draw({})
+    assert.deepEqual(fixture.labels, [{}]) // An empty initial map is valid.
+    fixture.draw({ "ent-web": { status: "success", members: [member("shared")] } })
+    assert.deepEqual(fixture.labels.at(-1), { shared: "Web" })
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("shared")] },
+      "ent-qa2": { status: "error", error: { code: "retry", message: "Fixture error" } },
+    })
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("shared")] },
+      "ent-qa2": { status: "loading" },
+    })
+    assert.equal(fixture.labels.length, 2)
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("shared")] },
+      "ent-qa2": { status: "success", members: [member("shared")] },
+    })
+    assert.deepEqual(fixture.labels.at(-1), { shared: "QA2" }) // Same ID, different label must report.
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("shared")] },
+      "ent-be1": { status: "success", members: [member("other")] },
+      "ent-qa2": { status: "success", members: [member("shared")] },
+    })
+    assert.deepEqual(fixture.labels.at(-1), { shared: "QA2", other: "BE1" }) // Full replacement, not a delta.
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("shared")] },
+      "ent-be1": { status: "success", members: [member("other")] },
+      "ent-qa2": { status: "success", members: [member("shared")] },
+    })
+    assert.equal(fixture.labels.length, 4)
+    fixture.draw(Object.fromEntries(fixture.h.teams.map(({ group }) => [group, { status: "success", members: [] }])))
+    assert.deepEqual(fixture.labels.at(-1), {}) // Empty successful groups can clear the old map.
+    fixture.draw({})
+    assert.equal(fixture.labels.length, 5)
+  })
+
+  it("keeps configured team precedence when responses arrive in reverse order", () => {
+    const fixture = teamMappingFixture()
+    fixture.draw({ "ent-qa2": { status: "success", members: [member("shared")] } })
+    fixture.draw({
+      "ent-qa2": { status: "success", members: [member("shared")] },
+      "ent-web": { status: "success", members: [member("shared")] },
+    })
+    assert.deepEqual(fixture.labels, [{ shared: "QA2" }])
+  })
+
+  it("reports known display teams without publishing incomplete selected member IDs", () => {
+    const fixture = teamMappingFixture(["ent-web", "ent-be1"])
+    const tree = fixture.draw({
+      "ent-web": { status: "success", members: [member("a")] },
+      "ent-be1": { status: "loading" },
+    })
+    assert.deepEqual(fixture.labels, [{ a: "Web" }])
+    assert.deepEqual(fixture.selected, [])
+    const nodes = (node) => Array.isArray(node) ? node.flatMap(nodes)
+      : node && typeof node === "object" ? [node, ...nodes(node.props?.children)] : []
+    const label = nodes(tree).find((node) => node.type === "label" && nodes(node).some((child) => child.type === "span" && child.props.children === "Web"))
+    const input = nodes(label).find((node) => node.type === "input")
+    input.props.onChange({ target: { checked: true } })
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], [], false])
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("a")] },
+      "ent-be1": { status: "success", members: [member("b")] },
+    })
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], ["a", "b"], true])
+    assert.deepEqual(fixture.labels.at(-1), { a: "Web", b: "BE1" })
   })
 
   it("keeps whole-team error recovery accessible without a member expansion", () => {

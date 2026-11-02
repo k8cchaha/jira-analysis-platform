@@ -135,7 +135,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   useEffect(() => {
     if (mode !== "team-project") return
     let active = true
-    // Sequential restore bounds requests even when all eleven URL groups are selected.
+    // Sequential restore bounds requests even when all configured URL groups are selected.
     queueMicrotask(() => {
       void (async () => {
         for (const group of groups) {

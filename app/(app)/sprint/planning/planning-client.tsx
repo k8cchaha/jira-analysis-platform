@@ -12,6 +12,7 @@ import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
 import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
 import { PlanningOverview } from "@/app/(app)/sprint/planning/planning-overview"
 import { TeamSelect } from "@/components/team-select"
+import { useTeamMembers } from "@/components/team-members-provider"
 import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { EditDialog } from "@/components/edit-dialog"
@@ -189,6 +190,7 @@ export function PlanningClient({
             </div>
 
             <PlanningTabs tab={tab} onSwitch={switchTab} />
+            <TeamGroupingNotice />
 
             {tab === "overview" ? (
               <PlanningOverview
@@ -243,6 +245,31 @@ export function PlanningClient({
             </svg>
             更新中…
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 名單不完整時，避免把「其他」誤認為已確認的團隊歸屬；重試沿用共用 store。 */
+function TeamGroupingNotice() {
+  const { groupStates, retryGroup } = useTeamMembers()
+  const failed = DASHBOARD_TEAMS.filter((team) => groupStates[team.group]?.status === "error")
+  const pending = DASHBOARD_TEAMS.filter((team) => !groupStates[team.group] || groupStates[team.group]?.status === "loading")
+  if (!failed.length && !pending.length) return null
+
+  return (
+    <div role={failed.length ? "alert" : "status"} className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+      {pending.length > 0 && <p>團隊名單載入中：{pending.map((team) => team.label).join("、")}。</p>}
+      {failed.length > 0 && <p>團隊名單載入失敗：{failed.map((team) => team.label).join("、")}。</p>}
+      <p>已載入的團隊正常分組；「其他」暫時包含尚未確認團隊的成員。</p>
+      {failed.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {failed.map((team) => (
+            <button key={team.group} type="button" onClick={() => { void retryGroup(team.group) }} className="cursor-pointer rounded-lg border border-amber-300 px-3 py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600 dark:border-amber-800">
+              重試 {team.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

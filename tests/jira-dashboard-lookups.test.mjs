@@ -314,7 +314,7 @@ describe("complete bounded group pagination", () => {
     assert.equal(h.calls.length, 2)
   })
 
-  for (const group of ["jira-administrators", "ent-web&startAt=99", "ENT-WEB", "", null]) {
+  for (const group of ["jira-administrators", "ent-qa", "ent-web&startAt=99", "ENT-WEB", "", null]) {
     it(`rejects nonallowlisted group ${JSON.stringify(group)} before Jira`, async (t) => {
       const h = harness(t)
       await assert.rejects(() => h.service.getDashboardGroupMembers(group, credentials))
@@ -421,6 +421,18 @@ describe("independently authenticated private lookup endpoint", () => {
     assert.equal(h.authCalls(), 1)
     assert.deepEqual(h.tokenCalls, [undefined])
   })
+  for (const group of ["ent-qa1", "ent-qa2", "ent-androidtv"]) {
+    it(`loads new team ${group} with the normal authenticated lookup`, async (t) => {
+      const h = harness(t)
+      const response = await h.route().GET(routeRequest(`view=group&group=${group}`))
+      assert.equal(response.status, 200)
+      privateHeaders(response)
+      assert.deepEqual(await response.json(), { status: "success", members: [{ accountId: "user-1", displayName: "Fixture user-1" }] })
+      assert.equal(h.calls.length, 1)
+      assert.equal(h.calls[0].params.get("groupname"), group)
+      assert.equal(h.authCalls(), 1)
+    })
+  }
   it("returns 401 with private headers and never obtains a Jira token when logged out", async (t) => {
     const h = harness(t, { unauthenticated: true })
     const response = await h.route().GET(routeRequest("view=users&query=valid"))
@@ -434,7 +446,7 @@ describe("independently authenticated private lookup endpoint", () => {
     "", "view=users", "view=group", "view=arbitrary&query=valid", "view=users&query=%20",
     "view=users&query=valid&query=other", "view=users&view=group", "view=group&group=ent-web&group=ent-be1",
     "view=users&group=ent-web", "view=group&query=valid", "view=users&query=valid&path=user",
-    "view=group&group=jira-administrators", "view=group&group=ent-web%26startAt%3D99",
+    "view=group&group=jira-administrators", "view=group&group=ent-qa", "view=group&group=ent-web%26startAt%3D99",
     `view=users&query=${"x".repeat(101)}`, "view=users&query=safe%0Aquery",
     `view=group&group=${"x".repeat(2_050)}`,
   ]) {

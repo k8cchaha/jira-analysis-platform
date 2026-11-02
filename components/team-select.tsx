@@ -28,7 +28,7 @@ export function TeamSelect({
   onGroupsChange: (groups: string[], memberAccountIds: string[], ready: boolean) => void
   /** false 時只顯示團隊層級的複選，不展開逐人勾選/排除。 */
   perMember?: boolean
-  /** 全部團隊的成員名單載入完成後回報一次（accountId → 團隊 label），供下方成員開發狀況分組。 */
+  /** 依已成功載入的完整團隊名單，逐次回報全量 accountId → label 對照；僅供顯示分組，不代表篩選已完整。 */
   onMembersReady?: (byAccountId: Record<string, string>) => void
 }) {
   const id = useId()
@@ -79,20 +79,19 @@ export function TeamSelect({
   }
 
   // 登入區域已背景預載全部團隊；此處僅衍生成員分組，不擁有載入生命周期。
-  const reportedKeyRef = useRef("")
-  // 當所有團隊的成員都載入成功時，組出 accountId → label 映射並回報一次。
+  const reportedKeyRef = useRef<string | null>(null)
+  // 顯示分組可先使用成功名單；一組失敗不應阻擋其他團隊歸隊。
+  // 每次按固定團隊順序重建全量對照，保留跨組成員的後者優先規則。
   useEffect(() => {
     if (!onMembersReady) return
-    const allReady = DASHBOARD_TEAMS.every((team) => groupStates[team.group]?.status === "success")
-    if (!allReady) return
     const byAccountId: Record<string, string> = {}
     for (const team of DASHBOARD_TEAMS) {
       const state = groupStates[team.group]
       if (state?.status !== "success") continue
       for (const member of state.members) byAccountId[member.accountId] = team.label
     }
-    const key = [...Object.keys(byAccountId)].sort().join("\u0000")
-    if (!key || reportedKeyRef.current === key) return
+    const key = JSON.stringify(Object.entries(byAccountId).sort(([a], [b]) => a.localeCompare(b)))
+    if (reportedKeyRef.current === key) return
     reportedKeyRef.current = key
     onMembersReady(byAccountId)
   }, [onMembersReady, groupStates])
