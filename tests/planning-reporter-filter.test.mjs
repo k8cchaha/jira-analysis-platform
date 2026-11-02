@@ -213,6 +213,36 @@ describe("Planning Reporter View — shared Assignee filter", () => {
     assert.deepEqual(keys(f.draw().tree), ["SUN-100", "SUN-102"])
   })
 
+  it("Team Card 加總各 Dev Type 的 Dev/QA 點數，未估點與零點不影響總和，只計篩選後工作單", () => {
+    const f = fixture()
+    f.props.tasks = [
+      { ...child("SUN-200", "web", "SUN-100"), points: 1.1, devType: "Dev" },
+      { ...child("SUN-201", "web", "SUN-100"), points: 2.2, issueType: "QA-Task", devType: "Bug" },
+      { ...child("SUN-202", "web", "SUN-100"), points: null, devType: "Spike" },
+      { ...child("SUN-203", "web", "SUN-100"), points: 0, devType: null },
+      { ...child("SUN-204", "be", "SUN-101"), points: 100 },
+    ]
+    let view = f.select(["ent-web"], ["web"])
+    one(view.tree, "RadioGroup").props.onModeChange("team")
+    view = f.draw()
+    const card = one(view.tree, "DevTypeGroupSection")
+    for (const open of [true, false]) {
+      const rendered = card.type({ ...card.props, open })
+      assert.match(text(rendered), /4 張 · 3\.3 點/)
+      assert.doesNotMatch(text(rendered), /103\.3 點/)
+    }
+  })
+
+  it("Team Card 全部未估點仍顯示 0 點", () => {
+    const f = fixture()
+    f.props.tasks = [{ ...child("SUN-200", "web", "SUN-100"), points: null }]
+    let view = f.select(["ent-web"], ["web"])
+    one(view.tree, "RadioGroup").props.onModeChange("team")
+    view = f.draw()
+    const card = one(view.tree, "DevTypeGroupSection")
+    assert.match(text(card.type(card.props)), /1 張 · 0 點/)
+  })
+
   it("沿用現有未完整載入時的共用 memberIds 行為，不以 teamOf 當 Filter", () => {
     const f = fixture()
     const view = f.select(["ent-web"], [], false)

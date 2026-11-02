@@ -315,6 +315,10 @@ function DevTypeGroupSection({
   onToggle: () => void
 }) {
   const count = typeGroups.reduce((sum, group) => sum + group.tasks.length, 0)
+  const points = round1(typeGroups.reduce(
+    (sum, group) => sum + group.tasks.reduce((total, task) => total + (task.points ?? 0), 0),
+    0
+  ))
   return (
     <section className="overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/40">
       <button
@@ -337,7 +341,7 @@ function DevTypeGroupSection({
         </svg>
         <h4 className="text-sm font-semibold text-slate-800 dark:text-slate-200">{label}</h4>
         <span className="ml-auto tabular-nums text-xs text-slate-400 dark:text-slate-500">
-          {count} 張
+          {count} 張 · {points} 點
         </span>
       </button>
       {open && (
