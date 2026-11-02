@@ -67,6 +67,7 @@ export const SPRINT_DATA = {
     { id: 7634, name: "Sprint 28", startDate: "2026-09-08", endDate: "2026-09-21" },
     { id: 7640, name: "Sprint 29", startDate: "2026-09-22", endDate: "2026-10-05" },
     { id: 7676, name: "Sprint 30", startDate: "2026-10-06", endDate: "2026-10-19" },
+    { id: 7750, name: "Sprint 31", startDate: "2026-10-21", endDate: "2026-11-2" },
   ],
 } as const satisfies Record<SprintProjectKey, readonly SprintRecord[]>
 
