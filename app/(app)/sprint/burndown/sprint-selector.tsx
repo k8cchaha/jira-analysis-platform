@@ -94,7 +94,7 @@ export function SprintSelector({
           </div>
         </FilterDropdown>
         <p id="sprint-project-help" className="sr-only">
-          選擇要查看燃盡圖的專案。
+          選擇要查看的專案。
         </p>
       </div>
 
@@ -139,7 +139,7 @@ export function SprintSelector({
           )}
         </FilterDropdown>
         <p id="sprint-help" className="sr-only">
-          選擇要查看燃盡圖的 Sprint。
+          選擇要查看的 Sprint。
         </p>
       </div>
       {teamSlot ? <div className={FILTER_SELECT_WIDTH_CLASS.team}>{teamSlot}</div> : null}

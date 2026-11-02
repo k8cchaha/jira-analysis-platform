@@ -16,6 +16,9 @@ function harness() {
   let slots = []
   const clientSlots = []
   const overviewSlots = []
+  const componentSlots = new Map()
+  let effects = []
+  const viewport = { innerWidth: 1024, innerHeight: 768, addEventListener() {}, removeEventListener() {} }
   const modules = new Map()
   const react = {
     ...require("react"),
@@ -33,6 +36,12 @@ function harness() {
       }
       return slots[index].value
     },
+    useRef(initial) {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = { current: initial }
+      return slots[index]
+    },
+    useLayoutEffect(callback) { effects.push(callback) },
     useTransition: () => [false, (callback) => callback()],
   }
   const allowed = new Set([
@@ -43,7 +52,6 @@ function harness() {
   const inertComponent = (name) => ({ [name]: () => null })
   const stubs = {
     "@/app/(app)/sprint/burndown/sprint-selector": inertComponent("SprintSelector"),
-    "@/app/(app)/sprint/planning/capacity-panel": inertComponent("CapacityPanel"),
     "@/app/(app)/sprint/planning/assignment-status": inertComponent("AssignmentStatus"),
     "@/app/(app)/dashboard/parent-issue-type-icon": inertComponent("ParentIssueTypeIcon"),
     "@/components/team-select": inertComponent("TeamSelect"),
@@ -74,7 +82,7 @@ function harness() {
       if (name.startsWith("./")) return load(`lib/${name.slice(2)}`)
       throw new Error(`Unexpected import: ${name}`)
     }
-    vm.runInNewContext(`(function(require,module,exports){${compiled.get(path)}\n})`, {}, { filename: path })(fixtureRequire, mod, mod.exports)
+    vm.runInNewContext(`(function(require,module,exports){${compiled.get(path)}\n})`, { window: viewport }, { filename: path })(fixtureRequire, mod, mod.exports)
     return mod.exports
   }
   const { PlanningClient } = load(`${base}planning-client.tsx`)
@@ -82,12 +90,36 @@ function harness() {
   function draw(component, props, state) {
     slots = state
     cursor = 0
-    return component(props)
+    effects = []
+    const tree = component(props)
+    for (const node of elements(tree)) {
+      if (!node.props?.ref || typeof node.props.ref !== "object") continue
+      const rows = elements(tree).filter((item) => item.type === "li").length
+      node.props.ref.current = {
+        style: node.props.style ? { ...node.props.style } : {},
+        getBoundingClientRect: () => node.props.role === "tooltip"
+          ? { width: node.props.style.width, height: 62 + rows * 20 + (text(tree).includes("另 ") ? 20 : 0) }
+          : { left: 900, top: 650, width: 208, height: 208 },
+      }
+    }
+    for (const effect of effects) effect()
+    return tree
   }
   return {
     client: (props) => draw(PlanningClient, props, clientSlots),
     overview: (props) => draw(PlanningOverview, props, overviewSlots),
+    component(node) {
+      if (!componentSlots.has(node.type)) componentSlots.set(node.type, [])
+      return draw(node.type, node.props, componentSlots.get(node.type))
+    },
+    viewport,
   }
+}
+
+function elements(tree) {
+  if (Array.isArray(tree)) return tree.flatMap(elements)
+  if (!tree || typeof tree !== "object") return []
+  return [tree, ...elements(tree.props?.children)]
 }
 
 function nodes(tree, name) {
@@ -127,7 +159,7 @@ function fixture() {
   const props = {
     project: "SUN", sprints: [], selectedSprintId: 7517,
     sprint: { id: 7517, name: "Fixture Sprint", startDate: "2026-10-21", endDate: "2026-11-04" },
-    dataError: null, jiraBaseUrl: null, viewerAccountId: "viewer",
+    dataError: null, jiraBaseUrl: null,
     pmFpmAccountIds: ["pm"], pmOpmAccountIds: [],
     parents: [
       mother("SUN-100", "web", { epic: sharedEpic, components: ["Backend"] }),
@@ -151,7 +183,7 @@ function fixture() {
   one(view.tree, "RadioGroup").props.onModeChange("reporter")
   view = draw()
   return {
-    props, draw,
+    props, draw, h,
     select(groups, ids, ready = true) {
       const current = draw()
       const selector = one(current.client, "SprintSelector").props.teamSlot
@@ -163,6 +195,15 @@ function fixture() {
 }
 
 describe("Planning Reporter View — shared Assignee filter", () => {
+  it("Planning 不再顯示 Capacity 區塊，保留任務規劃與團隊篩選", () => {
+    const f = fixture()
+    const view = f.draw()
+    assert.equal(nodes(view.client, "CapacityPanel").length, 0)
+    assert.equal(nodes(view.client, "PlanningOverview").length, 1)
+    assert.equal(one(view.client, "SprintSelector").props.basePath, "/sprint/planning")
+    assert.doesNotMatch(text(view.client), /Capacity/)
+  })
+
   it("無選取顯示全部母票含未指派；單團隊只看母票 Assignee，不看 Reporter、子票或 Component", () => {
     const f = fixture()
     assert.deepEqual(keys(f.draw().tree), ["SUN-100", "SUN-101", "SUN-102", "SUN-103", "SUN-104"])
@@ -249,5 +290,144 @@ describe("Planning Reporter View — shared Assignee filter", () => {
     assert.equal(view.overviewProps.memberIds, null)
     assert.equal(keys(view.tree).length, 5)
     assert.equal(view.overviewProps.tasks.length, 2)
+  })
+})
+
+function tooltipFixture() {
+  const f = fixture()
+  f.props.jiraBaseUrl = "https://fixture.atlassian.net"
+  f.props.tasks = [
+    { ...f.props.tasks[0], assigneeAccountId: "a", assigneeDisplayName: "Alice", points: 3 },
+    { ...f.props.tasks[1], assigneeAccountId: "b", assigneeDisplayName: "Bob", points: 1, issueType: "QA-Task" },
+    { ...f.props.tasks[0], key: "SUN-202", assigneeAccountId: "a", assigneeDisplayName: "Alice", points: 6, devType: "Bug", parentIssueType: { status: "known", name: "Bug" } },
+    { ...f.props.tasks[0], key: "SUN-203", assigneeAccountId: "c", assigneeDisplayName: "Zero", points: null },
+  ]
+  f.select(["ent-web"], ["a", "b", "c"])
+  one(f.draw().tree, "RadioGroup").props.onModeChange("team")
+  return f
+}
+const renderChart = (f, name) => f.h.component(one(f.draw().tree, name))
+const chartRow = (tree, category) => elements(tree).find((node) => node.type === "a" && node.props["aria-label"] === `在 Jira 開啟 ${category} 工作單`)
+const renderTip = (f, tree) => f.h.component(one(tree, "MemberBreakdownTooltip"))
+
+describe("Planning member tooltip selection", () => {
+  it("requires exactly one selected group and an active filter, not visible team/member count", () => {
+    const f = tooltipFixture()
+    for (const [groups, ids, ready, expected] of [
+      [[], [], true, false], [["ent-web"], [], false, false], [["ent-web"], [], true, false],
+      [["ent-web"], ["a"], true, true], [["ent-web", "ent-be1"], ["a"], true, false],
+      [["ent-be1"], ["b"], true, true], [[], [], true, false],
+    ]) {
+      const view = f.select(groups, ids, ready)
+      assert.equal(view.overviewProps.showMemberBreakdown, expected)
+      if (view.overviewProps.tasks.length > 0) {
+        for (const name of ["PieChart", "DevTypePieChart"]) assert.equal(one(view.tree, name).props.showMemberBreakdown, expected)
+      }
+    }
+  })
+})
+
+describe("Planning member tooltip rendering", () => {
+  for (const [name, category] of [["PieChart", "Story"], ["DevTypePieChart", "Dev"]]) {
+    it(`${name}: hover/focus uses category-local points/count and keeps Jira links`, () => {
+      const f = tooltipFixture()
+      let tree = renderChart(f, name)
+      const href = chartRow(tree, category).props.href
+      chartRow(tree, category).props.onMouseEnter()
+      tree = renderChart(f, name)
+      let tip = renderTip(f, tree)
+      assert.match(text(tip), new RegExp(`${category} · 依成員`))
+      assert.match(text(tip), /Alice375%/)
+      assert.match(text(tip), /Bob125%/)
+      assert.match(text(tip), /Zero00%/)
+      assert.doesNotMatch(text(tip), /依團隊/)
+      one(tree, "MetricSwitch").props.onMetricChange("count")
+      tree = renderChart(f, name)
+      tip = renderTip(f, tree)
+      assert.match(text(tip), /Alice133\.3%/)
+      assert.match(text(tip), /Bob133\.3%/)
+      assert.match(text(tip), /Zero133\.3%/)
+      assert.equal(chartRow(tree, category).props.href, href)
+      chartRow(tree, category).props.onKeyDown({ key: "Escape" })
+      assert.equal(nodes(renderChart(f, name), "MemberBreakdownTooltip").length, 0)
+      chartRow(renderChart(f, name), category).props.onFocus()
+      assert.match(text(renderTip(f, renderChart(f, name))), /依成員/)
+      chartRow(renderChart(f, name), category).props.onBlur()
+      assert.equal(nodes(renderChart(f, name), "MemberBreakdownTooltip").length, 0)
+    })
+
+    it(`${name}: preserves team-mode tooltip when multiple teams are selected`, () => {
+      const f = tooltipFixture()
+      f.select(["ent-web", "ent-be1"], ["a", "b", "c"])
+      const tree = renderChart(f, name)
+      chartRow(tree, category).props.onMouseEnter()
+      const next = renderChart(f, name)
+      assert.match(text(next), /依團隊/)
+      assert.equal(nodes(next, "MemberBreakdownTooltip").length, 0)
+      assert.equal(nodes(next, "MemberBreakdownDetails").length, 0)
+    })
+
+    it(`${name}: long lists explicitly link a bounded preview to complete member details`, () => {
+      const f = tooltipFixture()
+      f.props.tasks = Array.from({ length: 20 }, (_, index) => ({
+        ...f.props.tasks[0], key: `SUN-${300 + index}`, assigneeAccountId: `id-${index}`,
+        assigneeDisplayName: `Member ${index} with a long display name`, points: 1,
+      }))
+      f.select(["ent-web"], f.props.tasks.map((task) => task.assigneeAccountId))
+      f.h.viewport.innerWidth = 240
+      f.h.viewport.innerHeight = 200
+      let tree = renderChart(f, name)
+      chartRow(tree, category).props.onFocus()
+      tree = renderChart(f, name)
+      const tip = renderTip(f, tree)
+      const tipRows = elements(tip).filter((n) => n.type === "li")
+      assert.equal(tipRows.length, 5)
+      assert.match(text(tip), /另 15 位，見成員明細/)
+      const bounds = tip.props.ref.current.getBoundingClientRect()
+      const { left, top } = tip.props.ref.current.style
+      assert.ok(parseFloat(left) >= 8 && parseFloat(left) + bounds.width <= 232)
+      assert.ok(parseFloat(top) >= 8 && parseFloat(top) + bounds.height <= 192)
+      const details = f.h.component(one(tree, "MemberBreakdownDetails"))
+      assert.equal(details.type, "details")
+      assert.equal(details.props.open, undefined)
+      assert.equal(elements(details).filter((n) => n.type === "li").length, 20)
+      assert.match(text(details), /Member 19 with a long display name/)
+      assert.ok(elements(details).filter((n) => n.type === "li").every((n) => text(n).endsWith("5%")))
+    })
+  }
+
+  it("focusable non-Jira rows/arcs show the same details, and zero-point members remain readable", () => {
+    const f = tooltipFixture()
+    f.props.jiraBaseUrl = null
+    for (const name of ["PieChart", "DevTypePieChart"]) {
+      let tree = renderChart(f, name)
+      const arc = elements(tree).find((node) => node.type === "g" && node.props.onMouseEnter)
+      assert.equal(arc.props.tabIndex, 0)
+      arc.props.onFocus()
+      tree = renderChart(f, name)
+      assert.match(text(renderTip(f, tree)), /依成員/)
+      const fallbackRow = elements(tree).find((node) => node.type === "li" && node.props.onFocus)
+      assert.equal(fallbackRow.props.tabIndex, 0)
+      fallbackRow.props.onMouseLeave()
+      assert.equal(nodes(renderChart(f, name), "MemberBreakdownTooltip").length, 0)
+    }
+    f.props.tasks = [{ ...f.props.tasks[0], points: null }]
+    f.select(["ent-web"], ["a"])
+    const tree = renderChart(f, "DevTypePieChart")
+    const details = f.h.component(one(tree, "MemberBreakdownDetails"))
+    assert.match(text(details), /Alice0 SP0%/)
+    const arc = elements(tree).find((node) => node.type === "g" && node.props.onMouseEnter)
+    assert.equal(arc, undefined)
+  })
+
+  it("the charts keep independent metrics and zero-value categories do not show a tooltip", () => {
+    const f = tooltipFixture()
+    let ticket = renderChart(f, "PieChart")
+    one(ticket, "MetricSwitch").props.onMetricChange("count")
+    ticket = renderChart(f, "PieChart")
+    assert.equal(one(ticket, "MetricSwitch").props.metric, "count")
+    assert.equal(one(renderChart(f, "DevTypePieChart"), "MetricSwitch").props.metric, "points")
+    chartRow(ticket, "Task").props.onFocus()
+    assert.equal(nodes(renderChart(f, "PieChart"), "MemberBreakdownTooltip").length, 0)
   })
 })

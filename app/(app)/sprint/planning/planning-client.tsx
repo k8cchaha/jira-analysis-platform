@@ -8,7 +8,6 @@ import type { PlanningTab } from "@/lib/burndown-params"
 import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
 import { parsePlanningSubsetResult } from "@/lib/planning-subset"
 import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
-import { CapacityPanel } from "@/app/(app)/sprint/planning/capacity-panel"
 import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
 import { PlanningOverview } from "@/app/(app)/sprint/planning/planning-overview"
 import { TeamSelect } from "@/components/team-select"
@@ -36,7 +35,6 @@ export function PlanningClient({
   tasks,
   dataError,
   jiraBaseUrl,
-  viewerAccountId,
   parents,
   pmFpmAccountIds,
   pmOpmAccountIds,
@@ -48,7 +46,6 @@ export function PlanningClient({
   tasks: readonly PlanningTask[]
   dataError: { code: string; message: string } | null
   jiraBaseUrl: string | null
-  viewerAccountId: string
   /** 全部母票（Story/Task/Bug，含無子單者），供 Reporter View。 */
   parents: readonly ReporterParent[]
   /** group ent-fpm 成員 accountId；fpm 優先於 opm。 */
@@ -146,13 +143,11 @@ export function PlanningClient({
         }
       />
 
-      {project && sprint && <CapacityPanel project={project} viewerAccountId={viewerAccountId} />}
-
       <div className="mt-8">
         {!project ? (
           <EmptyState
             title="請先選擇專案"
-            body="從上方選擇專案後，將顯示該專案 Sprint 的 Capacity 與分派計畫。"
+            body="從上方選擇專案後，將顯示該專案 Sprint 的分派計畫。"
             emoji="👋"
           />
         ) : !sprint ? (
@@ -201,6 +196,7 @@ export function PlanningClient({
                 tasks={filtered}
                 parents={parents}
                 memberIds={memberIds}
+                showMemberBreakdown={groups.length === 1 && memberIds !== null}
                 pmFpmAccountIds={pmFpmAccountIds}
                 pmOpmAccountIds={pmOpmAccountIds}
               />

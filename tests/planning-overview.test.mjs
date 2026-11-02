@@ -443,6 +443,188 @@ describe("countDevTypeLabels / sumDevTypeLabelPoints", () => {
   })
 })
 
+describe("buildDevTaskTypeMemberBreakdown", () => {
+  it("count／points：Dev+QA 工作單依母票 Story/Task/Bug 分類，忽略 none／unknown／其他母票類型", (t) => {
+    const m = harness(t)
+    const tasks = [
+      task("S-DEV", { parentIssueType: known("Story"), assigneeAccountId: "s", assigneeDisplayName: "Story member", points: 1.2 }),
+      task("S-QA", { issueType: "QA-Task", parentIssueType: known("STORY"), assigneeAccountId: "s", assigneeDisplayName: "Story member", points: 2.3 }),
+      task("T-DEV", { parentIssueType: known("Task"), assigneeAccountId: "t", assigneeDisplayName: "Task member", points: 4 }),
+      task("T-QA", { issueType: "QA-Task", parentIssueType: known("TASK"), assigneeAccountId: "t", assigneeDisplayName: "Task member", points: null }),
+      task("B-DEV", { parentIssueType: known("Bug"), assigneeAccountId: "b", assigneeDisplayName: "Bug member", points: 5 }),
+      task("B-QA", { issueType: "QA-Task", parentIssueType: known("bug"), assigneeAccountId: "b", assigneeDisplayName: "Bug member", points: 0.5 }),
+      task("NONE", { parentIssueType: none, assigneeAccountId: "excluded", points: 99 }),
+      task("UNKNOWN", { parentIssueType: unknown, assigneeAccountId: "excluded", points: 99 }),
+      task("EPIC", { parentIssueType: known("Epic"), assigneeAccountId: "excluded", points: 99 }),
+    ]
+    for (const [issueType, accountId, label, points] of [
+      ["story", "s", "Story member", 3.5],
+      ["task", "t", "Task member", 4],
+      ["bug", "b", "Bug member", 5.5],
+    ]) {
+      for (const metric of ["count", "points"]) {
+        const value = metric === "count" ? 2 : points
+        assert.deepEqual(plain(m.buildDevTaskTypeMemberBreakdown({ tasks, issueType, metric })), {
+          total: value, members: [{ accountId, label, value }],
+        }, `${issueType}/${metric}`)
+      }
+    }
+  })
+})
+
+describe("buildDevTypeLabelMemberBreakdown", () => {
+  it("count／points：Dev+QA 工作單依正規化 Dev Type 分類，未知／null／空值併入未分類", (t) => {
+    const m = harness(t)
+    const tasks = [
+      task("PRE", { devType: "pre-spike", assigneeAccountId: "member", points: 1 }),
+      task("SPIKE", { issueType: "QA-Task", devType: "SPIKE", assigneeAccountId: "member", points: 2 }),
+      task("DEV", { devType: "dev", assigneeAccountId: "member", points: 3 }),
+      task("DEV-QA", { issueType: "QA-Task", devType: "Dev", assigneeAccountId: "member", points: null }),
+      task("BUG", { issueType: "QA-Task", devType: "bug", assigneeAccountId: "member", points: 4 }),
+      task("OP-TASK", { devType: "op-task", assigneeAccountId: "member", points: 5 }),
+      task("OP-BUG", { issueType: "QA-Task", devType: "OP-BUG", assigneeAccountId: "member", points: 6 }),
+      task("UNKNOWN", { devType: "Something Else", assigneeAccountId: "member", points: 0.1 }),
+      task("NULL", { issueType: "QA-Task", devType: null, assigneeAccountId: "member", points: 0.2 }),
+      task("EMPTY", { devType: "", assigneeAccountId: "member", points: null }),
+    ]
+    for (const [label, count, points] of [
+      ["Pre-Spike", 1, 1], ["Spike", 1, 2], ["Dev", 2, 3], ["Bug", 1, 4],
+      ["OP-Task", 1, 5], ["OP-Bug", 1, 6], ["未分類", 3, 0.3],
+    ]) {
+      for (const metric of ["count", "points"]) {
+        const value = metric === "count" ? count : points
+        assert.deepEqual(plain(m.buildDevTypeLabelMemberBreakdown({ tasks, label, metric })), {
+          total: value, members: [{ accountId: "member", label: "member", value }],
+        }, `${label}/${metric}`)
+      }
+    }
+  })
+})
+
+for (const [name, category] of [
+  ["buildDevTaskTypeMemberBreakdown", { issueType: "story" }],
+  ["buildDevTypeLabelMemberBreakdown", { label: "Dev" }],
+]) {
+  describe(`${name} — 共用成員份額契約`, () => {
+    const selected = (key, over = {}) => task(key, { devType: "Dev", ...over })
+    const other = (key, over = {}) => task(key, { devType: "Bug", parentIssueType: known("Bug"), ...over })
+
+    it("count／points：同 ID 合併、同名不同 ID 保留；分母只算分類內已指派工作單，非全團隊總量", (t) => {
+      const m = harness(t)
+      const tasks = [
+        selected("DEV-1", { assigneeAccountId: "a", assigneeDisplayName: " Alex ", points: 1 }),
+        selected("QA-1", { issueType: "QA-Task", assigneeAccountId: "a", assigneeDisplayName: "Alex", points: 2 }),
+        selected("DEV-2", { assigneeAccountId: "b", assigneeDisplayName: "Alex", points: 4 }),
+        selected("UNASSIGNED", { assigneeAccountId: null, assigneeDisplayName: "Not a member", points: 50 }),
+        other("OTHER", { assigneeAccountId: "outside", assigneeDisplayName: "Outside category", points: 99 }),
+        other("OTHER-A", { assigneeAccountId: "a", assigneeDisplayName: "A different category name", points: 99 }),
+      ]
+      const count = plain(m[name]({ tasks, ...category, metric: "count" }))
+      assert.deepEqual(count, { total: 3, members: [
+        { accountId: "a", label: "Alex", value: 2 },
+        { accountId: "b", label: "Alex", value: 1 },
+      ] })
+      assert.notEqual(count.total, tasks.length)
+      const points = plain(m[name]({ tasks, ...category, metric: "points" }))
+      assert.deepEqual(points, { total: 7, members: [
+        { accountId: "b", label: "Alex", value: 4 },
+        { accountId: "a", label: "Alex", value: 3 },
+      ] })
+      assert.notEqual(points.total, tasks.reduce((sum, item) => sum + (item.points ?? 0), 0))
+    })
+
+    it("缺少／空白名稱以 ID 顯示；保留零點數 Assignee，不虛構 roster／Reporter／未指派成員", (t) => {
+      const m = harness(t)
+      const tasks = [
+        selected("NULL-NAME", { assigneeAccountId: "id-a", points: null, reporter: "Roster-only person" }),
+        selected("BLANK-NAME", { issueType: "QA-Task", assigneeAccountId: "id-b", assigneeDisplayName: " \t ", points: 0 }),
+        selected("EMPTY-NAME", { assigneeAccountId: "id-c", assigneeDisplayName: "", points: null }),
+        selected("UNASSIGNED", { assigneeAccountId: null, assigneeDisplayName: "Unassigned name", points: 100 }),
+        other("OTHER", { assigneeAccountId: "no-selected-tasks", points: 100 }),
+      ]
+      for (const metric of ["count", "points"]) {
+        const value = metric === "count" ? 1 : 0
+        assert.deepEqual(plain(m[name]({ tasks, ...category, metric })), {
+          total: value * 3,
+          members: ["id-a", "id-b", "id-c"].map((accountId) => ({ accountId, label: accountId, value })),
+        })
+      }
+    })
+
+    it("空輸入／空分類／分類僅有未指派工作單 → total 0、members 空（兩種 metric）", (t) => {
+      const m = harness(t)
+      for (const tasks of [
+        [],
+        [other("OTHER", { assigneeAccountId: "a", points: 5 })],
+        [selected("UNASSIGNED", { assigneeAccountId: null, points: 5 })],
+      ]) {
+        for (const metric of ["count", "points"]) {
+          assert.deepEqual(plain(m[name]({ tasks, ...category, metric })), { total: 0, members: [] })
+        }
+      }
+    })
+
+    it("輸入順序不影響結果：同 ID 取 zh 最小非空白名稱、值降序→名稱 zh→ID 排序", (t) => {
+      const m = harness(t)
+      // zh 的「阿」在「波」之前，與 Unicode code point 順序相反。
+      const tasks = [
+        selected("A-ZH", { assigneeAccountId: "rename", assigneeDisplayName: " 波 ", points: 1 }),
+        selected("A-BLANK", { assigneeAccountId: "rename", assigneeDisplayName: " ", points: 1 }),
+        selected("A-LEAST", { issueType: "QA-Task", assigneeAccountId: "rename", assigneeDisplayName: " 阿 ", points: 1 }),
+        selected("A-NULL", { assigneeAccountId: "rename", assigneeDisplayName: null, points: 1 }),
+        selected("B", { assigneeAccountId: "wave", assigneeDisplayName: "波", points: 1 }),
+        selected("C", { assigneeAccountId: "a-same", assigneeDisplayName: "同名", points: 1 }),
+        selected("D", { assigneeAccountId: "b-same", assigneeDisplayName: "同名", points: 1 }),
+        selected("E", { assigneeAccountId: "first-name", assigneeDisplayName: "阿", points: 1 }),
+      ]
+      const expected = { total: 8, members: [
+        { accountId: "rename", label: "阿", value: 4 },
+        { accountId: "first-name", label: "阿", value: 1 },
+        { accountId: "wave", label: "波", value: 1 },
+        { accountId: "a-same", label: "同名", value: 1 },
+        { accountId: "b-same", label: "同名", value: 1 },
+      ] }
+      const before = plain(tasks)
+      for (const metric of ["count", "points"]) {
+        for (let offset = 0; offset < tasks.length; offset += 1) {
+          const rotated = [...tasks.slice(offset), ...tasks.slice(0, offset)]
+          for (const ordered of [rotated, [...rotated].reverse()]) {
+            assert.deepEqual(plain(m[name]({ tasks: ordered, ...category, metric })), expected)
+          }
+        }
+      }
+      assert.deepEqual(tasks, before)
+    })
+
+    it("points：先加總再四捨五入一位小數；total 由原始點數加總，不加總已捨入 bucket", (t) => {
+      const m = harness(t)
+      const tasks = [
+        selected("A1", { assigneeAccountId: "a", assigneeDisplayName: "Alice", points: 0.11 }),
+        selected("A2", { assigneeAccountId: "a", assigneeDisplayName: "Alice", points: 0.12 }),
+        selected("B1", { assigneeAccountId: "b", assigneeDisplayName: "Bob", points: 0.12 }),
+        selected("B2", { issueType: "QA-Task", assigneeAccountId: "b", assigneeDisplayName: "Bob", points: 0.12 }),
+        selected("C1", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: 0.1 }),
+        selected("C2", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: 0.2 }),
+        selected("C3", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: null }),
+        selected("C4", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: 0.14 }),
+        selected("C5", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: 0.14 }),
+        selected("C6", { assigneeAccountId: "c", assigneeDisplayName: "Charlie", points: 0.01 }),
+      ]
+      // 原始 bucket：Alice 0.23、Bob 0.24、Charlie 0.59；捨入後 Alice/Bob 同值，改依名稱排序。
+      const expected = { total: 1.1, members: [
+        { accountId: "c", label: "Charlie", value: 0.6 },
+        { accountId: "a", label: "Alice", value: 0.2 },
+        { accountId: "b", label: "Bob", value: 0.2 },
+      ] }
+      for (const ordered of [tasks, [...tasks].reverse()]) {
+        const got = plain(m[name]({ tasks: ordered, ...category, metric: "points" }))
+        assert.deepEqual(got, expected)
+        assert.notEqual(got.total, got.members.reduce((sum, member) => sum + member.value, 0))
+      }
+    })
+  })
+}
+
 describe("buildDevTypeLabelTeamBreakdown", () => {
   const teamOf = (id) => (id === "aa1" ? "Web" : id === "aa2" ? "QA" : undefined)
   const base = { teamOf, teamOrder: ["Web", "QA"] }

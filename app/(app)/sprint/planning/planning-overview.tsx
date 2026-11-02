@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useMemo, useRef, useState, type ReactNode } from "react"
+import { Fragment, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import type { PlanningTask, ReporterParent } from "@/lib/planning-subset"
 import { projectReporterParents } from "@/lib/planning-subset"
 import {
@@ -8,6 +8,8 @@ import {
   buildReporterHierarchy,
   buildDevTaskTypeTeamBreakdown,
   buildDevTypeLabelTeamBreakdown,
+  buildDevTaskTypeMemberBreakdown,
+  buildDevTypeLabelMemberBreakdown,
   countDevTaskTypes,
   countDevTypeLabels,
   sumDevTaskTypePoints,
@@ -19,6 +21,7 @@ import {
   type OverviewMetric,
   type ReporterGroup,
   type TypeTeamBreakdown,
+  type TypeMemberBreakdown,
 } from "@/lib/planning-overview"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
 import { TicketLink } from "@/components/ticket-link"
@@ -55,6 +58,7 @@ export function PlanningOverview({
   tasks,
   parents,
   memberIds,
+  showMemberBreakdown = false,
   pmFpmAccountIds = [],
   pmOpmAccountIds = [],
 }: {
@@ -71,6 +75,8 @@ export function PlanningOverview({
   parents: readonly ReporterParent[] | null
   /** 與工作單共用的團隊成員範圍；null 表示不套用 Assignee 篩選。 */
   memberIds: ReadonlySet<string> | null
+  /** 只有已生效的單團隊範圍，圖表提示才改為成員份額。 */
+  showMemberBreakdown?: boolean
   /** group ent-fpm 成員 accountId；供 Reporter View 判定 PM（fpm 優先）。 */
   pmFpmAccountIds?: readonly string[]
   /** group ent-opm 成員 accountId。 */
@@ -239,6 +245,7 @@ export function PlanningOverview({
               sprintId={sprintId}
               teamOf={teamOf}
               teamOrder={teamOrder}
+              showMemberBreakdown={showMemberBreakdown}
             />
             <DevTypePieChart
               tasks={filtered}
@@ -246,6 +253,7 @@ export function PlanningOverview({
               sprintId={sprintId}
               teamOf={teamOf}
               teamOrder={teamOrder}
+              showMemberBreakdown={showMemberBreakdown}
             />
           </div>
         </div>
@@ -614,26 +622,117 @@ function WorkItemRow({
 /** 圓餅圖中央/弧段的統計量：預設點數，可切到張數。 */
 type PieMetric = OverviewMetric
 
-/**
- * 票種分布圓餅圖（donut，依工作單的母票類型分 Story / Task / Bug）。
- *
- * - 圖下方：張數／點數 切換開關（預設點數——弧段比例依所選量算）。
- * - 圖下方：數據分析明細（各票種的顏色、數值、百分比）。
- * - 點任一弧段／明細列 → 在 Jira 以「該票種母票底下的工作單」開一個 search 分頁。
- * - hover 弧段 → 弧加粗、提亮，並在圖旁浮現「該票種 × 各團隊」比例（跟隨張數/點數）。
- */
+/** Member preview and the keyboard/touch-readable list share the same category denominator. */
+function memberPercent(value: number, total: number): number {
+  return total === 0 ? 0 : round1(value / total * 100)
+}
+
+function MemberBreakdownDetails({ categories, unit }: {
+  categories: { label: string; breakdown: TypeMemberBreakdown }[]
+  unit: string
+}) {
+  return (
+    <details className="mt-3 text-xs text-slate-600 dark:text-slate-300">
+      <summary className="cursor-pointer rounded py-2 focus-visible:outline-2 focus-visible:outline-blue-500">成員明細</summary>
+      <div className="mt-2 space-y-3">
+        {categories.map(({ label, breakdown }) => (
+          <section key={label} aria-label={`${label} 成員明細`}>
+            <h5 className="mb-1 font-semibold text-slate-800 dark:text-slate-200">{label} · {breakdown.total} {unit}</h5>
+            {breakdown.members.length === 0 ? <p>此類型暫無工作單</p> : (
+              <ul className="space-y-1">
+                {breakdown.members.map((member) => (
+                  <li key={member.accountId} className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-words">{member.label}</span>
+                    <span className="shrink-0 tabular-nums">{member.value} {unit}</span>
+                    <span className="w-12 shrink-0 text-right tabular-nums">{memberPercent(member.value, breakdown.total)}%</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
+      </div>
+    </details>
+  )
+}
+
+/** Bounded, noninteractive preview; a complete member list remains in the disclosure. */
+function MemberBreakdownTooltip({ label, breakdown, unit, midDeg, chartRef, onDismiss }: {
+  label: string
+  breakdown: TypeMemberBreakdown
+  unit: string
+  midDeg: number
+  chartRef: { current: HTMLDivElement | null }
+  onDismiss: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const margin = 8
+  const width = Math.min(288, window.innerWidth - margin * 2)
+  const budget = Math.min(320, window.innerHeight - margin * 2)
+  // Header/padding = 62px, rows and optional remaining-count footer = 20px each.
+  const capacity = Math.max(0, Math.floor((budget - 62) / 20))
+  const visibleCount = breakdown.members.length <= capacity ? breakdown.members.length : Math.max(0, capacity - 1)
+  const remaining = breakdown.members.length - visibleCount
+  useLayoutEffect(() => {
+    const element = ref.current
+    const chart = chartRef.current
+    if (!element || !chart) return
+    const bounds = element.getBoundingClientRect()
+    const rect = chart.getBoundingClientRect()
+    const rad = midDeg * Math.PI / 180
+    const ux = Math.sin(rad)
+    const uy = -Math.cos(rad)
+    const x = rect.left + (60 + 58 * ux) * (208 / 120)
+    const y = rect.top + (60 + 58 * uy) * (208 / 120)
+    const left = x + ux * (bounds.width / 2 + 12) - bounds.width / 2
+    const top = y + uy * (bounds.height / 2 + 12) - bounds.height / 2
+    element.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - bounds.width - margin))}px`
+    element.style.top = `${Math.max(margin, Math.min(top, window.innerHeight - bounds.height - margin))}px`
+    // Fixed coordinates become obsolete when the document or viewport moves.
+    window.addEventListener("resize", onDismiss)
+    window.addEventListener("scroll", onDismiss, true)
+    return () => {
+      window.removeEventListener("resize", onDismiss)
+      window.removeEventListener("scroll", onDismiss, true)
+    }
+  }, [chartRef, midDeg, onDismiss, width, visibleCount, breakdown, unit])
+  if (width < 160 || budget < 82) return null
+  return (
+    <div ref={ref} role="tooltip" style={{ width, left: margin, top: margin }}
+      className="pointer-events-none fixed z-20 rounded-xl border border-slate-200 bg-white/95 p-2.5 text-xs shadow-xl backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
+      <div className="h-10 border-b border-slate-100 dark:border-slate-800">
+        <p className="truncate font-semibold text-slate-800 dark:text-slate-200">{label} · 依成員</p>
+        <p className="tabular-nums text-slate-500 dark:text-slate-400">{breakdown.total} {unit}</p>
+      </div>
+      <ul>
+        {breakdown.members.slice(0, visibleCount).map((member) => (
+          <li key={member.accountId} className="flex h-5 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-slate-600 dark:text-slate-300">{member.label}</span>
+            <span className="shrink-0 tabular-nums text-slate-700 dark:text-slate-200">{member.value}</span>
+            <span className="w-12 shrink-0 text-right tabular-nums text-slate-500 dark:text-slate-400">{memberPercent(member.value, breakdown.total)}%</span>
+          </li>
+        ))}
+      </ul>
+      {remaining > 0 && <p className="h-5 truncate leading-5 text-slate-500 dark:text-slate-400">另 {remaining} 位，見成員明細</p>}
+    </div>
+  )
+}
+
+/** 母票 Story/Task/Bug donut；分類總量不變，單團隊提示改為 Assignee 份額。 */
 function PieChart({
   tasks,
   jiraBaseUrl,
   sprintId,
   teamOf,
   teamOrder,
+  showMemberBreakdown,
 }: {
   tasks: readonly PlanningTask[]
   jiraBaseUrl: string | null
   sprintId: number | null
   teamOf: Record<string, string>
   teamOrder: readonly string[]
+  showMemberBreakdown: boolean
 }) {
   const [metric, setMetric] = useState<PieMetric>("points")
   const [hoverType, setHoverType] = useState<"story" | "task" | "bug" | null>(null)
@@ -659,6 +758,11 @@ function PieChart({
       bug: buildDevTaskTypeTeamBreakdown({ tasks, issueType: "bug", metric, teamOf: teamOfFn, teamOrder }),
     }
   }, [tasks, teamOf, teamOrder, metric])
+  const memberBreakdowns = useMemo(() => showMemberBreakdown ? {
+    story: buildDevTaskTypeMemberBreakdown({ tasks, issueType: "story", metric }),
+    task: buildDevTaskTypeMemberBreakdown({ tasks, issueType: "task", metric }),
+    bug: buildDevTaskTypeMemberBreakdown({ tasks, issueType: "bug", metric }),
+  } : null, [tasks, metric, showMemberBreakdown])
 
   const totalCount = counts.story + counts.task + counts.bug
   const totalPoints = round1(sums.story + sums.task + sums.bug)
@@ -729,7 +833,7 @@ function PieChart({
   }
   const showTip = (key: "story" | "task" | "bug", midDeg: number) => {
     setHoverType(key)
-    setTip(computeTip(midDeg))
+    setTip(showMemberBreakdown ? null : computeTip(midDeg))
   }
   const hideTip = () => {
     setHoverType(null)
@@ -786,8 +890,12 @@ function PieChart({
           return (
             <g
               key={arc.key}
+              tabIndex={href ? undefined : 0}
               onMouseEnter={() => showTip(arc.key, arc.midDeg)}
               onMouseLeave={hideTip}
+              onFocus={() => showTip(arc.key, arc.midDeg)}
+              onBlur={hideTip}
+              onKeyDown={(event) => { if (event.key === "Escape") hideTip() }}
             >
               {inner}
             </g>
@@ -801,9 +909,13 @@ function PieChart({
         </text>
       </svg>
 
+      {memberBreakdowns && hoverType && hovered?.arc && (
+        <MemberBreakdownTooltip label={hovered.type.label} breakdown={memberBreakdowns[hoverType]} unit={unitLabel}
+          midDeg={hovered.arc.midDeg} chartRef={wrapRef} onDismiss={hideTip} />
+      )}
       {/* hover 某票種弧段時，浮現「該票種 × 各團隊」的比例（跟隨張數/點數）。
           fixed 定位依弧段中點角並 clamp 在視窗內；該票種無弧段時不顯示。 */}
-      {hovered && hovered.arc && tip && (
+      {!showMemberBreakdown && hovered && hovered.arc && tip && (
         <div
           role="tooltip"
           style={{ left: tip.left, top: tip.top }}
@@ -835,6 +947,7 @@ function PieChart({
       )}
       </div>
 
+      {memberBreakdowns && <MemberBreakdownDetails unit={unitLabel} categories={types.map((type) => ({ label: type.label, breakdown: memberBreakdowns[type.key] }))} />}
       {/* 張數／點數 切換開關（預設點數），置右於圖下方。 */}
       <div className="mt-4 flex justify-end">
         <MetricSwitch metric={metric} onMetricChange={setMetric} />
@@ -858,17 +971,20 @@ function PieChart({
             </>
           )
           const rowClass = "flex items-center gap-2 px-2 py-2"
+          const showRowTip = () => {
+            const arc = arcs.find((a) => a.key === segment.key)
+            if (arc) showTip(segment.key, arc.midDeg)
+            else hideTip()
+          }
           const rowProps = {
-            // 資料列 hover 帶出同一票種的團隊 breakdown；無弧段（0 張/點）則只 highlight、不浮提示。
-            onMouseEnter: () => {
-              const arc = arcs.find((a) => a.key === segment.key)
-              if (arc) showTip(segment.key, arc.midDeg)
-              else hideTip()
-            },
+            onMouseEnter: showRowTip,
             onMouseLeave: hideTip,
+            onFocus: showRowTip,
+            onBlur: hideTip,
+            onKeyDown: (event: { key: string }) => { if (event.key === "Escape") hideTip() },
           }
           if (!href) return (
-            <li key={segment.key} className={rowClass} {...rowProps}>{content}</li>
+            <li key={segment.key} className={rowClass} tabIndex={0} {...rowProps}>{content}</li>
           )
           return (
             <li key={segment.key}>
@@ -912,12 +1028,14 @@ function DevTypePieChart({
   sprintId,
   teamOf,
   teamOrder,
+  showMemberBreakdown,
 }: {
   tasks: readonly PlanningTask[]
   jiraBaseUrl: string | null
   sprintId: number | null
   teamOf: Record<string, string>
   teamOrder: readonly string[]
+  showMemberBreakdown: boolean
 }) {
   const [metric, setMetric] = useState<PieMetric>("points")
   const [hoverLabel, setHoverLabel] = useState<string | null>(null)
@@ -968,6 +1086,9 @@ function DevTypePieChart({
     }
     return out
   }, [tasks, segments, metric, teamOfFn, teamOrder])
+  const memberBreakdowns = useMemo(() => showMemberBreakdown ? Object.fromEntries(
+    segments.map((segment) => [segment.label, buildDevTypeLabelMemberBreakdown({ tasks, label: segment.label, metric })])
+  ) : null, [tasks, segments, metric, showMemberBreakdown])
 
   const valueOf = (label: string) => (metric === "points" ? sums[label] ?? 0 : counts[label] ?? 0)
   const total = round1(
@@ -1040,7 +1161,7 @@ function DevTypePieChart({
   }
   const showTip = (label: string, midDeg: number) => {
     setHoverLabel(label)
-    setTip(computeTip(midDeg))
+    setTip(showMemberBreakdown ? null : computeTip(midDeg))
   }
   const hideTip = () => {
     setHoverLabel(null)
@@ -1095,8 +1216,12 @@ function DevTypePieChart({
           return (
             <g
               key={arc.label}
+              tabIndex={href ? undefined : 0}
               onMouseEnter={() => showTip(arc.label, arc.midDeg)}
               onMouseLeave={hideTip}
+              onFocus={() => showTip(arc.label, arc.midDeg)}
+              onBlur={hideTip}
+              onKeyDown={(event) => { if (event.key === "Escape") hideTip() }}
             >
               {inner}
             </g>
@@ -1110,7 +1235,11 @@ function DevTypePieChart({
         </text>
       </svg>
 
-      {hovered && hovered.arc && tip && (
+      {memberBreakdowns && hoverLabel && hovered?.arc && (
+        <MemberBreakdownTooltip label={hovered.label} breakdown={memberBreakdowns[hoverLabel]} unit={unitLabel}
+          midDeg={hovered.arc.midDeg} chartRef={wrapRef} onDismiss={hideTip} />
+      )}
+      {!showMemberBreakdown && hovered && hovered.arc && tip && (
         <div
           role="tooltip"
           style={{ left: tip.left, top: tip.top }}
@@ -1142,6 +1271,7 @@ function DevTypePieChart({
       )}
       </div>
 
+      {memberBreakdowns && <MemberBreakdownDetails unit={unitLabel} categories={segments.map((segment) => ({ label: segment.label, breakdown: memberBreakdowns[segment.label] }))} />}
       <div className="mt-4 flex justify-end">
         <MetricSwitch metric={metric} onMetricChange={setMetric} />
       </div>
@@ -1166,16 +1296,20 @@ function DevTypePieChart({
             </>
           )
           const rowClass = "flex items-center gap-2 px-2 py-2"
+          const showRowTip = () => {
+            const arc = arcs.find((a) => a.label === segment.label)
+            if (arc) showTip(segment.label, arc.midDeg)
+            else hideTip()
+          }
           const rowProps = {
-            onMouseEnter: () => {
-              const arc = arcs.find((a) => a.label === segment.label)
-              if (arc) showTip(segment.label, arc.midDeg)
-              else hideTip()
-            },
+            onMouseEnter: showRowTip,
             onMouseLeave: hideTip,
+            onFocus: showRowTip,
+            onBlur: hideTip,
+            onKeyDown: (event: { key: string }) => { if (event.key === "Escape") hideTip() },
           }
           if (!href) return (
-            <li key={segment.label} className={rowClass} {...rowProps}>{content}</li>
+            <li key={segment.label} className={rowClass} tabIndex={0} {...rowProps}>{content}</li>
           )
           return (
             <li key={segment.label}>

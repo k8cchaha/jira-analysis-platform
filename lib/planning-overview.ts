@@ -461,6 +461,55 @@ export function buildDevTaskTypeTeamBreakdown(input: {
   return { total: Math.round(total * 10) / 10, teams }
 }
 
+/** 分類內的成員份額，以 account ID 區分同名成員。 */
+export interface TypeMemberBreakdown {
+  total: number
+  members: { accountId: string; label: string; value: number }[]
+}
+
+/** 單一團隊：依母票票種統計工作單 Assignee 的分類內份額。 */
+export function buildDevTaskTypeMemberBreakdown(input: {
+  tasks: readonly PlanningTask[]
+  issueType: "story" | "task" | "bug"
+  metric: OverviewMetric
+}): TypeMemberBreakdown {
+  return buildMemberBreakdown(input.tasks.filter((task) => devTaskTypeOf(task) === input.issueType), input.metric)
+}
+
+/** 單一團隊：依正規化 Dev Type（含未分類）統計工作單 Assignee 的分類內份額。 */
+export function buildDevTypeLabelMemberBreakdown(input: {
+  tasks: readonly PlanningTask[]
+  label: string
+  metric: OverviewMetric
+}): TypeMemberBreakdown {
+  return buildMemberBreakdown(input.tasks.filter((task) => devTypeLabelOf(task.devType) === input.label), input.metric)
+}
+
+function buildMemberBreakdown(tasks: readonly PlanningTask[], metric: OverviewMetric): TypeMemberBreakdown {
+  const buckets = new Map<string, { name: string | null; value: number }>()
+  let total = 0
+  for (const task of tasks) {
+    const accountId = task.assigneeAccountId
+    // 有效的單團隊範圍已排除未指派工作單；這裡仍不把它冒充為成員。
+    if (accountId === null) continue
+    const bucket = buckets.get(accountId) ?? { name: null, value: 0 }
+    const name = task.assigneeDisplayName?.trim() || null
+    if (name !== null && (bucket.name === null || name.localeCompare(bucket.name, "zh") < 0)) bucket.name = name
+    const delta = metric === "points" ? (task.points ?? 0) : 1
+    bucket.value += delta
+    total += delta
+    buckets.set(accountId, bucket)
+  }
+  const members = [...buckets.entries()]
+    .map(([accountId, { name, value }]) => ({
+      accountId,
+      label: name ?? accountId,
+      value: metric === "points" ? Math.round(value * 10) / 10 : value,
+    }))
+    .sort((a, b) => b.value - a.value || a.label.localeCompare(b.label, "zh") || a.accountId.localeCompare(b.accountId))
+  return { total: Math.round(total * 10) / 10, members }
+}
+
 /** 團隊排序權重：在 `teamOrder` 內的照序號；未列者一律大於所有已列（「其他」等未列者殿後）。 */
 function labelRank(label: string, teamOrder: readonly string[]): number {
   const index = teamOrder.indexOf(label)

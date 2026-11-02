@@ -433,7 +433,7 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     assert.match(FILTER_SELECT_WIDTH_CLASS.team, /w-56 max-w-full/)
   })
 
-  it("uses the shared bounded width for Dashboard projects and both Sprint project selectors", () => {
+  it("uses the shared bounded width for Dashboard projects and all Sprint page selectors", () => {
     const h = harness(undefined, {})
     const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
     const { DashboardFilter } = h.load("app/(app)/dashboard/dashboard-filter.tsx")
@@ -448,7 +448,7 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     assert.ok(projectDropdown)
     assert.ok(projectDropdown.startsWith(`<div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}">`))
     assert.match(projectDropdown, /class="truncate"/)
-    for (const basePath of ["/sprint/burndown", "/sprint/planning"]) {
+    for (const basePath of ["/sprint/burndown", "/sprint/planning", "/sprint/capacity"]) {
       const markup = render(SprintSelector, { basePath, project: null, sprints: [], selectedSprintId: null })
       assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.project}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}"><span id="sprint-project-label"`))
       assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.sprint}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.sprint}"><span id="sprint-label"`))

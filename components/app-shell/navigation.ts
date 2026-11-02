@@ -2,15 +2,18 @@ export type AppRoute =
   | "/dashboard"
   | "/sprint/planning"
   | "/sprint/burndown"
+  | "/sprint/capacity"
   | "/analytics/workload/summary"
   | "/analytics/workload/breakdown"
   | "/analytics/workload/detail"
   | "/analytics/story-points/summary"
   | "/analytics/story-points/distribution"
   | "/analytics/story-points/detail"
+  | "/analytics/projects/summary"
   | "/analytics/trends/summary"
   | "/analytics/trends/comparison"
   | "/analytics/trends/detail"
+  | "/analytics/comparison/summary"
   | "/analytics/members/summary"
   | "/analytics/members/comparison"
   | "/analytics/members/detail"
@@ -27,11 +30,15 @@ export type NavigationIcon =
   | "points"
   | "trends"
   | "members"
+  | "person"
+  | "projects"
   | "saved"
   | "export"
   | "settings"
   | "burndown"
   | "planning"
+  | "capacity"
+  | "comparison"
 
 export type NavigationRoute = Readonly<{
   href: AppRoute
@@ -91,6 +98,12 @@ export const navigationCategories = [
         icon: "burndown",
         routes: [{ href: "/sprint/burndown", label: "開發狀況" }],
       },
+      {
+        id: "capacity",
+        label: "Capacity",
+        icon: "capacity",
+        routes: [{ href: "/sprint/capacity", label: "Capacity" }],
+      },
     ],
   },
   {
@@ -108,13 +121,29 @@ export const navigationCategories = [
         ],
       },
       {
+        id: "projects",
+        label: "專案分析",
+        icon: "projects",
+        routes: [{ href: "/analytics/projects/summary", label: "摘要" }],
+      },
+      {
         id: "story-points",
-        label: "Story Points 分析",
-        icon: "points",
+        label: "團隊分析",
+        icon: "members",
         routes: [
           { href: "/analytics/story-points/summary", label: "摘要" },
           { href: "/analytics/story-points/distribution", label: "分佈" },
           { href: "/analytics/story-points/detail", label: "明細" },
+        ],
+      },
+      {
+        id: "members",
+        label: "成員分析",
+        icon: "person",
+        routes: [
+          { href: "/analytics/members/summary", label: "摘要" },
+          { href: "/analytics/members/comparison", label: "比較" },
+          { href: "/analytics/members/detail", label: "明細" },
         ],
       },
       {
@@ -128,14 +157,10 @@ export const navigationCategories = [
         ],
       },
       {
-        id: "members",
-        label: "成員分析",
-        icon: "members",
-        routes: [
-          { href: "/analytics/members/summary", label: "摘要" },
-          { href: "/analytics/members/comparison", label: "比較" },
-          { href: "/analytics/members/detail", label: "明細" },
-        ],
+        id: "comparison",
+        label: "比較分析",
+        icon: "comparison",
+        routes: [{ href: "/analytics/comparison/summary", label: "摘要" }],
       },
     ],
   },

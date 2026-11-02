@@ -1,5 +1,4 @@
 import { PageHeader } from "@/components/page-header"
-import { auth } from "@/auth"
 import { PlanningClient } from "@/app/(app)/sprint/planning/planning-client"
 import {
   parseProjectKey,
@@ -29,12 +28,6 @@ export default async function PlanningPage({
   const params = await searchParams
   const project = parseProjectKey(params.project)
   const today = new Date().toISOString().slice(0, 10)
-
-  // 目前登入者（Atlassian/Jira accountId＝session.user.id）。供 Capacity 判斷
-  // 「點擊者是否為該團隊成員」以決定能否編輯。（目前假資料：登入者被視為
-  // Web/QA 團隊成員。）
-  const session = await auth()
-  const viewerAccountId = session?.user?.id ?? ""
 
   const planningSprints: SprintRecord[] = project
     ? [...getPlanningSprints(project, today)]
@@ -82,7 +75,6 @@ export default async function PlanningPage({
         pmOpmAccountIds={pmOpmAccountIds}
         dataError={dataError}
         jiraBaseUrl={dashboardJiraBaseUrl()}
-        viewerAccountId={viewerAccountId}
       />
     </>
   )

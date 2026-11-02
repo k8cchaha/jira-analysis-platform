@@ -64,7 +64,7 @@ function harness() {
 // 即 `endDate >= today`，照 startDate 升序。
 // SUN：Sprint 70（10-13..10-25，含今天）為進行中；71..75 為未來 → 共 6 個。
 // TKK：S132（09-21..10-25，含今天）為進行中；S133/S134/S135 為未來 → 共 4 個。
-// PRIDE：最近 S30（10-06..10-19）也已結束 → 空。
+// PRIDE：S31（10-21..11-2）為進行中。
 const TODAY = "2026-10-21"
 
 describe("getPlanningSprints（進行中＋未來的全部 sprint）", () => {
@@ -85,9 +85,9 @@ describe("getPlanningSprints（進行中＋未來的全部 sprint）", () => {
     assertIds(sprints.getPlanningSprints("TKK", TODAY), [7401, 7402, 7403, 7404])
   })
 
-  it("PRIDE：最近的 Sprint 也已結束 → 回空陣列（不回退過去）", () => {
+  it("PRIDE：Sprint 31 為進行中，包含在選項內", () => {
     const { sprints } = harness()
-    assert.equal(sprints.getPlanningSprints("PRIDE", TODAY).length, 0)
+    assertIds(sprints.getPlanningSprints("PRIDE", TODAY), [7750])
   })
 
   it("今天在任何 sprint 開始之前 → 列出全部未來的 sprint", () => {
@@ -135,9 +135,14 @@ describe("resolvePlanningSprint（預設＝進行中，否則最早未來；只�
     assert.equal(params.resolvePlanningSprint(null, null, TODAY), null)
   })
 
+  it("PRIDE 未指定 id → 選進行中的 Sprint 31", () => {
+    const { params } = harness()
+    assert.equal(params.resolvePlanningSprint("PRIDE", null, TODAY)?.id, 7750)
+  })
+
   it("專案沒有進行中/未來 sprint → null", () => {
     const { params } = harness()
-    assert.equal(params.resolvePlanningSprint("PRIDE", null, TODAY), null)
+    assert.equal(params.resolvePlanningSprint("PRIDE", null, "2099-01-01"), null)
   })
 })
 

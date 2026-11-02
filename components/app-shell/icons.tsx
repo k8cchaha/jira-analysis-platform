@@ -32,6 +32,14 @@ export function NavigationIconGlyph({ name, className = "h-5 w-5" }: IconProps) 
       return <svg {...common}><path d="m12 3 3 6 6 .9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.9 9 9Z" /></svg>
     case "trends":
       return <svg {...common}><path d="m3 17 6-6 4 4 8-9" /><path d="M15 6h6v6" /></svg>
+    case "comparison":
+      return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16M5 10h4m-2-2 2 2-2 2M19 14h-4m2-2-2 2 2 2" /></svg>
+    case "projects":
+      return <svg {...common}><path d="M3 7V5a2 2 0 0 1 2-2h5l2 4h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M3 7h9" /></svg>
+    case "capacity":
+      return <svg {...common}><circle cx="8" cy="7" r="3" /><path d="M2 21v-2a6 6 0 0 1 8-5.7" /><circle cx="17" cy="16" r="5" /><path d="M17 13v3l2 1" /></svg>
+    case "person":
+      return <svg {...common}><circle cx="12" cy="8" r="4" /><path d="M5 21a7 7 0 0 1 14 0" /></svg>
     case "members":
       return <svg {...common}><circle cx="9" cy="8" r="4" /><path d="M3 21a6 6 0 0 1 12 0M16 4.5a4 4 0 0 1 0 7M17 15a6 6 0 0 1 4 6" /></svg>
     case "saved":

@@ -175,7 +175,7 @@ const MOCK_CAPACITY: Record<SprintProjectKey, readonly TeamCapacity[]> = {
 }
 
 /**
- * Planning Filter 下方的 Capacity 列：以按鈕形式顯示各團隊此 Sprint 的 Capacity
+ * Capacity 頁專案／Sprint 選擇器下方的區塊：以按鈕形式顯示各團隊此 Sprint 的 Capacity
  * 填寫狀態（綠＝已填、紅＝未填）。目前用假資料，未來改接 API。點擊團隊按鈕彈出
  * 該團隊的 Capacity 明細彈窗；若點擊者是該團隊成員則可編輯請假時數（保存/取消）。
  * 右側另放一顆 Sprint Note 按鈕（同樣未來接 API），故團隊按鈕不延伸佔滿整排。
