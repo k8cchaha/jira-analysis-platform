@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       const group = params.get("group")!
       if (!DASHBOARD_TEAMS.some((team) => team.group === group)) throw new DashboardFilterError("請選擇有效的團隊。")
       const credentials = await getJiraToken()
-      return Response.json({ status: "success", members: await getDashboardGroupMembers(group, credentials) }, { headers })
+      return Response.json({ status: "success", members: await getDashboardGroupMembers(group, credentials, { useSharedCache: true }) }, { headers })
     }
     throw new DashboardFilterError()
   } catch (error) {

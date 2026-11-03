@@ -94,7 +94,7 @@ function harness(t, options = {}) {
     "lib/jira-dashboard.ts",
     "lib/jira-http.ts",
     "lib/date-range.ts", "lib/jira-dashboard-filter.ts",
-    "lib/jira-dashboard-lookups.ts",
+    "lib/jira-dashboard-lookups.ts", "lib/jira-group-members-cache.ts",
     "lib/jira-fields.ts",
     "lib/jira-jql.ts",
     "lib/jira-missing-data.ts",

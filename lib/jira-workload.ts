@@ -77,7 +77,7 @@ export async function workloadScope(filter: DashboardFilter): Promise<{
     }
     throw new JiraWorkloadError("request_failed", "無法取得 Jira 登入資料。")
   }
-  return { scope: await resolveDashboardScope(filter, credentials), credentials }
+  return { scope: await resolveDashboardScope(filter, credentials, { useSharedCache: true }), credentials }
 }
 
 /**

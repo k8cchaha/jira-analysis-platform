@@ -15,6 +15,7 @@ import {
 import { JiraAuthorizationError, type JiraCredentials } from "@/lib/jira-token"
 import type { MissingDataError } from "@/lib/jira-missing-data"
 import { jiraFetch as httpJiraFetch, JiraTransportError } from "@/lib/jira-http"
+import { getSharedJiraGroupMembersCache } from "@/lib/jira-group-members-cache"
 
 const PAGE_SIZE = 50
 const USER_SEARCH_LIMIT = 20
@@ -132,9 +133,30 @@ export async function searchDashboardUsers(query: string, credentials: JiraCrede
 export async function getDashboardGroupMembers(
   group: string,
   credentials: JiraCredentials,
-  options: { allowlist?: ReadonlySet<string> } = {}
+  options: { allowlist?: ReadonlySet<string>; useSharedCache?: boolean } = {}
 ): Promise<DashboardUser[]> {
+  // Always validate before a hit, including groups allowed only by private server callers.
   validateGroup(group, options.allowlist ?? allowedGroups)
+  if (options.useSharedCache) {
+    try {
+      return await getSharedJiraGroupMembersCache().get(credentials, group, () => fetchCompleteGroupMembers(group, credentials))
+    } catch (error) {
+      // The shared instance may have been created by a different route bundle/class copy.
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "group_members_cache_capacity") {
+          throw new JiraDashboardLookupError("retry", "團隊成員查詢忙碌中，請稍後重試。")
+        }
+        if (error.code === "reauthorization_required") {
+          throw new JiraAuthorizationError("Jira authorization must be renewed", "reauthorization_required")
+        }
+      }
+      throw error
+    }
+  }
+  return fetchCompleteGroupMembers(group, credentials)
+}
+
+async function fetchCompleteGroupMembers(group: string, credentials: JiraCredentials): Promise<DashboardUser[]> {
   const members: DashboardUser[] = []
   const seen = new Set<string>()
   let startAt = 0
@@ -174,7 +196,11 @@ export async function getDashboardGroupMembers(
   throw new JiraDashboardLookupError("limit", "團隊成員分頁過多，無法完整載入，請縮小團隊範圍。")
 }
 
-export async function resolveDashboardScope(filter: DashboardFilter, credentials: JiraCredentials): Promise<ResolvedDashboardScope> {
+export async function resolveDashboardScope(
+  filter: DashboardFilter,
+  credentials: JiraCredentials,
+  options: { useSharedCache?: boolean } = {}
+): Promise<ResolvedDashboardScope> {
   if (filter.mode === "self") return { mode: "self" }
   const validated = parseDashboardFilter(new URLSearchParams(serializeDashboardFilter(filter)))
   if (validated.mode === "self") return { mode: "self" }
@@ -190,7 +216,7 @@ export async function resolveDashboardScope(filter: DashboardFilter, credentials
   await Promise.all(Array.from({ length: Math.min(GROUP_CONCURRENCY, validated.groups.length) }, async () => {
     while (!failed && cursor < validated.groups.length) {
       const group = validated.groups[cursor++]
-      try { members[group] = await getDashboardGroupMembers(group, credentials) }
+      try { members[group] = await getDashboardGroupMembers(group, credentials, options) }
       catch (error) { failed = true; throw error }
     }
   }))

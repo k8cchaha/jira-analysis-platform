@@ -184,14 +184,24 @@ describe("page-configurable DateRangeField shortcuts", () => {
     const f = fieldFixture({ shortcuts: [monthly] })
     let tree = f.draw()
     assert.equal(buttons(tree).filter((button) => button.props["aria-pressed"]).length, 0)
-    assert.match(text(tree), /自訂區間/)
+    assert.doesNotMatch(text(tree), /自訂區間/)
     f.props.shortcuts = [recent, monthly]
     tree = f.draw()
     assert.deepEqual(buttons(tree).filter((button) => button.props["aria-pressed"]).map(text), ["最近一週"])
     f.props.value = { from: "2026-10-14", to: today }
-    assert.match(text(f.draw()), /自訂區間/)
+    assert.doesNotMatch(text(f.draw()), /自訂區間/)
     assert.equal(f.changes.length, 0)
     assert.equal(f.commits.length, 0)
+  })
+  it("hides the valid-range status without hiding invalid-range feedback", () => {
+    const f = fieldFixture({ value: { from: "2026-10-14", to: today } })
+    let status = elements(f.draw(), (node) => node.props.role === "status")[0]
+    assert.equal(status.props.className, "sr-only")
+    assert.equal(text(status), "分析區間已設定。")
+    f.props.value = { from: "2026-10-21", to: today }
+    status = elements(f.draw(), (node) => node.props.role === "status")[0]
+    assert.doesNotMatch(status.props.className, /sr-only/)
+    assert.equal(text(status), "結束日不可早於起始日。")
   })
   it("activates only the first identical range in page order", () => {
     const f = fieldFixture({
@@ -211,7 +221,7 @@ describe("page-configurable DateRangeField shortcuts", () => {
     assert.deepEqual(f.changes, [{ from: "2026-10-13", to: today }])
     assert.deepEqual(f.commits, f.changes)
     tree = f.draw()
-    assert.match(text(tree), /自訂區間/)
+    assert.doesNotMatch(text(tree), /自訂區間/)
     f.props.value = { from: "", to: "" }
     f.draw()
     assert.equal(f.changes.length, 1) // Clearing later must not reinitialize.
@@ -225,7 +235,7 @@ describe("page-configurable DateRangeField shortcuts", () => {
     f.draw()
     assert.deepEqual(f.changes, [{ from: "2026-09-20", to: today }])
     assert.deepEqual(f.commits, f.changes)
-    assert.match(text(f.draw()), /自訂區間/)
+    assert.doesNotMatch(text(f.draw()), /自訂區間/)
     assert.equal(f.changes.length, 1)
   })
   it("clicking a shortcut in the workload form changes only the draft until submit", () => {

@@ -108,7 +108,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-http.ts", "lib/jira-workload.ts", "lib/workload-heatmap.ts", "lib/jira-dashboard.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-http.ts", "lib/jira-workload.ts", "lib/workload-heatmap.ts", "lib/jira-dashboard.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-group-members-cache.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -126,7 +126,7 @@ function harness(t, options = {}) {
         getJiraToken: async () => {
           tokenCalls.push(true)
           if (options.authError) throw new JiraAuthorizationError(options.authError)
-          return { cloudId: options.cloudId ?? "fixture-cloud", accessToken: "fixture-token-not-real" }
+          return { viewerId: "fixture-user", cloudId: options.cloudId ?? "fixture-cloud", accessToken: "fixture-token-not-real", expiresAt: 9_999_999_999 }
         },
       }
       if (specifier === "./jira-jql.ts") return load("lib/jira-jql.ts")
@@ -135,7 +135,7 @@ function harness(t, options = {}) {
       if (specifier === "./date-range.ts") return load("lib/date-range.ts")
       if (specifier === "./jira-dashboard-filter.ts") return load("lib/jira-dashboard-filter.ts")
       if (specifier === "./jira-dashboard.ts") return load("lib/jira-dashboard.ts")
-      if (["@/lib/jira-http", "@/lib/jira-dashboard", "@/lib/date-range", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token", "@/lib/workload-heatmap"].includes(specifier)) return load(specifier.slice(2) + ".ts")
+      if (["@/lib/jira-http", "@/lib/jira-dashboard", "@/lib/date-range", "@/lib/jira-dashboard-filter", "@/lib/jira-dashboard-lookups", "@/lib/jira-group-members-cache", "@/lib/jira-fields", "@/lib/jira-jql", "@/lib/jira-missing-data", "@/lib/jira-page-token", "@/lib/workload-heatmap"].includes(specifier)) return load(specifier.slice(2) + ".ts")
       return fail(`Unexpected require: ${specifier}`)
     }
     vm.runInContext(`(function(require,module,exports) {\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)

@@ -340,11 +340,9 @@ export function DateRangeField({ value, onChange, onCommit, shortcuts = DEFAULT_
         )}
       </div>
 
-      {/* 天數已移到標題旁；這裡只保留需要即時播報的異常狀態與自訂區間註記。 */}
-      <p id={statusId} role="status" className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
-        {invalid ? "結束日不可早於起始日。" : ""}
-        {activeShortcut === null ? "（自訂區間）" : ""}
-        {!invalid && activeShortcut !== null ? <span className="sr-only">分析區間已設定。</span> : null}
+      {/* 僅異常狀態顯示文字；有效區間保留螢幕閱讀器播報，不佔下方空間。 */}
+      <p id={statusId} role="status" className={invalid ? "mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400" : "sr-only"}>
+        {invalid ? "結束日不可早於起始日。" : "分析區間已設定。"}
       </p>
       {helpText && <p id={helpId} className="mt-0.5 text-xs leading-5 text-slate-500 dark:text-slate-400">{helpText}</p>}
 

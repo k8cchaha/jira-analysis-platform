@@ -7,6 +7,8 @@ import {
 } from "@/auth"
 
 export interface JiraCredentials {
+  /** Identity from the same validated internal session as the Jira token/site. Server-only. */
+  viewerId: string
   accessToken: string
   cloudId: string
   expiresAt: number
@@ -66,6 +68,7 @@ function getCredentialsFromSession(
   }
 
   return {
+    viewerId: session.user.id,
     accessToken: session.jiraAccessToken,
     cloudId: session.jiraCloudId,
     expiresAt: session.jiraExpiresAt,
