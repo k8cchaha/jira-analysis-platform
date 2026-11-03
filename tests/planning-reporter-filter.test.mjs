@@ -47,7 +47,7 @@ function harness() {
   const allowed = new Set([
     `${base}planning-client.tsx`, `${base}planning-overview.tsx`,
     "lib/planning-subset.ts", "lib/planning-overview.ts", "lib/jira-missing-data.ts",
-    "lib/jira-dashboard-filter.ts", "lib/jira-jql.ts", "lib/jira-fields.ts", "lib/status-color.ts",
+    "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-jql.ts", "lib/jira-fields.ts", "lib/status-color.ts",
   ])
   const inertComponent = (name) => ({ [name]: () => null })
   const stubs = {

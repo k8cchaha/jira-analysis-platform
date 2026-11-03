@@ -118,6 +118,196 @@ function teamMappingFixture(groups = []) {
   }
 }
 
+/** The existing VM hook harness also drives persisted exclusion props and callbacks. */
+function teamExclusionsFixture({ groups = [], ...props } = {}) {
+  let snapshot = {}
+  let cursor = 0
+  let tree
+  const slots = []
+  const effects = []
+  const selected = []
+  const exclusions = []
+  const h = harness(undefined, () => snapshot, undefined, {
+    useState: (initial) => {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial
+      return [slots[index], (next) => { slots[index] = typeof next === "function" ? next(slots[index]) : next }]
+    },
+    useRef: (initial) => {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = { current: initial }
+      return slots[index]
+    },
+    useId: () => "fixture-team-exclusions",
+    useEffect: (effect) => { effects.push(effect) },
+  })
+  const { TeamSelect } = h.load("components/team-select.tsx")
+  const nodes = (node) => Array.isArray(node) ? node.flatMap(nodes)
+    : node && typeof node === "object" ? [node, ...nodes(node.props?.children)] : []
+  const fixture = {
+    h, selected, exclusions,
+    draw(next = snapshot) {
+      snapshot = next
+      cursor = 0
+      tree = TeamSelect({
+        ...props, groups,
+        onGroupsChange: (...args) => { selected.push(plain(args)); groups = args[0] },
+        onExclusionsChange: (value) => { exclusions.push(value) },
+      })
+      effects.splice(0).forEach((effect) => effect())
+      return tree
+    },
+    input(group, text = h.teams.find((team) => team.group === group)?.label) {
+      const section = nodes(tree).find((node) => node.type === "div" && node.key === group)
+      const label = nodes(section).find((node) => node.type === "label" && nodes(node.props.children).some((child) => child.type === "span" && child.props.children === text))
+      assert.ok(label, `${group}: ${text}`)
+      const input = nodes(label).find((node) => node.type === "input")
+      assert.ok(input)
+      return input
+    },
+    toggle(group, checked, text) {
+      fixture.input(group, text).props.onChange({ target: { checked } })
+      fixture.draw()
+    },
+  }
+  return fixture
+}
+
+describe("TeamSelect backwards-compatible exclusions and help extensions", () => {
+  it("restores cached initial exclusions, filters inactive groups, and isolates callback arrays", () => {
+    const initialExclusions = { "ent-web": ["a"], "ent-be1": ["c"], "ent-qa2": ["inactive"] }
+    const fixture = teamExclusionsFixture({ groups: ["ent-web", "ent-be1"], initialExclusions })
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("a"), member("b")] },
+      "ent-be1": { status: "success", members: [member("a"), member("c")] },
+    })
+    assert.deepEqual(fixture.selected, [[["ent-web", "ent-be1"], ["a", "b"], true]])
+    assert.deepEqual(plain(fixture.exclusions), [{ "ent-web": ["a"], "ent-be1": ["c"] }])
+    assert.equal(fixture.input("ent-web", "Fixture a").props.checked, false)
+    assert.equal(fixture.input("ent-be1", "Fixture a").props.checked, true)
+    assert.equal(fixture.input("ent-be1", "Fixture c").props.checked, false)
+    const reported = fixture.exclusions[0]
+    assert.notEqual(reported, initialExclusions)
+    assert.notEqual(reported["ent-web"], initialExclusions["ent-web"])
+    assert.notEqual(reported["ent-be1"], initialExclusions["ent-be1"])
+    reported["ent-web"].push("b")
+    reported["ent-be1"].length = 0
+    reported["ent-qa2"] = ["callback-only"]
+    fixture.draw()
+    assert.equal(fixture.selected.length, 1)
+    assert.equal(fixture.exclusions.length, 1)
+    assert.equal(fixture.input("ent-web", "Fixture b").props.checked, true)
+    assert.equal(fixture.input("ent-be1", "Fixture c").props.checked, false)
+    fixture.toggle("ent-be1", true, "Fixture c")
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-web": ["a"] })
+    assert.notEqual(fixture.exclusions.at(-1)["ent-web"], reported["ent-web"])
+    assert.deepEqual(initialExclusions, { "ent-web": ["a"], "ent-be1": ["c"], "ent-qa2": ["inactive"] })
+    assert.equal(fixture.h.calls.length, 0)
+  })
+
+  for (const blocked of [undefined, { status: "loading" }, { status: "error", error: { code: "retry", message: "Fixture error" } }]) {
+    it(`preserves restored per-group exclusions while memberships are ${blocked?.status ?? "missing"}, then publishes the ready union`, () => {
+      const initialExclusions = { "ent-web": ["a"], "ent-be1": ["c"], "ent-qa2": ["inactive"] }
+      const fixture = teamExclusionsFixture({ groups: ["ent-web", "ent-be1"], initialExclusions })
+      const incomplete = { "ent-web": { status: "success", members: [member("a"), member("b")] } }
+      if (blocked) incomplete["ent-be1"] = blocked
+      fixture.draw(incomplete)
+      assert.deepEqual(fixture.selected, [])
+      assert.deepEqual(fixture.exclusions, [])
+      // A member action not affecting exclusions still notifies, without widening incomplete IDs.
+      fixture.toggle("ent-web", true, "Fixture b")
+      assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], [], false])
+      assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-web": ["a"], "ent-be1": ["c"] })
+      fixture.draw({ ...incomplete, "ent-be1": { status: "loading" } })
+      assert.equal(fixture.selected.length, 1)
+      fixture.draw({
+        "ent-web": incomplete["ent-web"],
+        "ent-be1": { status: "success", members: [member("a"), member("c"), member("d")] },
+      })
+      // Shared a is excluded only from Web, so BE1 still includes it in the deduplicated union.
+      assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], ["a", "b", "d"], true])
+      assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-web": ["a"], "ent-be1": ["c"] })
+      assert.equal(fixture.input("ent-web", "Fixture a").props.checked, false)
+      assert.equal(fixture.input("ent-be1", "Fixture a").props.checked, true)
+      assert.equal(fixture.input("ent-be1", "Fixture c").props.checked, false)
+      assert.equal(fixture.exclusions.length, 2)
+      assert.deepEqual(initialExclusions, { "ent-web": ["a"], "ent-be1": ["c"], "ent-qa2": ["inactive"] })
+      assert.equal(fixture.h.calls.length, 0)
+    })
+  }
+
+  it("reports member toggles and whole-group resets without losing other selected exclusions", () => {
+    const fixture = teamExclusionsFixture({
+      groups: ["ent-web", "ent-be1"],
+      initialExclusions: { "ent-web": ["a"], "ent-be1": ["c"], "ent-qa2": ["inactive"] },
+    })
+    fixture.draw({
+      "ent-web": { status: "success", members: [member("a"), member("b")] },
+      "ent-be1": { status: "success", members: [member("c"), member("d")] },
+    })
+    fixture.toggle("ent-web", true, "Fixture a")
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], ["a", "b", "d"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-be1": ["c"] })
+    fixture.toggle("ent-web", false, "Fixture b")
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], ["a", "d"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-web": ["b"], "ent-be1": ["c"] })
+    fixture.toggle("ent-web", false, "Fixture a")
+    assert.deepEqual(fixture.selected.at(-1), [["ent-be1"], ["d"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-be1": ["c"] })
+    fixture.toggle("ent-web", true)
+    assert.deepEqual(fixture.selected.at(-1), [["ent-be1", "ent-web"], ["a", "b", "d"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), { "ent-be1": ["c"] })
+    fixture.toggle("ent-be1", false)
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web"], ["a", "b"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), {})
+    fixture.toggle("ent-be1", true)
+    assert.deepEqual(fixture.selected.at(-1), [["ent-web", "ent-be1"], ["a", "b", "c", "d"], true])
+    assert.deepEqual(plain(fixture.exclusions.at(-1)), {})
+    assert.equal(fixture.selected.length, 7)
+    assert.equal(fixture.exclusions.length, fixture.selected.length)
+    assert.ok(fixture.selected.every((args) => args.length === 3))
+    assert.equal(fixture.h.calls.length, 0)
+  })
+
+  it("preserves the three-argument callback when optional extension props are omitted or supplied", () => {
+    for (const extended of [false, true]) {
+      const effects = []
+      const selected = []
+      const exclusions = []
+      const h = harness(undefined, { "ent-web": { status: "success", members: [member("a"), member("b")] } }, effects)
+      render(h.load("components/team-select.tsx").TeamSelect, {
+        groups: ["ent-web"],
+        onGroupsChange: (...args) => selected.push(plain(args)),
+        ...(extended ? { initialExclusions: { "ent-web": ["a"] }, onExclusionsChange: (value) => exclusions.push(plain(value)) } : {}),
+      })
+      effects.splice(0).forEach((effect) => effect())
+      assert.deepEqual(selected, [[["ent-web"], extended ? ["b"] : ["a", "b"], true]])
+      assert.equal(selected[0].length, 3)
+      assert.deepEqual(exclusions, extended ? [{ "ent-web": ["a"] }] : [])
+      assert.equal(h.calls.length, 0)
+    }
+  })
+
+  it("supports a help override while retaining the default burndown help and no-width-prop sizing", () => {
+    const h = harness(undefined, {})
+    const { TeamSelect } = h.load("components/team-select.tsx")
+    const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
+    const defaultHelp = "團隊變更只過濾站內已載入的燃盡資料，不會重新查詢 Jira。"
+    const helpText = "團隊變更只過濾站內已載入的工作單，不會重新查詢 Jira。"
+    for (const perMember of [true, false]) {
+      for (const overridden of [false, true]) {
+        const markup = render(TeamSelect, { groups: [], onGroupsChange: () => {}, perMember, ...(overridden ? { helpText } : {}) })
+        assert.ok(markup.startsWith(`<div class="relative ${FILTER_SELECT_WIDTH_CLASS.team}">`))
+        assert.match(markup, /w-56 max-w-full min-w-0 shrink-0/)
+        assert.match(markup, /class="truncate"/)
+        assert.match(markup, new RegExp(`<p id="[^"]+-help" class="sr-only">${overridden ? helpText : defaultHelp}</p>`))
+        if (overridden) assert.ok(!markup.includes(defaultHelp))
+      }
+    }
+    assert.equal(h.calls.length, 0)
+  })
+})
+
 describe("application-scoped team memberships", () => {
   it("constructs without fetching and has stable, empty SSR snapshots", () => {
     const h = harness()

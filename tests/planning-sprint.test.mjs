@@ -29,7 +29,7 @@ function harness() {
     "lib/burndown-params.ts",
     "lib/jira-jql.ts",
     "lib/jira-fields.ts",
-    "lib/jira-dashboard-filter.ts",
+    "lib/date-range.ts", "lib/jira-dashboard-filter.ts",
     "lib/jira-missing-data.ts",
   ]
   const modules = new Map()

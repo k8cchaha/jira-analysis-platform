@@ -23,9 +23,17 @@ export function TeamSelect({
   onGroupsChange,
   perMember = true,
   onMembersReady,
+  initialExclusions = {},
+  onExclusionsChange,
+  helpText = "團隊變更只過濾站內已載入的燃盡資料，不會重新查詢 Jira。",
 }: {
   groups: readonly string[]
   onGroupsChange: (groups: string[], memberAccountIds: string[], ready: boolean) => void
+  /** 初始逐組排除草稿；如需還原另一組條件，由上層以 key 重新掛載。 */
+  initialExclusions?: Record<string, string[]>
+  /** 回報所選團隊的逐組排除草稿，不改變既有三參數選取 callback。 */
+  onExclusionsChange?: (exclusions: Record<string, string[]>) => void
+  helpText?: string
   /** false 時只顯示團隊層級的複選，不展開逐人勾選/排除。 */
   perMember?: boolean
   /** 依已成功載入的完整團隊名單，逐次回報全量 accountId → label 對照；僅供顯示分組，不代表篩選已完整。 */
@@ -34,7 +42,9 @@ export function TeamSelect({
   const id = useId()
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState<string[]>([])
-  const [exclusions, setExclusions] = useState<Record<string, string[]>>({})
+  const [exclusions, setExclusions] = useState<Record<string, string[]>>(() => Object.fromEntries(
+    groups.filter((group) => initialExclusions[group]?.length).map((group) => [group, [...initialExclusions[group]]])
+  ))
   const { groupStates, loadGroup, retryGroup } = useTeamMembers()
   const [error, setError] = useState<string | null>(null)
 
@@ -54,6 +64,9 @@ export function TeamSelect({
   })
 
   function notify(groupsNext: string[], exclusionsNext: Record<string, string[]>) {
+    onExclusionsChange?.(Object.fromEntries(
+      groupsNext.filter((group) => exclusionsNext[group]?.length).map((group) => [group, [...exclusionsNext[group]]])
+    ))
     try {
       const members: Record<string, DashboardUser[]> = {}
       const ready = groupsNext.every((group) => groupStates[group]?.status === "success")
@@ -206,7 +219,7 @@ export function TeamSelect({
         )
       })}
       {error && <p id={`${id}-error`} role="alert" className="px-3 py-2 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
-      <p id={`${id}-help`} className="sr-only">團隊變更只過濾站內已載入的燃盡資料，不會重新查詢 Jira。</p>
+      <p id={`${id}-help`} className="sr-only">{helpText}</p>
     </FilterDropdown>
   )
 }

@@ -16,6 +16,7 @@ import {
 } from "@/lib/burndown-params"
 import {
   streamBurndownEvents,
+  streamErrorResponse,
   type BurndownEventSink,
   type BurndownStreamError,
 } from "@/lib/burndown-stream"
@@ -42,13 +43,13 @@ const SSE_HEADERS: Record<string, string> = {
 export async function GET(request: Request) {
   const baseHeaders = { ...SSE_HEADERS }
   const errorHeaders = { "Cache-Control": "private, no-store", Vary: "Cookie" }
+  // EventSource 讀不到非 2xx 的 body，開流前的失敗必須改用 200 + error frame。
+  const fail = (error: BurndownStreamError, status: number) =>
+    streamErrorResponse(request, error, status, errorHeaders)
   try {
     const session = await auth()
     if (!session?.user?.id) {
-      return Response.json(
-        { status: "error", error: { code: "reauthorize", message: "登入狀態已失效，請重新登入。" } },
-        { status: 401, headers: errorHeaders }
-      )
+      return fail({ code: "reauthorize", message: "登入狀態已失效，請重新登入。" }, 401)
     }
 
     const url = new URL(request.url)
@@ -57,20 +58,14 @@ export async function GET(request: Request) {
       url.searchParams.get("sprint") ?? undefined
     )
     if (!project) {
-      return Response.json(
-        { status: "error", error: { code: "configuration", message: "查詢參數無效。" } },
-        { status: 400, headers: errorHeaders }
-      )
+      return fail({ code: "configuration", message: "查詢參數無效。" }, 400)
     }
     const sprint =
       requestedSprintId !== null
         ? getSprintById(project, requestedSprintId)
         : null
     if (!sprint) {
-      return Response.json(
-        { status: "error", error: { code: "configuration", message: "查詢參數無效。" } },
-        { status: 400, headers: errorHeaders }
-      )
+      return fail({ code: "configuration", message: "查詢參數無效。" }, 400)
     }
 
     // 開流前建立 credential（refresh 提供長續串流內再簽發的可能性），並撈 base。
@@ -111,10 +106,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const mapped = mapBurndownStreamError(error)
     const status = mapped.code === "reauthorize" ? 401 : 502
-    return Response.json(
-      { status: "error", error: mapped },
-      { status, headers: errorHeaders }
-    )
+    return fail(mapped, status)
   }
 }
 

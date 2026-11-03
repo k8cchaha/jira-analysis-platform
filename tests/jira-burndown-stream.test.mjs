@@ -92,7 +92,8 @@ function harness(t, options = {}) {
     "lib/burndown-params.ts",
     "lib/burndown-stream.ts",
     "lib/jira-dashboard.ts",
-    "lib/jira-dashboard-filter.ts",
+    "lib/jira-http.ts",
+    "lib/date-range.ts", "lib/jira-dashboard-filter.ts",
     "lib/jira-dashboard-lookups.ts",
     "lib/jira-fields.ts",
     "lib/jira-jql.ts",
@@ -320,5 +321,44 @@ describe("burndown stream route", () => {
     assert.match(body, /^event: base/)
     assert.match(body, /event: error\ndata: \{/)
     assert.ok(!/\nevent: done\ndata:/.test(body), "must not emit done after an in-stream error")
+  })
+
+  // EventSource 讀不到非 2xx 的 body：若開流前失敗只回 401/400，瀏覽器只會落到
+  // 通用的 onerror（「連線已中斷」），真正原因被丟掉。瀏覽器一律要拿到
+  // 200 + `event: error` frame 才看得到訊息。
+  it("delivers a pre-stream failure to EventSource as a readable error frame", async (t) => {
+    const h = harness(t, { unauthenticated: true })
+    const response = await h.route().GET(
+      new Request("https://fixture.invalid/api/sprint/burndown/stream?project=SUN&sprint=7517", {
+        headers: { accept: "text/event-stream" },
+      })
+    )
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("Content-Type"), "text/event-stream; charset=utf-8")
+    const body = await response.text()
+    assert.equal(body, 'event: error\ndata: {"code":"reauthorize","message":"登入狀態已失效，請重新登入。"}\n\n')
+    // 仍不得觸及 Jira 或簽發 token。
+    assert.equal(h.calls.length, 0)
+    assert.equal(h.tokenCalls.length, 0)
+  })
+
+  it("keeps real HTTP status codes for non-EventSource callers", async (t) => {
+    const h = harness(t, { unauthenticated: true })
+    const response = await h.route().GET(new Request("https://fixture.invalid/api/sprint/burndown/stream?project=SUN&sprint=7517"))
+    assert.equal(response.status, 401)
+    assert.equal(response.headers.get("Content-Type"), "application/json")
+    assert.equal((await response.json()).error.code, "reauthorize")
+  })
+
+  it("names the invalid parameter to EventSource instead of a generic disconnect", async (t) => {
+    const h = harness(t)
+    const response = await h.route().GET(
+      new Request("https://fixture.invalid/api/sprint/burndown/stream?project=SUN&sprint=nope", {
+        headers: { accept: "text/event-stream" },
+      })
+    )
+    assert.equal(response.status, 200)
+    assert.match(await response.text(), /^event: error\ndata: \{"code":"configuration"/)
+    assert.equal(h.calls.length, 0)
   })
 })

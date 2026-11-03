@@ -26,7 +26,7 @@ function harness({ now = "2026-10-21T12:00:00.000Z", session = { user: { id: "vi
   const allowed = new Set([
     `${base}page.tsx`, `${base}capacity-client.tsx`, `${base}capacity-panel.tsx`, selectorPath,
     "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
-    "lib/jira-fields.ts", "lib/jira-dashboard-filter.ts",
+    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts",
   ])
   class FrozenDate extends Date {
     constructor(...args) { super(...(args.length ? args : [now])) }
