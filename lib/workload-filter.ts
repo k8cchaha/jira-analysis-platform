@@ -75,5 +75,5 @@ export function serializeWorkloadFilter(filter: WorkloadFilter): string {
 }
 
 export function workloadHref(filter: WorkloadFilter): string {
-  return `/analytics/workload/summary?${serializeWorkloadFilter(filter)}`
+  return `/analytics/workload?${serializeWorkloadFilter(filter)}`
 }

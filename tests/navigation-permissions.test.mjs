@@ -61,20 +61,35 @@ describe("Sprint Capacity navigation", () => {
 })
 
 describe("Analysis navigation", () => {
+  it("gives each analysis feature one flat route and the correct page title", () => {
+    const nav = harness()
+    const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.routes[0].href), [
+      "/analytics/workload", "/analytics/projects", "/analytics/story-points",
+      "/analytics/members", "/analytics/trends", "/analytics/comparison",
+    ])
+    for (const feature of analytics.features) {
+      assert.equal(feature.routes.length, 1)
+      assert.equal(feature.routes[0].label, feature.label)
+      assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(feature.routes[0].href))), {
+        title: feature.label, categoryId: "analytics",
+      })
+    }
+  })
   it("orders project before team analysis and comparison directly after trends", () => {
     const nav = harness()
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
     assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案分析", "團隊分析", "成員分析", "趨勢分析", "比較分析"])
     const team = analytics.features[2]
     assert.equal(team.icon, "members")
-    assert.equal(team.routes[0].href, "/analytics/story-points/summary")
+    assert.equal(team.routes[0].href, "/analytics/story-points")
     const project = analytics.features[1]
     assert.equal(analytics.features[3].icon, "person")
     assert.equal(project.icon, "projects")
-    assert.equal(project.routes[0].href, "/analytics/projects/summary")
+    assert.equal(project.routes[0].href, "/analytics/projects")
     const comparison = analytics.features.at(-1)
     assert.equal(comparison.icon, "comparison")
-    assert.deepEqual(JSON.parse(JSON.stringify(comparison.routes)), [{ href: "/analytics/comparison/summary", label: "摘要" }])
+    assert.deepEqual(JSON.parse(JSON.stringify(comparison.routes)), [{ href: "/analytics/comparison", label: "比較分析" }])
     assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(comparison.routes[0].href))), { title: "比較分析", categoryId: "analytics" })
     const adminCategories = nav.visibleNavigationCategories(nav.navigationCategories, nav.ADMIN_EMAILS[0])
     assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "comparison"))
@@ -86,9 +101,9 @@ describe("Analysis navigation", () => {
 
   it("keeps renamed team and new project destinations honest ComingSoon pages", () => {
     for (const [path, title] of [
-      ["app/(app)/analytics/story-points/summary/page.tsx", "團隊分析"],
-      ["app/(app)/analytics/projects/summary/page.tsx", "專案分析"],
-      ["app/(app)/analytics/comparison/summary/page.tsx", "比較分析"],
+      ["app/(app)/analytics/story-points/page.tsx", "團隊分析"],
+      ["app/(app)/analytics/projects/page.tsx", "專案分析"],
+      ["app/(app)/analytics/comparison/page.tsx", "比較分析"],
     ]) {
       const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
         fileName: path,

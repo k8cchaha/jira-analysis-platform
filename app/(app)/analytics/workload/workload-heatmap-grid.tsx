@@ -77,7 +77,7 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
         {metricSwitch && <div className="ml-auto max-w-full">{metricSwitch}</div>}
       </div>
 
-      <div className="max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700" tabIndex={0} role="region" aria-label={`成員每週完成 ${metricLabel} 熱點圖`}>
+      <div className="max-w-full overflow-x-auto overscroll-x-none rounded-lg border border-slate-200 dark:border-slate-700" tabIndex={0} role="region" aria-label={`成員每週完成 ${metricLabel} 熱點圖`}>
         <table className="w-full table-fixed border-separate border-spacing-0 font-mono text-xs tabular-nums" style={{ minWidth: 300 + heatmap.weeks.length * 52 }}>
           <caption className="sr-only">
             成員每週完成的 Dev-Task {metricLabel}。每列一位成員，每欄為週一到週日，表頭顯示週一日期。
@@ -93,7 +93,7 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
           <thead className="text-slate-600 dark:text-slate-300">
             <tr>
               <th rowSpan={2} scope="col" className={`sticky left-0 z-20 w-[140px] min-w-[140px] px-3 text-center font-medium ${HEADER_CLASS}`}>
-                <span aria-hidden="true">ASSIGNEE</span><span className="sr-only">成員</span>
+                <span aria-hidden="true">Member</span><span className="sr-only">成員</span>
               </th>
               <th rowSpan={2} scope="col" className={`sticky left-[140px] z-20 min-w-[72px] px-2 text-center font-medium ${HEADER_CLASS}`}>Total</th>
               <th rowSpan={2} scope="col" className={`sticky left-[212px] z-20 min-w-[88px] px-2 text-center font-medium ${HEADER_CLASS}`}>Output%</th>

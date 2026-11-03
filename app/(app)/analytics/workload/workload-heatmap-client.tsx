@@ -36,9 +36,11 @@ interface BasePayload {
  * 沒有逐日 frame：`resolved` 是欄位值而非事件，逐日查詢換不到額外資訊。
  * 收到 `error` ＝ 串流中止：已畫的部分保留，顯示錯誤 banner，不偽裝成功。
  */
-export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl }: {
+export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl, queryNonce = 0 }: {
+  /** 此次頁面明確提交的序號；只用於重掛串流，不進 URL。 */
+  queryNonce?: number
   filter: WorkloadFilter
-  /** SSE 端點（server 產生）；未套用篩選條件時為 null。 */
+  /** SSE 端點（server 產生）；尚未明確提交此次查詢時為 null。 */
   endpoint: string | null
   jiraBaseUrl: string | null
 }) {
@@ -90,10 +92,10 @@ export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl }: {
             </p>
           </>
         ) : (
-          // key 綁定端點與重試次數：套用新條件或按「重新載入」時整棵子樹重掛，
+          // key 綁定端點、明確提交與重試次數：再次查詢或重試時整棵子樹重掛，
           // 串流狀態自然回到初始值，不必在 effect 內同步 setState 重設。
           <HeatmapStream
-            key={`${endpoint}\u0000${retryNonce}`}
+            key={`${endpoint}\u0000${queryNonce}\u0000${retryNonce}`}
             endpoint={endpoint}
             filter={filter}
             metric={metric}
@@ -327,8 +329,8 @@ function HeatmapStream({
         <WorkloadHeatmapGrid key={metric} heatmap={heatmap} metric={metric} metricSwitch={metricSwitch} selection={validSelection} detailsId={detailsId} onSelect={toggleSelection} />
       </div>
       {validSelection && selectedRow && selectedWeek && selectedPoints !== null && selectedPoints !== undefined && (
-        <WorkloadIssueDetails id={detailsId} memberName={selectedRow.displayName} week={selectedWeek} metric={metric}
-          points={selectedPoints} tasks={detailTasks} jiraBaseUrl={jiraBaseUrl} onClose={closeDetails} />
+        <WorkloadIssueDetails id={detailsId} memberName={selectedRow.displayName} week={selectedWeek}
+          tasks={detailTasks} jiraBaseUrl={jiraBaseUrl} onClose={closeDetails} />
       )}
       {/* 串流中途失敗：已收到的格子保留，另以 banner 說明並提供重試。 */}
       {streamError && (

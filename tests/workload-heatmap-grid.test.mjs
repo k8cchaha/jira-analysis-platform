@@ -8,7 +8,7 @@ import ts from "typescript"
 import * as heatmap from "../lib/workload-heatmap.ts"
 
 const require = createRequire(import.meta.url)
-const file = new URL("../app/(app)/analytics/workload/summary/workload-heatmap-grid.tsx", import.meta.url)
+const file = new URL("../app/(app)/analytics/workload/workload-heatmap-grid.tsx", import.meta.url)
 const { outputText } = ts.transpileModule(readFileSync(file, "utf8"), {
   fileName: file.pathname,
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
@@ -46,7 +46,7 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     const markup = render(build())
     assert.match(markup, /rowSpan="2"[^>]*scope="col"/i)
     const header = markup.match(/<thead[\s\S]*?<\/thead>/)[0]
-    assert.match(header, /ASSIGNEE[\s\S]*?<th rowSpan="2" scope="col"[^>]*>Total<\/th><th rowSpan="2" scope="col"[^>]*>Output%<\/th>[\s\S]*?>2026<\/th>/i)
+    assert.match(header, /Member[\s\S]*?<th rowSpan="2" scope="col"[^>]*>Total<\/th><th rowSpan="2" scope="col"[^>]*>Output%<\/th>[\s\S]*?>2026<\/th>/i)
     assert.match(markup, /colSpan="1"[^>]*scope="colgroup"[^>]*>2026<\/th>/i)
     assert.match(markup, /colSpan="2"[^>]*scope="colgroup"[^>]*>2027<\/th>/i)
     for (const monday of ["12/28", "01/04", "01/11"]) assert.match(markup, new RegExp(`>${monday}<`))
@@ -69,7 +69,7 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     assert.match(markup, /Alice・2026-11-02 ～ 2026-11-03（2 天）：Story Points 完成 3 點/)
     const summary = markup.match(/<p role="status"[^>]*>([\s\S]*?)<\/p>/)[1].replace(/<[^>]*>/g, "")
     assert.equal(summary, "共 1 名成員、5 週， 合計 3 點。")
-    assert.match(markup, /<th[^>]*text-center[^>]*><span aria-hidden="true">ASSIGNEE<\/span>/)
+    assert.match(markup, /<th[^>]*text-center[^>]*><span aria-hidden="true">Member<\/span>/)
   })
   it("prints weekly sums and zero while leaving null cells visually blank", () => {
     const markup = render(build())
@@ -153,6 +153,19 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     }
     const singleWeek = render(build({ days: ["2027-01-04"] }))
     assert.match(singleWeek, /style="min-width:352px"/)
+  })
+  it("stops horizontal scroll chaining at table edges without blocking vertical page scrolling", () => {
+    const days = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(2026, 0, 5 + index * 7)).toISOString().slice(0, 10))
+    for (const metric of ["points", "actualPoints"]) {
+      for (const shownDays of [days, days.slice(0, 1)]) {
+        const markup = render(build({ from: days[0], to: days.at(-1), days: shownDays }), metric)
+        const scroller = markup.match(/<div[^>]*role="region"[^>]*>/)[0]
+        assert.match(scroller, /overflow-x-auto overscroll-x-none/)
+        assert.match(scroller, /tabindex="0"/)
+        assert.doesNotMatch(scroller, /overscroll-y-|overscroll-none(?:\s|"|$)|touch-none|overflow-hidden/)
+        assert.match(markup, new RegExp(`min-width:${300 + shownDays.length * 52}px`))
+      }
+    }
   })
   it("retains scrollable rectangular cells, sticky names and keyboard-readable values", () => {
     const markup = render(build())

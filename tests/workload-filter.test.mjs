@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url)
 const ts = require("typescript")
 const compiled = new Map()
 const plain = (value) => JSON.parse(JSON.stringify(value))
-const root = "app/(app)/analytics/workload/summary/"
+const root = "app/(app)/analytics/workload/"
 const user = (accountId) => ({ accountId, displayName: accountId })
 const success = (...ids) => ({ status: "success", members: ids.map(user) })
 
@@ -18,6 +18,7 @@ function harness(initialSnapshot = {}) {
   const modules = new Map()
   const slotsByComponent = new Map()
   const pushes = []
+  const submissions = []
   let slots = []
   let cursor = 0
   let effects = []
@@ -64,6 +65,7 @@ function harness(initialSnapshot = {}) {
       if (name === "@/lib/jira-dashboard") return { dashboardJiraBaseUrl: () => "https://fixture.invalid" }
       if (name === "./workload-issue-details") return { WorkloadIssueDetails: () => null }
       if (name === "./date-range.ts") return load("lib/date-range.ts")
+      if (name === "./workload-query-client") return load(`${root}workload-query-client.tsx`)
       if (name === "./workload-filter") return load(`${root}workload-filter.tsx`)
       if (name === "./workload-heatmap-client") return load(`${root}workload-heatmap-client.tsx`)
       if (name === "./workload-heatmap-grid") return load(`${root}workload-heatmap-grid.tsx`)
@@ -89,10 +91,16 @@ function harness(initialSnapshot = {}) {
   const Form = load(`${root}workload-filter.tsx`).WorkloadFilterForm
   let props = { initialFilter: null, initialError: null }
   return {
-    load, draw, pushes,
+    load, draw, pushes, submissions,
     setSnapshot: (value) => { snapshot = value },
     setToday: (value) => { today = value },
-    form(nextProps) { if (nextProps) props = nextProps; return draw(Form, props) },
+    form(nextProps) {
+      if (nextProps) props = nextProps
+      return draw(Form, { ...props, onQuery: props.onQuery ?? ((next) => {
+        submissions.push(plain(next))
+        pushes.push(load("lib/workload-filter.ts").workloadHref(next))
+      }) })
+    },
     component: (node) => draw(node.type, node.props),
   }
 }
@@ -249,7 +257,7 @@ describe("page-configurable DateRangeField shortcuts", () => {
     tree = h.form()
     assert.deepEqual(plain(named(tree, "DateRangeField").props.value), sprint.range)
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-web&from=2026-10-19&to=2026-11-01"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-10-19&to=2026-11-01"])
   })
 })
 
@@ -274,7 +282,7 @@ describe("workload UI URL selections", () => {
     const serialized = serializeWorkloadFilter(value)
     assert.equal(serialized, "group=ent-be1&group=ent-web&exclude=ent-web%7Ca&exclude=ent-web%7Cb&project=sun&project=tkk&from=2026-10-01&to=2026-10-31")
     assert.equal(serializeWorkloadFilter(parseWorkloadFilter(new URLSearchParams(serialized))), serialized)
-    assert.equal(workloadHref(filter), "/analytics/workload/summary?group=ent-web&from=2026-10-01&to=2026-10-31")
+    assert.equal(workloadHref(filter), "/analytics/workload?group=ent-web&from=2026-10-01&to=2026-10-31")
     // 日曆日不因重複序列化而位移（不經 UTC 轉換）。
     const single = serializeWorkloadFilter({ ...filter, from: "2026-01-01", to: "2026-01-01" })
     assert.match(single, /from=2026-01-01&to=2026-01-01/)
@@ -297,6 +305,40 @@ describe("workload UI URL selections", () => {
 })
 
 describe("workload page and filter callbacks", () => {
+  it("emits onQuery only after explicit validated submission, not defaults or draft changes", () => {
+    const h = harness({ "ent-web": success("a") })
+    const submitted = []
+    let tree = h.form({ ...formProps(), onQuery: (value) => submitted.push(plain(value)) })
+    const field = named(tree, "DateRangeField")
+    field.props.onChange({ from: "2026-10-05", to: "2026-11-03" })
+    field.props.onCommit({ from: "2026-10-05", to: "2026-11-03" })
+    assert.equal(submitted.length, 0)
+    assert.equal(h.pushes.length, 0)
+    tree = h.form()
+    submit(tree)
+    assert.deepEqual(submitted, [{ ...filter, from: "2026-10-05", to: "2026-11-03" }])
+    assert.equal(h.pushes.length, 0, "Form delegates navigation/activation to its client callback")
+    submit(h.form())
+    assert.equal(submitted.length, 2, "Same filters must emit another explicit submission")
+  })
+
+  it("never emits activation for invalid ranges, incomplete memberships or empty populations", () => {
+    const cases = [
+      [{ "ent-web": success("a") }, { ...filter, from: "2026-10-31", to: "2026-10-01" }],
+      [{ "ent-web": success("a") }, { ...filter, from: "", to: "" }],
+      [{}, filter],
+      [{ "ent-web": { status: "loading" } }, filter],
+      [{ "ent-web": success() }, filter],
+      [{ "ent-web": success("a") }, { ...filter, exclusions: { "ent-web": ["a"] } }],
+    ]
+    for (const [snapshot, restored] of cases) {
+      const h = harness(snapshot)
+      let count = 0
+      submit(h.form({ ...formProps(restored), onQuery: () => { count++ } }))
+      assert.equal(count, 0)
+      assert.equal(h.pushes.length, 0)
+    }
+  })
   it("provides only four recent-month shortcuts and defaults to 近1月", () => {
     const h = harness({ "ent-web": success("a") })
     const field = named(h.form(formProps()), "DateRangeField")
@@ -330,7 +372,7 @@ describe("workload page and filter callbacks", () => {
       tree = h.form()
       assert.deepEqual(plain(named(tree, "DateRangeField").props.value), { from, to: "2026-11-03" })
       submit(tree)
-      assert.deepEqual(h.pushes, [`/analytics/workload/summary?group=ent-web&from=${from}&to=2026-11-03`])
+      assert.deepEqual(h.pushes, [`/analytics/workload?group=ent-web&from=${from}&to=2026-11-03`])
     })
   }
   it("only renders requested controls and explanatory text, with shared widths", () => {
@@ -372,7 +414,7 @@ describe("workload page and filter callbacks", () => {
     tree = h.form()
     assert.equal(named(tree, "SearchButton").props.disabled, false)
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-be1&group=ent-web&exclude=ent-web%7Ca&project=tkk&from=2026-10-01&to=2026-10-31"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-be1&group=ent-web&exclude=ent-web%7Ca&project=tkk&from=2026-10-01&to=2026-10-31"])
   })
   it("submits the range restored from the URL without touching the shortcuts", () => {
     const h = harness({ "ent-web": success("a") })
@@ -382,7 +424,7 @@ describe("workload page and filter callbacks", () => {
     assert.deepEqual(plain(named(tree, "DateRangeField").props.value).from, "2026-09-15")
     assert.deepEqual(plain(named(tree, "DateRangeField").props.value).to, "2026-09-28")
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-web&from=2026-09-15&to=2026-09-28"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-09-15&to=2026-09-28"])
   })
   it("blocks submit until a range exists, without falling back to a default window", () => {
     const h = harness({ "ent-web": success("a") })
@@ -409,7 +451,7 @@ describe("workload page and filter callbacks", () => {
     named(tree, "DateRangeField").props.onCommit({ from, to })
     tree = h.form() // 重新繪製後草稿仍在，且已標記為「已觸碰」。
     submit(tree)
-    assert.deepEqual(h.pushes, [`/analytics/workload/summary?group=ent-web&from=${from}&to=${to}`])
+    assert.deepEqual(h.pushes, [`/analytics/workload?group=ent-web&from=${from}&to=${to}`])
   })
   it("fills the default range in the browser, once, without overriding a restored range", () => {
     const h = harness({ "ent-web": success("a") })
@@ -427,7 +469,7 @@ describe("workload page and filter callbacks", () => {
     // 補值後即成為可查的草稿，未選擇提示消失。
     assert.doesNotMatch(text(tree), /尚未選擇分析區間/)
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-web&from=2026-09-20&to=2026-10-19"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-09-20&to=2026-10-19"])
     // 只補一次：重繪不會再改動已套用的區間。
     h.component(named(h.form(), "DateRangeField"))
     assert.equal(named(h.form(), "DateRangeField").props.value.from, "2026-09-20")
@@ -442,7 +484,7 @@ describe("workload page and filter callbacks", () => {
     assert.equal(named(tree, "DateRangeField").props.value.from, "2026-08-01")
     assert.equal(named(tree, "DateRangeField").props.value.to, "2026-08-31")
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-web&from=2026-08-01&to=2026-08-31"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-08-01&to=2026-08-31"])
   })
   for (const snapshot of [ {}, { "ent-web": { status: "loading" } }, { "ent-web": { status: "error", error: { message: "failure" } } }, { "ent-web": success() } ]) {
     it(`blocks incomplete/empty populations ${JSON.stringify(snapshot)}`, () => {
@@ -489,30 +531,31 @@ describe("workload page and filter callbacks", () => {
     tree = h.form()
     assert.match(text(tree), /1 名不重複成員/)
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload/summary?group=ent-web&exclude=ent-web%7Ca&from=2026-10-01&to=2026-10-31"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&exclude=ent-web%7Ca&from=2026-10-01&to=2026-10-31"])
   })
   it("awaits route params, preserves applied state via keys and rejects invalid URLs without self fallback", async () => {
     const h = harness()
     const Page = h.load(`${root}page.tsx`).default
-    const empty = named(await Page({ searchParams: Promise.resolve({}) }), "WorkloadFilterForm")
+    const pageForm = async (params) => named(h.component(named(await Page({ searchParams: Promise.resolve(params) }), "WorkloadQueryClient")), "WorkloadFilterForm")
+    const empty = await pageForm({})
     assert.equal(empty.key, "empty")
     assert.equal(empty.props.initialFilter, null)
     // 區間是查詢範圍的一部分：URL 沒有 from/to 時不套用任何預設視窗。
-    assert.equal(named(await Page({ searchParams: Promise.resolve({ group: "ent-web" }) }), "WorkloadFilterForm").props.initialFilter, null)
+    assert.equal((await pageForm({ group: "ent-web" })).props.initialFilter, null)
     const params = { group: ["ent-web", "ent-be1"], exclude: "ent-web|a", from: "2026-10-01", to: "2026-10-31" }
     const first = await Page({ searchParams: Promise.resolve(params) })
     assert.equal(named(first, "PageHeader").props.title, "工作量分析")
-    const applied = named(first, "WorkloadFilterForm")
+    const applied = named(h.component(named(first, "WorkloadQueryClient")), "WorkloadFilterForm")
     assert.equal(applied.key, "group=ent-be1&group=ent-web&exclude=ent-web%7Ca&from=2026-10-01&to=2026-10-31")
     assert.deepEqual(plain(applied.props.initialFilter.exclusions), { "ent-web": ["a"] })
     assert.equal(applied.props.initialFilter.from, "2026-10-01")
     assert.equal(applied.props.initialFilter.to, "2026-10-31")
     // 換區間（或換團隊）都會讓 key 改變，觸發表單重新掛載並還原新條件。
-    const changed = named(await Page({ searchParams: Promise.resolve({ group: "ent-web", from: "2026-10-01", to: "2026-10-07" }) }), "WorkloadFilterForm")
+    const changed = await pageForm({ group: "ent-web", from: "2026-10-01", to: "2026-10-07" })
     assert.notEqual(changed.key, applied.key)
-    const back = named(await Page({ searchParams: Promise.resolve(params) }), "WorkloadFilterForm")
+    const back = await pageForm(params)
     assert.equal(back.key, applied.key)
-    const invalid = named(await Page({ searchParams: Promise.resolve({ mode: "self" }) }), "WorkloadFilterForm")
+    const invalid = await pageForm({ mode: "self" })
     assert.equal(invalid.props.initialFilter, null)
     assert.equal(typeof invalid.props.initialError, "string")
     assert.match(invalid.key, /^invalid:/)
@@ -548,10 +591,15 @@ describe("workload page and filter callbacks", () => {
     const siblings = children(tree)
     const keys = siblings.map((child) => child?.key).filter((key) => key !== undefined && key !== null)
     assert.equal(new Set(keys).size, keys.length, `duplicate sibling key among ${JSON.stringify(keys)}`)
-    // 熱點圖仍必須渲染，且與表單同源（靠 endpoint 觸發重設）。
-    assert.ok(named(tree, "WorkloadHeatmapClient"), "heatmap should still render")
-    assert.equal(named(tree, "WorkloadHeatmapClient").props.jiraBaseUrl, "https://fixture.invalid")
-    // 未掛 key 時此 JSX runtime 回報 null（而非 undefined），兩者同義。
-    assert.ok(named(tree, "WorkloadHeatmapClient").key == null)
+    const coordinator = named(tree, "WorkloadQueryClient")
+    assert.ok(coordinator.key == null, "URL changes must not reset the local submit coordinator")
+    const content = h.component(coordinator)
+    const heatmap = named(content, "WorkloadHeatmapClient")
+    assert.equal(heatmap.props.jiraBaseUrl, "https://fixture.invalid")
+    assert.equal(heatmap.props.endpoint, null, "Restored URL alone must never activate the stream")
+    assert.ok(heatmap.key == null, "Keep metric state outside the keyed stream")
+    assert.ok(named(content, "WorkloadFilterForm").key)
+    const contentKeys = children(content).map((child) => child.key).filter((key) => key != null)
+    assert.equal(new Set(contentKeys).size, contentKeys.length)
   })
 })

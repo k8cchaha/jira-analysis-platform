@@ -3,20 +3,12 @@ export type AppRoute =
   | "/sprint/planning"
   | "/sprint/burndown"
   | "/sprint/capacity"
-  | "/analytics/workload/summary"
-  | "/analytics/workload/breakdown"
-  | "/analytics/workload/detail"
-  | "/analytics/story-points/summary"
-  | "/analytics/story-points/distribution"
-  | "/analytics/story-points/detail"
-  | "/analytics/projects/summary"
-  | "/analytics/trends/summary"
-  | "/analytics/trends/comparison"
-  | "/analytics/trends/detail"
-  | "/analytics/comparison/summary"
-  | "/analytics/members/summary"
-  | "/analytics/members/comparison"
-  | "/analytics/members/detail"
+  | "/analytics/workload"
+  | "/analytics/story-points"
+  | "/analytics/projects"
+  | "/analytics/trends"
+  | "/analytics/comparison"
+  | "/analytics/members"
   | "/reports/saved/list"
   | "/reports/exports/list"
   | "/settings/jira"
@@ -114,53 +106,37 @@ export const navigationCategories = [
         id: "workload",
         label: "工作量分析",
         icon: "workload",
-        routes: [
-          { href: "/analytics/workload/summary", label: "摘要" },
-          { href: "/analytics/workload/breakdown", label: "分佈" },
-          { href: "/analytics/workload/detail", label: "明細" },
-        ],
+        routes: [{ href: "/analytics/workload", label: "工作量分析" }],
       },
       {
         id: "projects",
         label: "專案分析",
         icon: "projects",
-        routes: [{ href: "/analytics/projects/summary", label: "摘要" }],
+        routes: [{ href: "/analytics/projects", label: "專案分析" }],
       },
       {
         id: "story-points",
         label: "團隊分析",
         icon: "members",
-        routes: [
-          { href: "/analytics/story-points/summary", label: "摘要" },
-          { href: "/analytics/story-points/distribution", label: "分佈" },
-          { href: "/analytics/story-points/detail", label: "明細" },
-        ],
+        routes: [{ href: "/analytics/story-points", label: "團隊分析" }],
       },
       {
         id: "members",
         label: "成員分析",
         icon: "person",
-        routes: [
-          { href: "/analytics/members/summary", label: "摘要" },
-          { href: "/analytics/members/comparison", label: "比較" },
-          { href: "/analytics/members/detail", label: "明細" },
-        ],
+        routes: [{ href: "/analytics/members", label: "成員分析" }],
       },
       {
         id: "trends",
         label: "趨勢分析",
         icon: "trends",
-        routes: [
-          { href: "/analytics/trends/summary", label: "摘要" },
-          { href: "/analytics/trends/comparison", label: "比較" },
-          { href: "/analytics/trends/detail", label: "明細" },
-        ],
+        routes: [{ href: "/analytics/trends", label: "趨勢分析" }],
       },
       {
         id: "comparison",
         label: "比較分析",
         icon: "comparison",
-        routes: [{ href: "/analytics/comparison/summary", label: "摘要" }],
+        routes: [{ href: "/analytics/comparison", label: "比較分析" }],
       },
     ],
   },

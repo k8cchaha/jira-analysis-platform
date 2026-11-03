@@ -7,13 +7,16 @@ import { describe, it } from "node:test"
 const require = createRequire(import.meta.url)
 const ts = require("typescript")
 const compiled = new Map()
-const root = "app/(app)/analytics/workload/summary/"
+const root = "app/(app)/analytics/workload/"
 const plain = (value) => JSON.parse(JSON.stringify(value))
 
 /** Actual page/client/route wiring with mocked hooks, auth and Jira I/O; not a browser test. */
 function harness(snapshot = { "ent-web": { status: "success", members: [{ accountId: "fixture-member", displayName: "Fixture" }] } }, now = "2026-11-03T12:00:00.000Z") {
   let slots = []
   let cursor = 0
+  const dirty = new Set()
+  const pushes = []
+  const popstateListeners = new Set()
   const modules = new Map()
   const effects = []
   const sources = []
@@ -46,7 +49,7 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
       const index = cursor++
       const owned = slots
       if (!(index in owned)) owned[index] = typeof initial === "function" ? initial() : initial
-      return [owned[index], (next) => { owned[index] = typeof next === "function" ? next(owned[index]) : next }]
+      return [owned[index], (next) => { owned[index] = typeof next === "function" ? next(owned[index]) : next; dirty.add(owned) }]
     },
     useEffect(effect, deps) {
       const index = cursor++
@@ -69,6 +72,10 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
   const sandbox = vm.createContext({
     URL, URLSearchParams, Request, Response, ReadableStream, TextEncoder, Date: FrozenDate, Error,
     EventSource: FakeEventSource,
+    window: {
+      addEventListener: (name, callback) => { assert.equal(name, "popstate"); popstateListeners.add(callback) },
+      removeEventListener: (name, callback) => { assert.equal(name, "popstate"); popstateListeners.delete(callback) },
+    },
     fetch: () => { throw new Error("No live HTTP request is allowed") },
   })
   function load(path) {
@@ -82,6 +89,7 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
     function fixtureRequire(name) {
       if (name === "react") return { ...require(name), ...hooks }
       if (name === "react/jsx-runtime") return require(name)
+      if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
       if (name === "@/auth") return { auth: async () => ({ user: { id: "fixture-user" } }) }
       if (name === "@/lib/jira-token") return { JiraAuthorizationError }
       if (name === "@/lib/jira-dashboard") return { JiraDashboardError, dashboardJiraBaseUrl: () => "https://fixture.invalid" }
@@ -105,6 +113,7 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
       if (name === "./workload-filter") return { WorkloadFilterForm: () => null }
       if (name === "./workload-heatmap-grid") return { WorkloadHeatmapGrid: () => null }
       if (name === "./workload-issue-details") return { WorkloadIssueDetails: () => null }
+      if (name === "./workload-query-client") return load(`${root}workload-query-client.tsx`)
       if (name === "./workload-heatmap-client") return load(`${root}workload-heatmap-client.tsx`)
       if (name === "./date-range.ts") return load("lib/date-range.ts")
       if (["@/lib/workload-filter", "@/lib/jira-dashboard-filter", "@/lib/workload-heatmap", "@/lib/date-range", "@/lib/burndown-stream"].includes(name)) return load(`${name.slice(2)}.ts`)
@@ -113,40 +122,99 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
     vm.runInContext(`(function(require,module,exports){${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, mod, mod.exports)
     return mod.exports
   }
-  async function mount(searchParams) {
-    const page = await load(`${root}page.tsx`).default({ searchParams: Promise.resolve(searchParams) })
-    const client = page.props.children.find((child) => child?.props?.endpoint)
-    assert.ok(client, "The page must accept the filter and render a heatmap client")
-    let clientProps = client.props
+  async function mount(searchParams, { submit = true } = {}) {
+    const callsBeforeMount = calls.length
+    const sourcesBeforeMount = sources.length
+    const Page = load(`${root}page.tsx`).default
+    const page = await Page({ searchParams: Promise.resolve(searchParams) })
+    const coordinator = page.props.children.find((child) => child?.type?.name === "WorkloadQueryClient")
+    assert.ok(coordinator, "The page must always render its local query coordinator")
+    let coordinatorProps = coordinator.props
+    const coordinatorSlots = []
     const clientSlots = []
+    const coordinatorCleanups = []
     let streamSlots = []
     let previousStreamKey
+    let streamCleanup
+    let currentSource
     let stream
+    let form
+    let client
+    function draw(component, props, owned) {
+      let tree
+      let attempts = 0
+      do {
+        dirty.delete(owned)
+        slots = owned
+        cursor = 0
+        tree = component(props)
+        assert.ok(++attempts < 10, "Render-state synchronization must settle")
+      } while (dirty.has(owned))
+      return tree
+    }
     function wrapper() {
-      slots = clientSlots
-      cursor = 0
-      const tree = client.type(clientProps)
-      stream = tree.props.children.props.children
-      if (previousStreamKey !== stream.key) {
+      const content = draw(coordinator.type, coordinatorProps, coordinatorSlots)
+      while (effects.length) coordinatorCleanups.push(effects.shift()())
+      form = content.props.children[0]
+      client = content.props.children[1]
+      const tree = client ? draw(client.type, client.props, clientSlots) : null
+      const candidate = tree?.props.children.props.children
+      const nextStream = candidate?.type?.name === "HeatmapStream" ? candidate : null
+      if (previousStreamKey !== nextStream?.key) {
+        streamCleanup?.()
+        streamCleanup = undefined
         streamSlots = []
-        previousStreamKey = stream.key
+        previousStreamKey = nextStream?.key
       }
+      stream = nextStream
       return tree
     }
     function render() {
-      wrapper()
-      slots = streamSlots
-      cursor = 0
-      return stream.type(stream.props)
+      const tree = wrapper()
+      if (!stream) return tree
+      const result = draw(stream.type, stream.props, streamSlots)
+      while (effects.length) {
+        streamCleanup = effects.shift()()
+        currentSource = sources.at(-1)
+      }
+      return result
+    }
+    const cleanup = () => {
+      streamCleanup?.()
+      streamCleanup = undefined
+      coordinatorCleanups.splice(0).forEach((close) => close?.())
     }
     render()
-    assert.equal(effects.length, 1)
-    const cleanup = effects.pop()()
-    return { endpoint: client.props.endpoint, source: sources.at(-1), cleanup, render, wrapper, metricSwitch: () => { wrapper(); return stream.props.metricSwitch }, streamKey: () => stream.key, retry: () => stream.props.onRetry(), setFilter: (next) => { clientProps = { ...clientProps, ...next } } }
+    assert.equal(stream, null, "URL restoration is idle before an explicit submit")
+    assert.equal(calls.length, callsBeforeMount, "Rendering the page cannot call workload scope/base")
+    assert.equal(sources.length, sourcesBeforeMount, "URL restoration cannot open EventSource")
+    const result = {
+      get endpoint() { return client?.props.endpoint },
+      get source() { return currentSource },
+      get client() { return client },
+      cleanup, render, wrapper,
+      form: () => { wrapper(); return form },
+      submit: (next = coordinatorProps.filter) => { wrapper(); form.props.onQuery(next); return render() },
+      navigate: async (params, { popstate = false } = {}) => {
+        if (popstate) popstateListeners.forEach((callback) => callback())
+        const next = await Page({ searchParams: Promise.resolve(params) })
+        coordinatorProps = next.props.children.find((child) => child?.type?.name === "WorkloadQueryClient").props
+        return render()
+      },
+      popstate: () => { popstateListeners.forEach((callback) => callback()); return render() },
+      metricSwitch: () => {
+        const tree = wrapper()
+        return stream?.props.metricSwitch ?? tree?.props.children.props.children[0].props.children
+      },
+      streamKey: () => stream?.key,
+      retry: () => stream.props.onRetry(),
+    }
+    if (submit) result.submit()
+    return result
   }
   const GET = load("app/api/analytics/workload/heatmap/stream/route.ts").GET
   return {
-    load, mount, sources, calls, base, effects, todayCaps,
+    load, mount, sources, calls, base, effects, todayCaps, pushes, popstateListeners,
     request: (url, accept = "text/event-stream") => GET(new Request(`https://fixture.invalid${url}`, { headers: { accept } })),
   }
 }
@@ -154,6 +222,152 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
 const sseEvents = (body) => body.trim().split("\n\n").map((frame) => {
   const [event, data] = frame.split("\n")
   return { event: event.slice("event: ".length), data: JSON.parse(data.slice("data: ".length)) }
+})
+
+describe("manual workload query activation (offline)", () => {
+  const a = { group: "ent-web", from: "2026-10-04", to: "2026-11-03" }
+  const b = { ...a, project: "sun" }
+  const c = { ...a, project: "tkk" }
+  const parsed = (h, params) => h.load("lib/workload-filter.ts").parseWorkloadFilter(new URLSearchParams(params))
+
+  for (const params of [a, {}, { group: "ent-web" }, { ...a, submitted: "1" }]) {
+    it(`restores URL without querying on entry or reload: ${JSON.stringify(params)}`, async (t) => {
+      const h = harness()
+      const first = await h.mount(params, { submit: false })
+      t.after(first.cleanup)
+      assert.equal(h.sources.length, 0)
+      assert.equal(h.calls.length, 0)
+      if (params === a) {
+        assert.deepEqual(plain(first.form().props.initialFilter), plain(parsed(h, a)))
+        assert.equal(first.endpoint, null)
+      } else assert.equal(first.form().props.initialFilter, null)
+      first.cleanup()
+      const refreshed = await h.mount(params, { submit: false })
+      t.after(refreshed.cleanup)
+      assert.equal(h.sources.length, 0)
+      assert.equal(h.calls.length, 0)
+    })
+  }
+
+  it("starts only after submit and refresh after a completed query remains idle", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a, { submit: false })
+    mounted.submit()
+    t.after(mounted.cleanup)
+    assert.equal(h.sources.length, 1)
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-10-04&to=2026-11-03"])
+    await (await h.request(mounted.source.url)).text()
+    mounted.source.listeners.get("base")({ data: JSON.stringify(h.base) })
+    mounted.source.listeners.get("done")({ data: "{}" })
+    mounted.render()
+    mounted.cleanup()
+    const refreshed = await h.mount(a, { submit: false })
+    t.after(refreshed.cleanup)
+    assert.equal(h.sources.length, 1, "Reload cannot silently query the same URL again")
+    assert.equal(h.calls.length, 2, "Only the earlier explicit request called scope and base")
+    assert.equal(refreshed.endpoint, null)
+  })
+
+  it("waits for its changed-filter URL and never queries the old scope", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a)
+    t.after(mounted.cleanup)
+    const old = mounted.source
+    mounted.submit(parsed(h, b))
+    assert.equal(old.closed, true)
+    assert.equal(mounted.endpoint, null)
+    assert.equal(h.sources.length, 1)
+    mounted.render()
+    assert.equal(h.sources.length, 1, "Pending navigation cannot query old URL")
+    await mounted.navigate(b)
+    assert.equal(h.sources.length, 2)
+    assert.equal(mounted.source.url, "/api/analytics/workload/heatmap/stream?group=ent-web&project=sun&from=2026-10-04&to=2026-11-03")
+    assert.deepEqual(plain(mounted.client.props.filter.projects), ["sun"])
+  })
+
+  it("can submit from an empty URL without losing the pending activation", async (t) => {
+    const h = harness()
+    const mounted = await h.mount({}, { submit: false })
+    t.after(mounted.cleanup)
+    mounted.submit(parsed(h, a))
+    assert.equal(h.sources.length, 0)
+    await mounted.navigate(a)
+    assert.equal(h.sources.length, 1)
+  })
+
+  it("unrequested URL changes cancel activation permanently, including A → B → A", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a)
+    t.after(mounted.cleanup)
+    const old = mounted.source
+    await mounted.navigate(b)
+    assert.equal(old.closed, true)
+    await mounted.navigate(a)
+    assert.equal(mounted.endpoint, null)
+    assert.equal(h.sources.length, 1)
+    mounted.submit()
+    assert.equal(h.sources.length, 2)
+  })
+
+  it("popstate cancels active and pending queries even for identical URL history entries", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a)
+    t.after(mounted.cleanup)
+    const old = mounted.source
+    mounted.popstate()
+    assert.equal(old.closed, true)
+    await mounted.navigate(a)
+    assert.equal(h.sources.length, 1)
+    mounted.submit(parsed(h, b))
+    mounted.popstate()
+    await mounted.navigate(b)
+    assert.equal(mounted.endpoint, null)
+    await mounted.navigate(a, { popstate: true })
+    await mounted.navigate(b, { popstate: true })
+    assert.equal(h.sources.length, 1)
+    mounted.cleanup()
+    assert.equal(h.popstateListeners.size, 0)
+  })
+
+  it("keeps the latest rapid submission if its matching URL commits directly", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a, { submit: false })
+    t.after(mounted.cleanup)
+    mounted.submit(parsed(h, b))
+    mounted.submit(parsed(h, c))
+    await mounted.navigate(c)
+    assert.equal(h.sources.length, 1)
+    assert.match(mounted.source.url, /project=tkk/)
+    await mounted.navigate(c)
+    assert.equal(h.sources.length, 1, "Same URL RSC updates must not issue another request")
+  })
+
+  it("an invalid URL cancels an active query without widening to a fallback", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a)
+    t.after(mounted.cleanup)
+    const old = mounted.source
+    await mounted.navigate({ ...a, jql: "project=sun" })
+    assert.equal(old.closed, true)
+    assert.equal(mounted.form().props.initialFilter, null)
+    await mounted.navigate(a)
+    assert.equal(mounted.endpoint, null)
+    assert.equal(h.sources.length, 1)
+  })
+
+  it("a stale or unrelated navigation cancels the latest rapid submission fail-closed", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a, { submit: false })
+    t.after(mounted.cleanup)
+    mounted.submit(parsed(h, b))
+    mounted.submit(parsed(h, c))
+    await mounted.navigate(b)
+    await mounted.navigate(c)
+    assert.equal(h.sources.length, 0, "Neither outdated B nor cancelled C may run automatically")
+    mounted.submit()
+    assert.equal(h.sources.length, 1)
+    assert.match(mounted.source.url, /project=tkk/)
+  })
 })
 
 describe("workload page → EventSource → stream route (offline)", () => {
@@ -285,9 +499,9 @@ describe("workload page → EventSource → stream route (offline)", () => {
     grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })
     const detail = () => mounted.render().props.children[1]
     assert.deepEqual(plain(detail().props.tasks.map((task) => task.key)), ["TEST-1"])
-    assert.equal(detail().props.points, 2)
+    assert.equal(detail().props.tasks.reduce((sum, task) => sum + (task.points ?? 0), 0), 2)
     mounted.metricSwitch().props.children[1].props.onClick()
-    assert.equal(detail().props.points, 5)
+    assert.equal(detail().props.tasks.reduce((sum, task) => sum + (task.actualPoints ?? 0), 0), 5)
     assert.equal(grid().props.heatmap.rows[0].totalPoints, 5)
     assert.equal(h.sources.length, 1)
     assert.equal(h.effects.length, 0)
@@ -313,7 +527,7 @@ describe("workload page → EventSource → stream route (offline)", () => {
     assert.equal(detail(), null)
     grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })
     assert.deepEqual(plain(detail().props.tasks.map((value) => value.key)), ["A"])
-    assert.equal(detail().props.points, 2)
+    assert.equal(detail().props.tasks.reduce((sum, task) => sum + (task.points ?? 0), 0), 2)
     assert.equal(detail().props.jiraBaseUrl, "https://fixture.invalid")
     assert.equal(grid().props.detailsId, detail().props.id)
     grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })
@@ -323,8 +537,10 @@ describe("workload page → EventSource → stream route (offline)", () => {
     assert.deepEqual(plain(detail().props.tasks.map((value) => value.key)), ["A"])
     toggle()
     assert.deepEqual(plain(detail().props.tasks.map((value) => value.key)), ["B"])
-    assert.equal(detail().props.metric, "actualPoints")
-    assert.equal(detail().props.points, 5)
+    assert.equal(grid().props.metric, "actualPoints")
+    assert.equal("metric" in detail().props, false)
+    assert.equal("points" in detail().props, false)
+    assert.equal(detail().props.tasks.reduce((sum, task) => sum + (task.actualPoints ?? 0), 0), 5)
     let focused = false
     const gridContainer = mounted.render().props.children[0]
     gridContainer.props.ref.current = { querySelectorAll: () => [{ dataset: { workloadAccount: "fixture-member", workloadWeek: "2026-11-02" }, focus: () => { focused = true } }] }
@@ -333,7 +549,7 @@ describe("workload page → EventSource → stream route (offline)", () => {
     assert.equal(detail(), null)
     toggle()
     grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-10-05" })
-    assert.equal(detail().props.points, 0)
+    assert.equal(detail().props.tasks.reduce((sum, task) => sum + (task.points ?? 0), 0), 0)
     assert.deepEqual(plain(detail().props.tasks.map((value) => value.key)), ["C"])
     grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-10-05" })
     assert.equal(detail(), null, "Zero-valued cells also toggle off on repeated click")
@@ -365,13 +581,20 @@ describe("workload page → EventSource → stream route (offline)", () => {
     let tree = mounted.render()
     tree.props.children[0].props.children.props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })
     assert.ok(mounted.render().props.children[1])
-    for (const reset of [() => mounted.retry(), () => mounted.setFilter({ endpoint: `${mounted.endpoint}&project=sun` })]) {
+    for (const reset of [
+      () => mounted.retry(),
+      async () => {
+        mounted.submit({ ...mounted.form().props.initialFilter, projects: ["sun"] })
+        await mounted.navigate({ group: "ent-web", from: "2026-10-04", to: "2026-11-03", project: "sun" })
+      },
+      () => mounted.submit(),
+    ]) {
       const oldKey = mounted.streamKey()
-      reset()
+      const oldSource = mounted.source
+      await reset()
       mounted.render()
       assert.notEqual(mounted.streamKey(), oldKey)
-      const cleanup = h.effects.pop()()
-      t.after(cleanup)
+      assert.equal(oldSource.closed, true, "Replacing the keyed stream immediately closes the old source")
       receive()
       tree = mounted.render()
       assert.equal(tree.props.children[0].props.children.props.metric, "actualPoints")

@@ -1,7 +1,6 @@
 "use client"
 
 import { useId, useState, type FormEvent } from "react"
-import { useRouter } from "next/navigation"
 import { TeamSelect } from "@/components/team-select"
 import { useTeamMembers } from "@/components/team-members-provider"
 import { FilterDropdown } from "@/components/filter-dropdown"
@@ -27,13 +26,13 @@ const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last1Month", "last2M
  * 沒有 URL 區間時先帶入空區間；`DateRangeField` 取得瀏覽器本機今天後，會以預設的近1月
  * 補上並回報 `onCommit`。本元件不自行讀時鐘，避免 hydration 前後顯示不同日期。
  */
-export function WorkloadFilterForm({ initialFilter, initialError, initialRange = null }: {
+export function WorkloadFilterForm({ initialFilter, initialError, initialRange = null, onQuery }: {
   initialFilter: WorkloadFilter | null
   initialError: string | null
   initialRange?: DateRange | null
+  onQuery: (filter: WorkloadFilter) => void
 }) {
   const id = useId()
-  const router = useRouter()
   const [groups, setGroups] = useState<string[]>(initialFilter?.groups ?? [])
   const [exclusions, setExclusions] = useState<Record<string, string[]>>(initialFilter?.exclusions ?? {})
   const [projects, setProjects] = useState<string[]>(initialFilter?.projects ?? [])
@@ -73,10 +72,11 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
       includedDashboardMembers(groups, exclusions, members)
       // 區間是查詢範圍的一部分：沒有它就沒有可查的視窗，不以任何預設值代替。
       if (!rangeTouched || !range.from || !range.to) throw new Error("請先選擇分析區間。")
-      const href = workloadHref({ groups, exclusions, projects, from: range.from, to: range.to })
+      const next = { groups, exclusions, projects, from: range.from, to: range.to }
+      workloadHref(next) // 沿用完整序列化驗證，失敗時不得發出提交 callback。
       setError(null)
       setProjectOpen(false)
-      router.push(href)
+      onQuery(next)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "篩選條件無效。")
     }
