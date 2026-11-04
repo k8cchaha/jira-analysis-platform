@@ -1,0 +1,499 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { fileURLToPath } from "node:url"
+import vm from "node:vm"
+import { describe, it } from "node:test"
+
+const require = createRequire(import.meta.url)
+const ts = require("typescript")
+const root = new URL("../", import.meta.url)
+const compiled = new Map()
+const plain = (value) => JSON.parse(JSON.stringify(value))
+
+const TODAY = "2026-10-21"
+
+/**
+ * 載入新的 Planning subset API route（`app/api/sprint/planning/subset/route.ts`）
+ * 及其依賴，stub `@/auth`、`@/lib/jira-token`、`server-only`、`node:crypto`，
+ * 並 mock `/rest/api/3/search/jql`（母票搜尋 → 子集合搜尋）做端到端驗證。
+ */
+function harness(t, options = {}) {
+  const violations = []
+  const tokenCalls = []
+  const fail = (message) => { violations.push(message); throw new Error(message) }
+  class JiraAuthorizationError extends Error {
+    constructor(code) { super("Fixture authorization error"); this.code = code }
+  }
+  class JiraHttpError extends Error { constructor(status) { super(`Fixture http ${status}`); this.status = status } }
+
+  // 母票（MOTHER_FIELDS 撈取；含 summary/issuetype/parent=Epic 供階層投影）。
+  const parents = options.parents ?? [
+    { key: "SUN-100", id: "1", fields: { project: { id: "10" }, summary: "Story A", issuetype: { name: "Story" }, parent: { key: "SUN-90", fields: { summary: "Epic Alpha" } } } },
+    { key: "SUN-101", id: "2", fields: { project: { id: "10" }, summary: "Task B", issuetype: { name: "Task" }, parent: null } },
+  ]
+  // 「未開子單」的母票：要完整明細欄位（summary/status/assignee/points）。
+  const fullParents = options.fullParents ?? [
+    {
+      id: "1", key: "SUN-100",
+      fields: {
+        project: { id: "10" },
+        summary: "Has subtasks",
+        status: { name: "In Progress" },
+        assignee: { displayName: "Owner A", accountId: "aa1" },
+        reporter: { displayName: "Reporter X", accountId: "rr1" },
+        components: [{ name: "Frontend" }, { name: "API" }],
+        customfield_10005: 5,
+      },
+    },
+    {
+      id: "2", key: "SUN-101",
+      fields: {
+        project: { id: "10" },
+        summary: "No children",
+        status: { name: "To Do" },
+        assignee: null,
+        reporter: null,
+        components: [],
+        customfield_10005: null,
+      },
+    },
+  ]
+  // 子集合工作單（Dev+QA）：未估時（points 缺欄）＋未分派（assignee 空）共用同一批 fixture，
+  // JQL 只在 server 端組合；此 mock 依載入內容決定母票/子集合回應。
+  const subsetIssues = options.subsetIssues ?? [
+    {
+      id: "10", key: "SUN-102",
+      fields: {
+        project: { id: "10" },
+        summary: "Unestimated task",
+        status: { name: "In Progress" },
+        assignee: null,
+        issuetype: { name: "QA-Task" },
+        customfield_14642: { value: "Bug" }, // option 物件形狀
+        parent: { id: "450", key: "SUN-100", fields: { issuetype: { name: "Story" } } },
+      },
+    },
+    {
+      id: "11", key: "SUN-103",
+      fields: {
+        project: { id: "10" },
+        summary: "Another task",
+        status: { name: "To Do" },
+        assignee: { displayName: "Owner A", accountId: "aa1" },
+        issuetype: { name: "Dev-Task" },
+        customfield_14642: "Dev", // 字串形狀
+        parent: { id: "451", key: "SUN-101", fields: { issuetype: { name: "Task" } } },
+      },
+    },
+  ]
+
+  const globals = {
+    Buffer, URL, URLSearchParams, AbortSignal, Request, Response,
+    Date: class extends Date {
+      constructor(...args) { super(...(args.length ? args : [`${options.today ?? TODAY}T12:00:00Z`])) }
+    },
+    process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    console: { error: () => {} },
+    fetch: async (url, init = {}) => {
+      const prefix = `https://api.atlassian.com/ex/jira/${encodeURIComponent(options.cloudId ?? "fixture-cloud")}`
+      if (!url.startsWith(prefix + "/rest/api/3/")) return fail(`Unexpected Jira origin/route: ${url}`)
+      if (init.headers?.Authorization !== "Bearer fixture-token-not-real") return fail("Unexpected authorization fixture")
+      if (init.cache !== "no-store") return fail("Jira requests must not be cached")
+      const path = url.slice(prefix.length)
+      const method = init.method ?? "GET"
+      const body = init.body ? JSON.parse(init.body) : null
+      if (path.startsWith("/rest/api/3/group/member?") && method === "GET") {
+        const group = new URL(url).searchParams.get("groupname")
+        if (!["ent-fpm", "ent-opm"].includes(group)) return fail("Unexpected PM group")
+        return Response.json({ values: [], startAt: 0, maxResults: 50, total: 0, isLast: true })
+      }
+      if (path === "/rest/api/3/search/jql" && method === "POST") {
+        if (body.maxResults !== 100) return fail("Search must use maxResults 100")
+        if (JSON.stringify(body.fields) === JSON.stringify(["project", "summary", "reporter"])) {
+          if (!/key in \(/.test(body.jql)) return fail("Epic search must restrict keys")
+          return Response.json({ issues: options.epics ?? [], isLast: true })
+        }
+        // 母票搜尋：sprint = … 。`getPlanningSubset` 用 MOTHER_FIELDS（summary+issuetype+parent），
+        // 「未開子單」的 `fetchNoSubtaskParents` 用完整 PLANNING_FIELDS。
+        if (/\bsprint = \d+/.test(body.jql)) {
+          // MOTHER_FIELDS：Reporter 分群、母票自身 Assignee 篩選與 Component 顯示。
+          const motherFields = JSON.stringify(["project", "summary", "issuetype", "parent", "reporter", "assignee", "components", "customfield_10005"])
+          if (JSON.stringify(body.fields) === motherFields) {
+            return new Response(JSON.stringify({ issues: options.parents ?? parents, isLast: true }), { status: 200 })
+          }
+          const planningFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "issuetype", "customfield_10005", "customfield_14642"])
+          if (JSON.stringify(body.fields) === planningFields) {
+            return new Response(JSON.stringify({ issues: options.fullParents ?? fullParents, isLast: true }), { status: 200 })
+          }
+          return fail("Parent search must request mother or planning fields")
+        }
+        // 工作單搜尋（Dev+QA，檢查欄位）：含未開子單的全量子票。
+        const expectedFields = JSON.stringify(["project", "summary", "assignee", "reporter", "components", "parent", "status", "issuetype", "customfield_10005", "customfield_14642"])
+        if (JSON.stringify(body.fields) !== expectedFields) return fail("Subset search must request planning fields")
+        // Planning 工作單資料源必須是 Dev+QA（不是燃盡圖的 Dev-only）。
+        if (!/issuetype in \("Dev-Task", "QA-Task"\)/.test(body.jql)) {
+          return fail("Subset search must target Dev-Task and QA-Task work items")
+        }
+        if (options.responseStatus) return new Response(null, { status: options.responseStatus })
+        return new Response(JSON.stringify({ issues: subsetIssues, isLast: true }), { status: 200 })
+      }
+      return fail(`Unexpected Jira route: ${method} ${path}`)
+    },
+  }
+  const sandbox = vm.createContext(globals)
+  const allowed = [
+    "lib/jira-dashboard.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-group-members-cache.ts",
+    "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-http.ts",
+    "lib/jira-sprint-data.ts", "lib/burndown-params.ts", "lib/planning-data.ts",
+    "lib/planning-subset.ts", "app/api/sprint/planning/subset/route.ts",
+  ]
+  const modules = new Map()
+  function load(path) {
+    if (modules.has(path)) return modules.get(path).exports
+    if (!allowed.includes(path)) return fail(`Unexpected module: ${path}`)
+    const loaded = { exports: {} }
+    modules.set(path, loaded)
+    if (!compiled.has(path)) {
+      const filename = fileURLToPath(new URL(path, root))
+      compiled.set(path, ts.transpileModule(readFileSync(filename, "utf8"), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }, fileName: filename,
+      }).outputText)
+    }
+    const fixtureRequire = (specifier) => {
+      if (specifier === "server-only") return {}
+      if (specifier === "node:crypto") return require("node:crypto")
+      if (specifier === "@/auth") return { auth: async () => (options.unauthenticated ? null : { user: { id: "fixture-user" } }) }
+      if (specifier === "@/lib/jira-token") return {
+        JiraAuthorizationError,
+        JiraHttpError,
+        getJiraToken: async () => {
+          tokenCalls.push(true)
+          if (options.authError) throw new JiraAuthorizationError(options.authError)
+          return { cloudId: options.cloudId ?? "fixture-cloud", accessToken: "fixture-token-not-real" }
+        },
+      }
+      if (specifier.startsWith("@/lib/")) return load(specifier.slice(2) + (specifier.endsWith(".ts") ? "" : ".ts"))
+      if (specifier.startsWith("./")) return load("lib/" + specifier.slice(2) + (specifier.endsWith(".ts") ? "" : ".ts"))
+      return fail(`Unexpected require: ${specifier}`)
+    }
+    vm.runInContext(`(function(require,module,exports){\n${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loaded, loaded.exports)
+    return loaded.exports
+  }
+  t.after(() => assert.deepEqual(violations, []))
+  const route = load("app/api/sprint/planning/subset/route.ts")
+  const model = load("lib/planning-subset.ts")
+  return { route, model, tokenCalls, service: load("lib/planning-data.ts") }
+}
+
+function GETroute(route, params) {
+  const qs = new URLSearchParams(params).toString()
+  return route.GET(new Request(`https://fixture.example.invalid/api/sprint/planning/subset${qs ? `?${qs}` : ""}`))
+}
+
+describe("planning subset route — auth & params", () => {
+  it("無 session → 401，不打 token、不打 Jira", async (t) => {
+    const h = harness(t, { unauthenticated: true })
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 401)
+    const body = await res.json()
+    assert.equal(body.status, "error")
+    assert.equal(body.error.code, "reauthorize")
+    assert.equal(h.tokenCalls.length, 0)
+  })
+
+  it("壞 project → 400，不打 token", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "NOPE", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+    assert.equal(h.tokenCalls.length, 0)
+  })
+
+  it("專案無進行中/未來 sprint（PRIDE）→ 400", async (t) => {
+    const h = harness(t, { today: "2099-01-01" })
+    const res = await GETroute(h.route, { project: "PRIDE", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+  })
+
+  it("壞 kind → 400", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "bogus" })
+    assert.equal(res.status, 400)
+    assert.equal((await res.json()).error.code, "configuration")
+  })
+
+  it("多重參數 → 400", async (t) => {
+    const h = harness(t)
+    const url = new URL("https://fixture.example.invalid/api/sprint/planning/subset")
+    url.searchParams.append("project", "SUN")
+    url.searchParams.append("project", "TKK")
+    url.searchParams.append("sprint", "7517")
+    url.searchParams.append("kind", "unestimated")
+    const res = await h.route.GET(new Request(url))
+    assert.equal(res.status, 400)
+  })
+})
+
+describe("planning subset route — success", () => {
+  it("撈子集合並回 success { tasks }", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "unestimated" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, "success")
+    const tasks = plain(body.data.tasks)
+    assert.deepEqual(tasks.map((x) => x.key), ["SUN-102", "SUN-103"])
+    // points 缺欄 → null（未估時）；assignee 空 → null。
+    assert.equal(tasks[0].points, null)
+    assert.equal(tasks[0].assigneeDisplayName, null)
+    assert.deepEqual(tasks[0].parentIssueType, { status: "known", name: "Story" })
+    assert.deepEqual(tasks[1].parentIssueType, { status: "known", name: "Task" })
+    assert.equal(tasks[1].assigneeAccountId, "aa1")
+    // 工作單自身票種 + 母票 key（由子票的 parent 欄位投影）。
+    assert.equal(tasks[0].issueType, "QA-Task")
+    assert.equal(tasks[1].issueType, "Dev-Task")
+    assert.equal(tasks[0].parentKey, "SUN-100")
+    assert.equal(tasks[1].parentKey, "SUN-101")
+    // Dev Type 欄位：option 物件與字串兩種形狀都解析成字串。
+    assert.equal(tasks[0].devType, "Bug")
+    assert.equal(tasks[1].devType, "Dev")
+    // subset 彈窗是 flat 清單，不帶母票 summary / Epic（那屬主表的階層投影）。
+    assert.equal(tasks[0].parentSummary, null)
+    assert.equal(tasks[0].epic, null)
+    // 該回應可直接經 client validator 解碼。
+    const parsed = h.model.parsePlanningSubsetResult(body)
+    assert.equal(parsed.status, "success")
+  })
+
+  it("未開子單：只列沒有任何工作單（Dev+QA）子票的母票", async (t) => {
+    // 所有工作單（Dev+QA）都掛 SUN-101 下 → SUN-100 沒有子票，會被列出。
+    const h = harness(t, {
+      subsetIssues: [
+        {
+          id: "10", key: "SUN-102",
+          fields: { project: { id: "10" }, summary: "t", status: { name: "In Progress" }, assignee: null, parent: { id: "450", key: "SUN-101", fields: { issuetype: { name: "Task" } } } },
+        },
+        {
+          id: "11", key: "SUN-103",
+          fields: { project: { id: "10" }, summary: "t2", status: { name: "To Do" }, assignee: null, parent: { id: "451", key: "SUN-101", fields: { issuetype: { name: "Task" } } } },
+        },
+      ],
+    })
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "no-subtasks" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.equal(body.status, "success")
+    const tasks = plain(body.data.tasks)
+    assert.deepEqual(tasks.map((x) => x.key), ["SUN-100"])
+    // 母票明細直接帶出；未開子單的母票其 parentIssueType 為 none。
+    assert.equal(tasks[0].summary, "Has subtasks")
+    assert.equal(tasks[0].points, 5)
+    assert.deepEqual(tasks[0].parentIssueType, { status: "none" })
+    // 新增欄位：Reporter / Component 一併帶出。
+    assert.equal(tasks[0].reporter, "Reporter X")
+    assert.deepEqual(tasks[0].components, ["Frontend", "API"])
+    // client validator 可解碼。
+    const parsed = h.model.parsePlanningSubsetResult(body)
+    assert.equal(parsed.status, "success")
+  })
+
+  it("未開子單：全部母票都有子票 → 回空清單", async (t) => {
+    const h = harness(t)
+    const res = await GETroute(h.route, { project: "SUN", sprint: "7517", kind: "no-subtasks" })
+    assert.equal(res.status, 200)
+    const body = await res.json()
+    assert.deepEqual(plain(body.data.tasks), [])
+    assert.equal(body.status, "success")
+  })
+})
+
+describe("planning main data — mother Assignee", () => {
+  it("母票自身 Assignee 傳到 DTO，不被 Epic Reporter 或子票 Assignee 取代，保留無子票母票", async (t) => {
+    const mother = (key, assignee, parent = null) => ({
+      key, id: key.split("-")[1], fields: {
+        project: { id: "10" }, summary: key, issuetype: { name: "Story" },
+        reporter: { displayName: "Mother Reporter", accountId: "mother-reporter" },
+        assignee, parent, components: [], customfield_10005: 5,
+      },
+    })
+    const h = harness(t, {
+      parents: [
+        mother("SUN-100", { accountId: "mother-owner" }, { key: "SUN-90", fields: { summary: "Epic Alpha", issuetype: { name: "Epic" } } }),
+        mother("SUN-101", { accountId: "no-child-owner" }),
+        mother("SUN-104", null),
+        mother("SUN-105", { accountId: 42 }),
+      ],
+      epics: [{ id: "90", key: "SUN-90", fields: {
+        project: { id: "10" }, summary: "Epic Alpha",
+        reporter: { displayName: "Epic Reporter", accountId: "epic-reporter" },
+      } }],
+      subsetIssues: [{ id: "102", key: "SUN-102", fields: {
+        project: { id: "10" }, summary: "Child", issuetype: { name: "Dev-Task" },
+        assignee: { displayName: "Child Owner", accountId: "child-owner" },
+        parent: { key: "SUN-100", fields: { issuetype: { name: "Story" } } },
+      } }],
+    })
+    const data = await h.service.getPlanningData({
+      id: 7517, projectKey: "SUN", name: "Fixture sprint", startDate: "2026-10-21", endDate: "2026-11-04",
+    })
+    assert.deepEqual(plain(data.parents.map((parent) => [parent.key, parent.assigneeAccountId])), [
+      ["SUN-100", "mother-owner"], ["SUN-101", "no-child-owner"], ["SUN-104", null], ["SUN-105", null],
+    ])
+    assert.equal(data.parents[0].reporterAccountId, "epic-reporter")
+    assert.equal(data.parents[1].reporterAccountId, "mother-reporter")
+    assert.equal(data.tasks[0].assigneeAccountId, "child-owner")
+    const parsed = h.model.parsePlanningParentsResult({ status: "success", data: { parents: data.parents } })
+    assert.deepEqual(plain(parsed.data.parents), plain(data.parents))
+  })
+})
+
+describe("planning subset client validator (parsePlanningSubsetResult)", () => {
+  const validTask = (over = {}) => ({
+    key: "SUN-102",
+    summary: "S",
+    status: "In Progress",
+    points: 3.5,
+    assigneeDisplayName: "Owner",
+    assigneeAccountId: "aa1",
+    reporter: "Reporter",
+    components: ["Frontend"],
+    issueType: "Dev-Task",
+    devType: "Dev",
+    parentKey: "SUN-100",
+    parentSummary: "P",
+    epic: { key: "SUN-20", summary: "Epic 1" },
+    parentIssueType: { status: "known", name: "Story" },
+    ...over,
+  })
+  const ok = (t, payload) => {
+    const h = harness(t)
+    const parsed = h.model.parsePlanningSubsetResult(payload)
+    assert.equal(parsed.status, "success")
+    return parsed
+  }
+
+  it("接受合法的 tasks（known parent、none/unknown parent、null points 與 assignee、空 components、epic 缺欄退化）", (t) => {
+    const parsed = ok(t, {
+      status: "success",
+      data: { tasks: [
+        validTask(),
+        validTask({ key: "SUN-103", points: null, assigneeDisplayName: null, assigneeAccountId: null, parentIssueType: { status: "none" } }),
+        validTask({ key: "SUN-104", parentIssueType: { status: "unknown" }, reporter: null, components: [] }),
+        // epic 可為 null（無 Epic 母票）；issueType/parentKey/parentSummary/devType 可為 null。
+        validTask({ key: "SUN-105", issueType: null, parentKey: null, parentSummary: null, epic: null, devType: null }),
+      ] },
+    })
+    if (parsed.status !== "success") return
+    assert.equal(parsed.data.tasks[0].points, 3.5)
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[1].parentIssueType)), { status: "none" })
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[2].parentIssueType)), { status: "unknown" })
+    assert.deepEqual(parsed.data.tasks[0].components, ["Frontend"])
+    assert.deepEqual(parsed.data.tasks[2].components, [])
+    assert.equal(parsed.data.tasks[0].issueType, "Dev-Task")
+    assert.equal(parsed.data.tasks[0].devType, "Dev")
+    assert.equal(parsed.data.tasks[3].devType, null)
+    assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[0].epic)), { key: "SUN-20", summary: "Epic 1" })
+    assert.equal(parsed.data.tasks[3].epic, null)
+  })
+
+  it("回傳 error 分支並保留 code/message", (t) => {
+    const h = harness(t)
+    const parsed = h.model.parsePlanningSubsetResult({ status: "error", error: { code: "limit", message: "太多了" } })
+    assert.equal(parsed.status, "error")
+    if (parsed.status !== "error") return
+    assert.equal(parsed.error.code, "limit")
+    assert.equal(parsed.error.message, "太多了")
+  })
+
+  it("拒絕重複 key / 缺 key / 壞 points / 壞 components / 未列白名單的 error code", (t) => {
+    const h = harness(t)
+    const good = { status: "success", data: { tasks: [] } }
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [validTask(), validTask()] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), key: "" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), points: -1 }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: "not-array" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), components: [42] }] } }))
+    // 壞 epic（非物件／缺 key／summary 型別錯）→ 拒絕。
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: "SUN-20" }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: { summary: "no key" } }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), epic: { key: "SUN-20", summary: 5 } }] } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ status: "error", error: { code: "nonsense", message: "x" } }))
+    assert.throws(() => h.model.parsePlanningSubsetResult({ status: "success", data: "not-object" }))
+    // 壞 parentIssueType（known 缺 name）做安全 fallback 為 unknown，而非拒絕。
+    const parsed = h.model.parsePlanningSubsetResult({ ...good, data: { tasks: [{ ...validTask(), parentIssueType: { status: "known" } }] } })
+    assert.equal(parsed.status, "success")
+    if (parsed.status === "success") assert.deepEqual(JSON.parse(JSON.stringify(parsed.data.tasks[0].parentIssueType)), { status: "unknown" })
+  })
+})
+
+describe("planning reporter parents projector (projectReporterParents)", () => {
+  const validParent = (over = {}) => ({
+    key: "SUN-100",
+    summary: "Story 1",
+    points: 3.5,
+    components: ["Frontend"],
+    reporter: "Reporter",
+    reporterAccountId: "aa1",
+    assigneeAccountId: "mother-owner",
+    issueType: "Story",
+    epic: null,
+    ...over,
+  })
+  const project = (t, parents) => harness(t).model.projectReporterParents(parents)
+
+  it("投影合法母票、去重複 key、非 record 跳過", (t) => {
+    const out = project(t, [validParent(), validParent({ key: "SUN-100" }), validParent({ key: "SUN-101" }), "not-object", null])
+    assert.equal(out.length, 2)
+    assert.deepEqual(JSON.parse(JSON.stringify(out[0])), JSON.parse(JSON.stringify(validParent())))
+  })
+
+  it("壞值寬鬆收斂：負點數→null、超長字串→null、超 32 元件→[]、畸形 epic→null", (t) => {
+    const out = project(t, [
+      validParent({ key: "SUN-200", points: -1 }),
+      validParent({ key: "SUN-201", reporter: "x".repeat(201), reporterAccountId: "y".repeat(201) }),
+      validParent({ key: "SUN-202", components: Array.from({ length: 33 }, (_, i) => `c${i}`) }),
+      validParent({ key: "SUN-203", epic: "SUN-20" }),
+      validParent({ key: "SUN-204", epic: { summary: "no key" } }),
+    ])
+    assert.equal(out[0].points, null)
+    assert.equal(out[1].reporter, null)
+    assert.equal(out[1].reporterAccountId, null)
+    assert.equal(out[2].components.length, 0)
+    assert.equal(out[3].epic, null)
+    assert.equal(out[4].epic, null)
+  })
+
+  it("保留母票 Assignee；null、缺漏、錯誤型別及超長值收斂成 null", (t) => {
+    const out = project(t, [
+      validParent(),
+      ...[null, undefined, 42, { accountId: "wrong-shape" }, "x".repeat(201)].map((assigneeAccountId, i) =>
+        validParent({ key: `SUN-${200 + i}`, assigneeAccountId })
+      ),
+    ])
+    assert.equal(out[0].assigneeAccountId, "mother-owner")
+    assert.ok(out.slice(1).every((parent) => parent.assigneeAccountId === null))
+  })
+
+  it("strict decoder 保留 Assignee string／null，拒絕缺漏、錯誤型別與超長 ID", (t) => {
+    const { model } = harness(t)
+    const parse = (assigneeAccountId) => model.parsePlanningParentsResult({
+      status: "success", data: { parents: [validParent({ assigneeAccountId })] },
+    })
+    assert.equal(parse("mother-owner").data.parents[0].assigneeAccountId, "mother-owner")
+    assert.equal(parse(null).data.parents[0].assigneeAccountId, null)
+    for (const invalid of [undefined, 42, {}, "x".repeat(101)]) {
+      assert.throws(() => parse(invalid))
+    }
+  })
+
+  it("不 throw：null／undefined／非陣列／超 MISSING_DATA_LIMIT 全回 []", (t) => {
+    const h = harness(t)
+    assert.equal(h.model.projectReporterParents(null).length, 0)
+    assert.equal(h.model.projectReporterParents(undefined).length, 0)
+    assert.equal(h.model.projectReporterParents({ not: "array" }).length, 0)
+    const many = Array.from({ length: 5001 }, (_, i) => validParent({ key: `SUN-${i}` }))
+    assert.equal(h.model.projectReporterParents(many).length, 0)
+  })
+})
