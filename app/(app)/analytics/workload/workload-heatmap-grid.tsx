@@ -21,6 +21,13 @@ const CELL_INK = [
 const SCALE_LABELS = ["0", "1-2", "3-5", "6-9", "10+"] as const
 const HEADER_CLASS = "border-b border-r border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
 
+export type TotalSort = "none" | "descending" | "ascending"
+const SORT_LABELS = {
+  none: "目前依名稱排序；點擊依 Total 高→低排序",
+  descending: "目前依 Total 高→低排序；點擊依 Total 低→高排序",
+  ascending: "目前依 Total 低→高排序；點擊取消 Total 排序，改依名稱排序",
+} as const
+
 function formatPoints(points: number): string {
   return Number.isInteger(points) ? String(points) : points.toFixed(1)
 }
@@ -33,10 +40,12 @@ function weekDescription(week: HeatmapWeek): string {
 }
 
 /** 成員 × 週的數值表格；null 留白、完成但零點顯示 0。 */
-export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, selection, detailsId, onSelect }: {
+export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, totalSort = "none", onCycleTotalSort, selection, detailsId, onSelect }: {
   heatmap: WeeklyWorkloadHeatmap
   metric?: WorkloadMetric
   metricSwitch?: ReactNode
+  totalSort?: TotalSort
+  onCycleTotalSort: () => void
   selection: WorkloadCellSelection | null
   detailsId: string
   onSelect: (selection: WorkloadCellSelection) => void
@@ -65,6 +74,13 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
     else years.push({ year: week.year, count: 1 })
   }
   const totalPoints = heatmap.rows.reduce((sum, row) => sum + row.totalPoints, 0)
+  // 僅重排呈現用複本；不改計算資料、團隊 metadata 或以 accountId 識別的選取。
+  const rows = [...heatmap.rows].sort((a, b) => {
+    const pointsOrder = totalSort === "none" ? 0 : totalSort === "descending"
+      ? b.totalPoints - a.totalPoints : a.totalPoints - b.totalPoints
+    return pointsOrder || a.displayName.localeCompare(b.displayName, "zh-Hant") ||
+      (a.accountId ?? "").localeCompare(b.accountId ?? "", "en")
+  })
 
   return (
     <div className="min-w-0">
@@ -95,7 +111,19 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
               <th rowSpan={2} scope="col" className={`sticky left-0 z-20 w-[140px] min-w-[140px] px-3 text-center font-medium ${HEADER_CLASS}`}>
                 <span aria-hidden="true">Member</span><span className="sr-only">成員</span>
               </th>
-              <th rowSpan={2} scope="col" className={`sticky left-[140px] z-20 min-w-[72px] px-2 text-center font-medium ${HEADER_CLASS}`}>Total</th>
+              <th rowSpan={2} scope="col" aria-sort={totalSort} className={`sticky left-[140px] z-20 min-w-[72px] px-1 text-center font-medium ${HEADER_CLASS}`}>
+                <span className="inline-flex items-center justify-center whitespace-nowrap">
+                  Total
+                  <button type="button" aria-label={SORT_LABELS[totalSort]} title={SORT_LABELS[totalSort]}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-blue-600 dark:hover:bg-slate-700"
+                    onClick={() => { setHover(null); onCycleTotalSort() }}>
+                    <svg aria-hidden="true" className="h-3 w-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      {totalSort === "none" ? <path d="M5 13V3m-3 3 3-3 3 3m3-3v10m-3-3 3 3 3-3" /> :
+                        <path d={totalSort === "descending" ? "M8 3v10m-4-4 4 4 4-4" : "M8 13V3m-4 4 4-4 4 4"} />}
+                    </svg>
+                  </button>
+                </span>
+              </th>
               <th rowSpan={2} scope="col" className={`sticky left-[212px] z-20 min-w-[88px] px-2 text-center font-medium ${HEADER_CLASS}`}>Output%</th>
               {years.map(({ year, count }) => (
                 <th key={year} colSpan={count} scope="colgroup" className={`h-[28px] text-center font-medium ${HEADER_CLASS}`}>{year}</th>
@@ -111,7 +139,7 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
             </tr>
           </thead>
           <tbody>
-            {heatmap.rows.map((row) => (
+            {rows.map((row) => (
               <tr key={row.accountId ?? "\u0000unassigned"}>
                 <th scope="row" title={row.displayName} className={`sticky left-0 z-10 h-[30px] px-3 text-right font-semibold text-slate-800 dark:text-slate-200 ${HEADER_CLASS}`}>
                   <span className="block max-w-[116px] truncate">{row.displayName}</span>

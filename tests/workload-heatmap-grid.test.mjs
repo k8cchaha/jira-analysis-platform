@@ -20,7 +20,9 @@ const fixtureRequire = (name) => {
   throw new Error(`Unexpected grid dependency: ${name}`)
 }
 new Function("require", "module", "exports", outputText)(fixtureRequire, compiled, compiled.exports)
-const render = (value, metric = "points", selection = null, metricSwitch = null) => renderToStaticMarkup(createElement(compiled.exports.WorkloadHeatmapGrid, { heatmap: value, metric, metricSwitch, selection, detailsId: "fixture-details", onSelect: () => {} }))
+const render = (value, metric = "points", selection = null, metricSwitch = null, totalSort = "none") => renderToStaticMarkup(createElement(compiled.exports.WorkloadHeatmapGrid, { heatmap: value, metric, metricSwitch, totalSort, onCycleTotalSort: () => {}, selection, detailsId: "fixture-details", onSelect: () => {} }))
+const bodyOf = (markup) => markup.match(/<tbody>([\s\S]*?)<\/tbody>/)[1]
+const rowOrder = (markup) => bodyOf(markup).match(/<tr>[\s\S]*?<\/tr>/g).map((row) => row.match(/data-workload-account="([^"]*)"/)[1])
 function build(overrides = {}) {
   return heatmap.computeWeeklyWorkloadHeatmap({
     from: "2026-12-28", to: "2027-01-11",
@@ -46,7 +48,7 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     const markup = render(build())
     assert.match(markup, /rowSpan="2"[^>]*scope="col"/i)
     const header = markup.match(/<thead[\s\S]*?<\/thead>/)[0]
-    assert.match(header, /Member[\s\S]*?<th rowSpan="2" scope="col"[^>]*>Total<\/th><th rowSpan="2" scope="col"[^>]*>Output%<\/th>[\s\S]*?>2026<\/th>/i)
+    assert.match(header, /Member[\s\S]*?<th rowSpan="2" scope="col" aria-sort="none"[^>]*>[\s\S]*?Total[\s\S]*?<\/th><th rowSpan="2" scope="col"[^>]*>Output%<\/th>[\s\S]*?>2026<\/th>/i)
     assert.match(markup, /colSpan="1"[^>]*scope="colgroup"[^>]*>2026<\/th>/i)
     assert.match(markup, /colSpan="2"[^>]*scope="colgroup"[^>]*>2027<\/th>/i)
     for (const monday of ["12/28", "01/04", "01/11"]) assert.match(markup, new RegExp(`>${monday}<`))
@@ -103,27 +105,93 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     for (const metric of ["points", "actualPoints"]) {
       const markup = render(heatmap.computeMetricWorkloadHeatmap({ ...input, metric }), metric)
       const rows = markup.match(/<tbody>([\s\S]*?)<\/tbody>/)[1].match(/<tr>[\s\S]*?<\/tr>/g)
-      assert.match(rows[0], metric === "points"
+      assert.match(rows.find((row) => row.includes('title="Alice"')), metric === "points"
         ? /Alice<\/span><\/th><td[^>]*>30<\/td><td[^>]*>100%<\/td>/
         : /Alice<\/span><\/th><td[^>]*>60<\/td><td[^>]*>200%<\/td>/)
-      assert.match(rows[1], metric === "points"
+      assert.match(rows.find((row) => row.includes('title="未指派"')), metric === "points"
         ? /未指派<\/span><\/th><td[^>]*>4<\/td><td[^>]*>13\.3%<\/td>/
         : /未指派<\/span><\/th><td[^>]*>0<\/td><td[^>]*>0%<\/td>/)
     }
   })
   it("makes numeric cells including zero buttons, with selected state and a details target", () => {
     const markup = render(build(), "points", { accountId: "a", weekStart: "2027-01-04" })
-    assert.equal((markup.match(/<button\b/g) ?? []).length, 2)
+    assert.equal((bodyOf(markup).match(/<button\b/g) ?? []).length, 2)
     assert.equal((markup.match(/aria-expanded="true"/g) ?? []).length, 1)
     assert.equal((markup.match(/aria-controls="fixture-details"/g) ?? []).length, 2)
     assert.match(markup, /type="button"[^>]*aria-expanded="true"[^>]*>0<\/button>/)
     assert.doesNotMatch(markup, /<button[^>]*沒有可計入/)
-    const buttons = markup.match(/<button\b[^>]*>/g)
+    const buttons = bodyOf(markup).match(/<button\b[^>]*>/g)
     const selected = buttons.find((button) => button.includes('aria-expanded="true"'))
     assert.match(selected, /outline-3 outline-offset-\[-3px\] outline-amber-600 dark:outline-amber-300/)
     assert.doesNotMatch(selected, /hover:outline|focus-visible:outline/)
     assert.equal(buttons.filter((button) => button.includes("outline-amber-600")).length, 1)
     assert.doesNotMatch(render(build()), /outline-amber-/)
+  })
+  it("sorts globally by Total in both directions and by name when none, with deterministic ties and immutable data", () => {
+    const value = build({ from: "2027-01-04", to: "2027-01-04", days: ["2027-01-04"] })
+    const row = (accountId, displayName, totalPoints, teamLabel) => ({
+      ...value.rows[0], accountId, displayName, totalPoints, teamLabel, cells: [totalPoints],
+    })
+    value.rows = [row("high", "Zoe", 10, "BE1"), row("b", "Alex", 5, "BE1"),
+      row("zero", "Aaron", 0, "Web"), row("a", "Alex", 5, "Web"), row(null, "未指派", 3, "其他")]
+    const original = JSON.stringify(value)
+    value.rows.forEach((item) => { Object.freeze(item.cells); Object.freeze(item) })
+    Object.freeze(value.rows)
+    Object.freeze(value)
+    const expected = {
+      none: ["", "zero", "a", "b", "high"],
+      descending: ["high", "a", "b", "", "zero"],
+      ascending: ["zero", "", "a", "b", "high"],
+    }
+    for (const [mode, order] of Object.entries(expected)) {
+      const markup = render(value, "points", { accountId: "a", weekStart: "2027-01-04" }, null, mode)
+      assert.deepEqual(rowOrder(markup), order)
+      const selected = bodyOf(markup).match(/<button[^>]*aria-expanded="true"[^>]*>/)[0]
+      assert.match(selected, /data-workload-account="a"/)
+      assert.equal((markup.match(/aria-expanded="true"/g) ?? []).length, 1)
+      assert.match(markup, /共 <span[^>]*>5<\/span> 名成員/)
+      assert.equal(JSON.stringify(value), original, "Sorting must not mutate supplied rows or their cells")
+    }
+  })
+  it("uses each selected metric's totals for sorting, including zero values", () => {
+    const input = {
+      from: "2027-01-04", to: "2027-01-04", days: ["2027-01-04"],
+      members: [{ accountId: "a", displayName: "Alice" }, { accountId: "b", displayName: "Bob" }, { accountId: "c", displayName: "Carol" }],
+      teamOf: () => "Web", teamOrder: ["Web"],
+      tasks: [
+        { key: "A", assigneeAccountId: "a", points: 10, actualPoints: 1, doneDate: "2027-01-04" },
+        { key: "B", assigneeAccountId: "b", points: 2, actualPoints: 20, doneDate: "2027-01-04" },
+        { key: "C", assigneeAccountId: "c", points: 0, actualPoints: 0, doneDate: "2027-01-04" },
+      ],
+    }
+    for (const [metric, descending, ascending] of [["points", ["a", "b", "c"], ["c", "b", "a"]], ["actualPoints", ["b", "a", "c"], ["c", "a", "b"]]]) {
+      const value = heatmap.computeMetricWorkloadHeatmap({ ...input, metric })
+      assert.deepEqual(rowOrder(render(value, metric, null, null, "descending")), descending)
+      assert.deepEqual(rowOrder(render(value, metric, null, null, "ascending")), ascending)
+      assert.deepEqual(rowOrder(render(value, metric)), ["a", "b", "c"])
+    }
+  })
+  it("exposes the current Total sort and next action on a small keyboard-accessible header button", () => {
+    const labels = {
+      none: "目前依名稱排序；點擊依 Total 高→低排序",
+      descending: "目前依 Total 高→低排序；點擊依 Total 低→高排序",
+      ascending: "目前依 Total 低→高排序；點擊取消 Total 排序，改依名稱排序",
+    }
+    const paths = []
+    for (const [mode, label] of Object.entries(labels)) {
+      const markup = render(build(), "points", null, null, mode)
+      const header = markup.match(/<th[^>]*aria-sort="[^"]*"[\s\S]*?<\/th>/)[0]
+      assert.match(header, new RegExp(`aria-sort="${mode}"`))
+      assert.ok(header.includes(`aria-label="${label}"`))
+      assert.ok(header.includes(`title="${label}"`))
+      assert.match(header, /<button type="button"/)
+      assert.match(header, /h-6 w-6 shrink-0/)
+      assert.match(header, /focus-visible:outline-2 focus-visible:outline-blue-600/)
+      assert.match(header, /<svg aria-hidden="true" class="h-3 w-3"[^>]*stroke="currentColor"/)
+      paths.push(header.match(/<path d="([^"]*)"/)[1])
+      assert.doesNotMatch(header, /aria-controls|aria-expanded|role="switch"/)
+    }
+    assert.equal(new Set(paths).size, 3, "Each state must have a distinct arrow icon")
   })
   it("freezes all three leading columns in headers and rows with fixed non-overlapping widths", () => {
     for (const metric of ["points", "actualPoints"]) {

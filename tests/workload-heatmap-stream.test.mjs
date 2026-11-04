@@ -481,6 +481,51 @@ describe("workload page → EventSource → stream route (offline)", () => {
     assert.equal(mounted.source.url, mounted.endpoint)
   })
 
+  it("cycles Total sorting locally, preserves selection and metric sorting without another request or navigation", async (t) => {
+    const h = harness()
+    const mounted = await h.mount({ group: "ent-web", from: "2026-10-04", to: "2026-11-03" })
+    t.after(mounted.cleanup)
+    await (await h.request(mounted.source.url)).text()
+    mounted.source.listeners.get("base")({ data: JSON.stringify(h.base) })
+    mounted.source.listeners.get("done")({ data: "{}" })
+    const grid = () => mounted.render().props.children[0].props.children
+    const detail = () => mounted.render().props.children[1]
+    const initialSource = mounted.source
+    const initialKey = mounted.streamKey()
+    const pushes = [...h.pushes]
+    const original = plain(grid().props.heatmap)
+    grid().props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })
+    const selection = plain(grid().props.selection)
+    const detailsId = detail().props.id
+    assert.equal(grid().props.totalSort, "none")
+    for (const expected of ["descending", "ascending", "none", "descending"]) {
+      grid().props.onCycleTotalSort()
+      assert.equal(grid().props.totalSort, expected)
+      assert.deepEqual(plain(grid().props.selection), selection)
+      assert.equal(detail().props.id, detailsId)
+      assert.deepEqual(plain(detail().props.tasks), h.base.tasks)
+      assert.deepEqual(plain(grid().props.heatmap), original, "Presentation order must not alter aggregated data")
+    }
+    mounted.metricSwitch().props.children[1].props.onClick()
+    assert.equal(grid().props.totalSort, "descending", "Metric-keyed grid remount must not reset sorting")
+    assert.equal(grid().props.metric, "actualPoints")
+    assert.equal(grid().props.heatmap.rows[0].totalPoints, 5)
+    assert.deepEqual(plain(grid().props.selection), selection)
+    assert.deepEqual(plain(detail().props.tasks), h.base.tasks)
+    grid().props.onCycleTotalSort()
+    assert.equal(grid().props.totalSort, "ascending")
+    mounted.metricSwitch().props.children[1].props.onClick()
+    assert.equal(grid().props.totalSort, "ascending")
+    assert.equal(grid().props.metric, "points")
+    assert.equal(mounted.source, initialSource)
+    assert.equal(mounted.streamKey(), initialKey)
+    assert.equal(h.sources.length, 1)
+    assert.equal(h.calls.length, 2)
+    assert.equal(h.effects.length, 0)
+    assert.deepEqual(h.pushes, pushes)
+    assert.equal(mounted.source.url, mounted.endpoint)
+  })
+
   it("projects the requested five weeks and selects the partial final week without another query", async (t) => {
     const h = harness()
     const mounted = await h.mount({ group: "ent-web", from: "2026-10-04", to: "2026-11-03" })
@@ -568,7 +613,7 @@ describe("workload page → EventSource → stream route (offline)", () => {
     assert.equal(mounted.source.url, mounted.endpoint)
   })
 
-  it("resets selection on retry or a newly applied endpoint while retaining the metric", async (t) => {
+  it("resets selection and Total sorting on retry or new submissions while retaining the metric", async (t) => {
     const h = harness()
     const mounted = await h.mount({ group: "ent-web", from: "2026-10-04", to: "2026-11-03" })
     t.after(mounted.cleanup)
@@ -589,6 +634,8 @@ describe("workload page → EventSource → stream route (offline)", () => {
       },
       () => mounted.submit(),
     ]) {
+      mounted.render().props.children[0].props.children.props.onCycleTotalSort()
+      assert.equal(mounted.render().props.children[0].props.children.props.totalSort, "descending")
       const oldKey = mounted.streamKey()
       const oldSource = mounted.source
       await reset()
@@ -598,6 +645,7 @@ describe("workload page → EventSource → stream route (offline)", () => {
       receive()
       tree = mounted.render()
       assert.equal(tree.props.children[0].props.children.props.metric, "actualPoints")
+      assert.equal(tree.props.children[0].props.children.props.totalSort, "none")
       assert.equal(tree.props.children[0].props.children.props.selection, null)
       assert.equal(tree.props.children[1], null)
       tree.props.children[0].props.children.props.onSelect({ accountId: "fixture-member", weekStart: "2026-11-02" })

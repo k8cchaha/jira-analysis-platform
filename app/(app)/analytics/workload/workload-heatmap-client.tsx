@@ -9,7 +9,7 @@ import {
 } from "@/lib/workload-heatmap"
 import type { TeamMembersSnapshot } from "@/lib/team-members-store"
 import type { WorkloadFilter } from "@/lib/workload-filter"
-import { WorkloadHeatmapGrid } from "./workload-heatmap-grid"
+import { WorkloadHeatmapGrid, type TotalSort } from "./workload-heatmap-grid"
 import { WorkloadIssueDetails } from "./workload-issue-details"
 
 type StreamPhase =
@@ -143,6 +143,7 @@ function HeatmapStream({
   const [actualUnestimated, setActualUnestimated] = useState<HeatmapUnestimated[]>([])
   const [empty, setEmpty] = useState(false)
   const [selection, setSelection] = useState<WorkloadCellSelection | null>(null)
+  const [totalSort, setTotalSort] = useState<TotalSort>("none")
   const detailsId = useId()
   const gridRef = useRef<HTMLDivElement>(null)
 
@@ -326,7 +327,9 @@ function HeatmapStream({
   return (
     <>
       <div ref={gridRef}>
-        <WorkloadHeatmapGrid key={metric} heatmap={heatmap} metric={metric} metricSwitch={metricSwitch} selection={validSelection} detailsId={detailsId} onSelect={toggleSelection} />
+        <WorkloadHeatmapGrid key={metric} heatmap={heatmap} metric={metric} metricSwitch={metricSwitch}
+          totalSort={totalSort} onCycleTotalSort={() => setTotalSort((current) => current === "none" ? "descending" : current === "descending" ? "ascending" : "none")}
+          selection={validSelection} detailsId={detailsId} onSelect={toggleSelection} />
       </div>
       {validSelection && selectedRow && selectedWeek && selectedPoints !== null && selectedPoints !== undefined && (
         <WorkloadIssueDetails id={detailsId} memberName={selectedRow.displayName} week={selectedWeek}
