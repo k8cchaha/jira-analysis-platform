@@ -136,7 +136,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
                       {card.summary.total === 0 ? (
                         <p className="flex items-center gap-2 text-sm font-semibold leading-6 text-green-600 dark:text-green-400"><svg aria-hidden="true" className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12 4 4L19 6" /></svg><span>資料完整，太棒了！</span></p>
                       ) : (
-                        <p id={`${cardId}-${kind}-action`} className="text-sm font-semibold leading-6 text-blue-700 dark:text-blue-300">{readOnly || kind === "impact-scope" ? "查看明細" : "查看明細與補填"} <span aria-hidden="true">→</span></p>
+                        <p id={`${cardId}-${kind}-action`} className="text-sm font-semibold leading-6 text-blue-700 dark:text-blue-300">{readOnly ? "查看明細" : "查看明細與補填"} <span aria-hidden="true">→</span></p>
                       )}
                     </div>
                   </div>
@@ -151,7 +151,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
       {dueDialogFilter && <DueReminderDialog filter={dueDialogFilter} scopeChanged={scopeChanged} onClose={() => setDueDialogFilter(null)} />}
       {bugDialogFilter && <BugAlertDialog filter={bugDialogFilter} scopeChanged={scopeChanged} onClose={() => setBugDialogFilter(null)} />}
       {activeDialog && (activeDialog.kind === "impact-scope"
-        ? <ImpactScopeDialog filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} />
+        ? <ImpactScopeDialog filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary("impact-scope")} />
         : <MissingDataDialog key={activeDialog.kind} kind={activeDialog.kind} filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary(activeDialog.kind)} />)}
     </section>}
     </>

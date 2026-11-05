@@ -3,6 +3,7 @@
 import { useActionState, useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { EditDialog } from "@/components/edit-dialog"
 import { ParentIssueTypeIcon } from "./parent-issue-type-icon"
+import { statusColorClass } from "@/lib/status-color"
 import { useNavigationBlocker } from "@/components/navigation-blocker"
 import {
   isMissingPoint,
@@ -20,7 +21,7 @@ import { reauthorizeDashboardAction, updateMissingDataAction } from "./actions"
 import { SELF_FILTER, dashboardHref, serializeDashboardFilter, type DashboardFilter } from "@/lib/jira-dashboard-filter"
 
 type PointField = "storyPoints" | "actualStoryPoints"
-type Draft = { storyPoints?: string; actualStoryPoints?: string; defectCause?: string[] }
+type Draft = { storyPoints?: string; actualStoryPoints?: string; defectCause?: string[]; impactScope?: string[] }
 type Drafts = Record<string, Draft>
 type Confirmation = { action: "close" | "reload" }
 
@@ -66,8 +67,11 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
         params.set("view", "page")
         if (token) params.set("pageToken", token)
         const response = await fetch(`/api/dashboard/missing-data?${params}`, { cache: "no-store", signal: controller.signal })
-        return await response.json() as MissingDataPageResult
-      }, controller.signal)
+        const page = await response.json() as MissingDataPageResult
+        if (!response.ok && page.status === "success") throw new Error("Invalid response")
+        return page
+      }, controller.signal, kind)
+      if (scopeReadOnly && !result.readOnly) throw new Error("Expected read-only details")
       if (!mounted.current || sequence !== requestSequence.current) return
       setData(result)
       if (discardDrafts) setDrafts({})
@@ -78,7 +82,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
     } finally {
       if (mounted.current && sequence === requestSequence.current) setLoading(false)
     }
-  }, [kind, query])
+  }, [kind, query, scopeReadOnly])
 
   useEffect(() => {
     mounted.current = true
@@ -106,7 +110,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
     if (!submitted || submitted.id !== result.submissionId) {
       return { ...result, succeededIssueIds: [], status: "error", message: "無法核對儲存結果，草稿已保留。請重試。" }
     }
-    const succeeded = new Set(result.succeededIssueIds)
+    const succeeded = new Set(result.succeededIssueIds.filter((id) => submitted.changes.some((change) => change.issueId === id)))
     const remaining = Object.fromEntries(Object.entries(submitted.drafts).filter(([id]) => !succeeded.has(id)))
     // Apply the submitted snapshot, never a later draft or a freshly fetched row.
     setDrafts(remaining)
@@ -121,11 +125,13 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
             ...(change.storyPoints !== undefined ? { storyPoints: change.storyPoints } : {}),
             ...(change.actualStoryPoints !== undefined ? { actualStoryPoints: change.actualStoryPoints } : {}),
             ...(change.defectCause ? { defectCause: change.defectCause, defectCauseEditable: false } : {}),
+            ...(change.impactScope ? { impactScope: { ...issue.impactScope, value: issue.impactScope.options.filter((option) => change.impactScope!.includes(option.id)), editable: false } } : {}),
           }
           const missing = missingPoints(updated)
           const stillMissing = kind === "points"
             ? missing.storyPointsMissing || missing.actualStoryPointsMissing
-            : updated.defectCause.length === 0
+            : kind === "defect-cause" ? updated.defectCause.length === 0
+              : updated.impactScope.value === null || updated.impactScope.value.length === 0
           return stillMissing ? [updated] : []
         }),
       } : current)
@@ -169,6 +175,14 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
       if (!issue.defectCauseEditable || draft.defectCause.length === 0 || draft.defectCause.some((id) => !issue.defectCauseOptions.some((option) => option.id === id))) invalid = true
       else change.defectCause = draft.defectCause
     }
+    if (draft.impactScope) {
+      const field = issue.impactScope
+      if (kind !== "impact-scope" || !field.editable || field.value === null || field.value.length > 0 ||
+        draft.impactScope.length === 0 || draft.impactScope.length > 100 || new Set(draft.impactScope).size !== draft.impactScope.length ||
+        (field.mode === "single" && draft.impactScope.length !== 1) || field.mode === null ||
+        draft.impactScope.some((id) => !field.options.some((option) => option.id === id))) invalid = true
+      else change.impactScope = draft.impactScope
+    }
     if (Object.keys(change).length > 1) changes.push(change)
   }
   const changesJson = JSON.stringify(changes)
@@ -179,15 +193,15 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
   const canSubmit = !readOnly && changes.length > 0 && !invalid && !payloadTooLarge && !busy && !loading && !confirmation
   const failureByIssue = new Map(state.failures.map((failure) => [failure.issueId, failure.message]))
 
-  function editDraft(issue: MissingIssue, field: PointField | "defectCause", value: string | string[]) {
-    if (readOnly || busy || confirmation || loading) return
+  function editDraft(issue: MissingIssue, field: PointField | "defectCause" | "impactScope", value: string | string[]) {
+    if (readOnly || busy || confirmation || loading || (field === "impactScope" && !issue.impactScope.editable)) return
     setDrafts((current) => {
       if (!current[issue.id] && Object.keys(current).length >= MISSING_DATA_PAGE_SIZE) return current
       const next = { ...current, [issue.id]: { ...current[issue.id] } }
-      if (field === "defectCause" && Array.isArray(value)) {
-        if (value.length === 0) delete next[issue.id].defectCause
-        else next[issue.id].defectCause = value
-      } else if (field !== "defectCause" && typeof value === "string") {
+      if ((field === "defectCause" || field === "impactScope") && Array.isArray(value)) {
+        if (value.length === 0) delete next[issue.id][field]
+        else next[issue.id][field] = value
+      } else if ((field === "storyPoints" || field === "actualStoryPoints") && typeof value === "string") {
         const parsed = parsePositivePoints(value)
         if ((value === "" && isMissingPoint(issue[field])) || (parsed !== null && parsed === issue[field])) delete next[issue.id][field]
         else next[issue.id][field] = value
@@ -239,6 +253,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
   }
 
   function issueFields(issue: MissingIssue, layout: string) {
+    if (kind === "impact-scope") return <ImpactScopeInput issue={issue} value={drafts[issue.id]?.impactScope ?? issue.impactScope.value?.map((option) => option.id) ?? []} readOnly={readOnly} disabled={busy || loading || Boolean(confirmation) || (draftLimitReached && !drafts[issue.id])} prefix={layout} onChange={(value) => editDraft(issue, "impactScope", value)} />
     if (readOnly) {
       if (kind === "defect-cause") return <div><span className="sr-only">{issue.key} Defect Cause</span><p className="rounded-lg bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800">缺失（唯讀）</p></div>
       return (["storyPoints", "actualStoryPoints"] as const).map((field) => <div key={field}><span className={layout === "desktop" ? "sr-only" : "mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400"}>{field === "storyPoints" ? "Story Points" : "Actual Story Points"}</span><p className="flex h-[30px] w-20 items-center justify-center text-sm tabular-nums text-slate-600 dark:text-slate-300">{isMissingPoint(issue[field]) ? "—" : issue[field]}<span className="sr-only">{(field === "storyPoints" ? missingPoints(issue).storyPointsMissing : missingPoints(issue).actualStoryPointsMissing) ? "（缺失 · 唯讀）" : "（唯讀）"}</span></p></div>)
@@ -253,7 +268,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
   }
 
   return (
-    <EditDialog title={readOnly ? (kind === "points" ? "(Actual) Story Points 缺失明細" : "Defect Cause 缺失明細") : (kind === "points" ? "補填 (Actual) Story Points" : "補填 Defect Cause")} description={readOnly ? "缺失欄位明細。" : (kind === "points" ? "SP 與 Actual SP 可補填或調整已有值；請輸入大於 0 的有限數值，可含小數。儲存時會核對原值與 Jira 權限。" : "Root Cause 與 Solution 為唯讀；Defect Cause 可多選，選項依各張 Issue 的 Jira 設定。")} count={loading ? null : data?.issues.length ?? null} compact iconClose busy={busy} onClose={requestClose}>
+    <EditDialog title={kind === "impact-scope" ? "Impact Scope 缺失明細" : readOnly ? (kind === "points" ? "(Actual) Story Points 缺失明細" : "Defect Cause 缺失明細") : (kind === "points" ? "補填 (Actual) Story Points" : "補填 Defect Cause")} description={readOnly ? "缺失欄位明細。" : kind === "impact-scope" ? "Impact Scope 選項與單選／多選型別依各張 Issue 的 Jira 設定；儲存前會重新確認欄位仍為空、選項與編輯權限。" : (kind === "points" ? "SP 與 Actual SP 可補填或調整已有值；請輸入大於 0 的有限數值，可含小數。儲存時會核對原值與 Jira 權限。" : "Root Cause 與 Solution 為唯讀；Defect Cause 可多選，選項依各張 Issue 的 Jira 設定。")} count={loading ? null : data?.issues.length ?? null} compact iconClose busy={busy} onClose={requestClose}>
       {scopeChanged && <p role="status" className="shrink-0 border-b border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">網址篩選已變更，此彈窗仍保留開啟時的範圍與草稿。請關閉彈窗（有草稿時需先確認）後再顯示新範圍。</p>}
       {confirmation && (
         <section role="alert" className="shrink-0 border-b border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
@@ -291,15 +306,16 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
               {data.issues.length === 0 ? <p role="status" className="p-8 text-center text-sm text-slate-600 dark:text-slate-400">目前沒有待補資料。</p> : (
                 <>
                   <div className="hidden overflow-x-auto px-4 sm:px-6 md:block">
-                    <table className={`w-full table-fixed text-left text-sm ${kind === "points" ? "min-w-[720px]" : "min-w-[1040px]"}`}>
-                      <caption className="sr-only">{kind === "points" ? "Points 缺失 Issue" : "Defect Cause 缺失 Issue"}</caption>
+                    <table className={`w-full table-fixed text-left text-sm ${kind === "defect-cause" ? "min-w-[1040px]" : "min-w-[720px]"}`}>
+                      <caption className="sr-only">{kind === "points" ? "Points 缺失 Issue" : kind === "defect-cause" ? "Defect Cause 缺失 Issue" : "Impact Scope 缺失 Issue"}</caption>
                       <thead className="border-b border-slate-200 text-xs font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
                         <tr>
                           {kind === "points" && <th scope="col" className="w-10 py-3"><span className="sr-only">Parent Issue type</span></th>}
                           <th scope="col" className="w-24 px-3 py-3 font-medium">Ticket</th>
                           {readOnly && <th scope="col" className="w-36 px-3 py-3 font-medium">Assignee</th>}
-                          <th scope="col" className={`px-3 py-3 font-medium ${kind === "points" ? "" : "w-48"}`}>Summary</th>
-                          {kind === "points" ? <><th scope="col" className="w-28 px-3 py-3 font-medium">SP</th><th scope="col" className="w-28 px-3 py-3 font-medium">Actual SP</th></> : <><th scope="col" className="w-56 px-3 py-3 font-medium">Root Cause</th><th scope="col" className="w-56 px-3 py-3 font-medium">Solution</th><th scope="col" className="w-44 px-3 py-3 font-medium">Defect Cause</th></>}
+                          <th scope="col" className={`px-3 py-3 font-medium ${kind === "defect-cause" ? "w-48" : ""}`}>Summary</th>
+                          {kind === "impact-scope" && <th scope="col" className="w-28 px-3 py-3 font-medium">Status</th>}
+                          {kind === "points" ? <><th scope="col" className="w-28 px-3 py-3 font-medium">SP</th><th scope="col" className="w-28 px-3 py-3 font-medium">Actual SP</th></> : kind === "impact-scope" ? <th scope="col" className="w-56 px-3 py-3 font-medium">Impact Scope</th> : <><th scope="col" className="w-56 px-3 py-3 font-medium">Root Cause</th><th scope="col" className="w-56 px-3 py-3 font-medium">Solution</th><th scope="col" className="w-44 px-3 py-3 font-medium">Defect Cause</th></>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -308,7 +324,8 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
                           <td className="px-3 py-3"><IssueLink issue={issue} jiraBaseUrl={data.jiraBaseUrl} /></td>
                           {readOnly && <td className="break-words px-3 py-3 text-slate-600 dark:text-slate-300">{issue.assigneeDisplayName || "—"}</td>}
                           <td className="break-words px-3 py-3"><p>{issue.summary}</p><RowNotice issue={issue} error={failureByIssue.get(issue.id)} /></td>
-                          {kind === "points" ? (issueFields(issue, "desktop") as React.ReactNode[]).map((field, index) => <td key={index} className="px-3 py-3">{field}</td>) : <><td className="whitespace-pre-wrap break-words px-3 py-3 text-slate-600 dark:text-slate-300">{issue.rootCause || "—"}</td><td className="whitespace-pre-wrap break-words px-3 py-3 text-slate-600 dark:text-slate-300">{issue.solution || "—"}</td><td className="px-3 py-3">{issueFields(issue, "desktop")}</td></>}
+                          {kind === "impact-scope" && <td className={`break-words px-3 py-3 ${statusColorClass(issue.statusName)}`}>{issue.statusName || "—"}</td>}
+                          {kind === "points" ? (issueFields(issue, "desktop") as React.ReactNode[]).map((field, index) => <td key={index} className="px-3 py-3">{field}</td>) : kind === "impact-scope" ? <td className="px-3 py-3">{issueFields(issue, "desktop")}</td> : <><td className="whitespace-pre-wrap break-words px-3 py-3 text-slate-600 dark:text-slate-300">{issue.rootCause || "—"}</td><td className="whitespace-pre-wrap break-words px-3 py-3 text-slate-600 dark:text-slate-300">{issue.solution || "—"}</td><td className="px-3 py-3">{issueFields(issue, "desktop")}</td></>}
                         </tr>)}
                       </tbody>
                     </table>
@@ -318,6 +335,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
                       <div className="flex items-center gap-2">{kind === "points" && <ParentIssueTypeIcon parent={issue.parentIssueType} />}<IssueLink issue={issue} jiraBaseUrl={data.jiraBaseUrl} /></div>
                       {readOnly && <p className="mt-2 break-words text-xs text-slate-500 dark:text-slate-400">Assignee：{issue.assigneeDisplayName || "—"}</p>}
                       <p className="mt-2 break-words text-sm">{issue.summary}</p>
+                      {kind === "impact-scope" && <p className="mt-2 break-words text-sm text-slate-600 dark:text-slate-400">Status：<span className={statusColorClass(issue.statusName)}>{issue.statusName || "—"}</span></p>}
                       <RowNotice issue={issue} error={failureByIssue.get(issue.id)} />
                       {kind === "defect-cause" && <dl className="mt-4 space-y-3 text-sm"><div><dt className="font-medium">Root Cause</dt><dd className="mt-1 whitespace-pre-wrap break-words text-slate-600 dark:text-slate-300">{issue.rootCause || "—"}</dd></div><div><dt className="font-medium">Solution</dt><dd className="mt-1 whitespace-pre-wrap break-words text-slate-600 dark:text-slate-300">{issue.solution || "—"}</dd></div></dl>}
                       <div className={`mt-4 grid gap-4 ${kind === "points" ? "grid-cols-[max-content_max-content]" : "grid-cols-1"}`}>{issueFields(issue, "mobile")}</div>
@@ -330,7 +348,7 @@ export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = f
         </div>
         <footer className="shrink-0 space-y-3 border-t border-slate-200 p-4 sm:p-6 dark:border-slate-800">
           {state.message && <p role="status" className="text-sm leading-6">{state.message}</p>}
-          {invalid && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{kind === "points" ? "請修正標記的欄位；只接受大於 0 的有限數值。" : "請修正標記的欄位；Defect Cause 至少需選一項有效選項。"}</p>}
+          {invalid && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{kind === "points" ? "請修正標記的欄位；只接受大於 0 的有限數值。" : kind === "defect-cause" ? "請修正標記的欄位；Defect Cause 至少需選一項有效選項。" : "請選擇有效的 Impact Scope 選項；單選欄位只接受一項。"}</p>}
           {payloadTooLarge && <p role="alert" className="text-sm">本次變更資料過大，請減少變更筆數後再儲存。</p>}
           {!readOnly && draftLimitReached && <p role="status" className="text-sm">一次最多補填 {MISSING_DATA_PAGE_SIZE} 張 Issue；請先儲存或清除部分草稿。</p>}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -387,6 +405,30 @@ function PointInput({ issue, field, raw, disabled, prefix, onChange }: {
       </div>
       {invalid && <p id={`${id}-error`} className="mt-1 text-xs text-red-700 dark:text-red-300">請輸入大於 0 的有限數值。</p>}
     </> : <p title={editable ? undefined : "Jira 欄位無編輯權限"} className="flex h-[30px] w-20 items-center justify-center text-sm tabular-nums text-slate-600 dark:text-slate-300">{isMissingPoint(issue[field]) ? "—" : issue[field]}</p>}
+  </div>
+}
+
+function ImpactScopeInput({ issue, value, readOnly, disabled, prefix, onChange }: {
+  issue: MissingIssue; value: string[]; readOnly: boolean; disabled: boolean; prefix: string; onChange: (value: string[]) => void
+}) {
+  const field = issue.impactScope
+  const id = `${prefix}-${issue.id}-impact-scope`
+  const label = `${issue.key} Impact Scope${field.mode === "multi" ? "（可多選）" : ""}`
+  const current = field.value === null ? "無法識別欄位值" : field.value.map((option) => option.value).join("、") || "—"
+  const selected = field.options.filter((option) => value.includes(option.id)).map((option) => option.value)
+  const unavailable = readOnly || !field.editable || field.mode === null || field.options.length === 0
+  return <div className="min-w-0">
+    <label id={`${id}-label`} htmlFor={!unavailable && field.mode === "single" ? id : undefined} className={prefix === "desktop" ? "sr-only" : "mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400"}>{label}</label>
+    {unavailable ? <p className="break-words text-sm text-slate-600 dark:text-slate-400">{current}{!readOnly && !issue.unavailableReason && <span className="mt-1 block text-xs">沒有可用選項或無編輯權限</span>}</p> : field.mode === "single" ? <select id={id} value={value[0] ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value ? [event.target.value] : [])} className="w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950">
+      <option value="">選擇 Impact Scope</option>
+      {field.options.map((option) => <option key={option.id} value={option.id}>{option.value}</option>)}
+    </select> : <details className="min-w-0 max-w-full overflow-hidden rounded-lg border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-950" onToggle={(event) => { if (disabled && event.currentTarget.open) event.currentTarget.open = false }}>
+      <summary aria-labelledby={`${id}-label ${id}-value`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={(event) => { if (disabled) event.preventDefault() }} className="min-w-0 cursor-pointer px-3 py-2 text-sm [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:outline-blue-600"><span id={`${id}-value`}>{selected.join("、") || "選擇 Impact Scope"}</span></summary>
+      <fieldset disabled={disabled} className="min-w-0 max-w-full max-h-56 space-y-1 overflow-x-hidden overflow-y-auto overscroll-contain border-t border-slate-200 p-2 dark:border-slate-800">
+        <legend className="sr-only">{label}</legend>
+        {field.options.map((option) => <label key={option.id} className="flex min-w-0 cursor-pointer items-start gap-2 rounded-md p-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800"><input type="checkbox" checked={value.includes(option.id)} onChange={(event) => onChange(event.target.checked ? [...value, option.id] : value.filter((id) => id !== option.id))} className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600" /><span className="min-w-0 [overflow-wrap:anywhere]">{option.value}</span></label>)}
+      </fieldset>
+    </details>}
   </div>
 }
 

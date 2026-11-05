@@ -17,6 +17,38 @@ async function rejectsIncomplete(pages) {
   await assert.rejects(loadMissingDataList(reader(pages), signal()), (error) => error instanceof MissingDataListError && error.detail.code === "retry")
 }
 
+describe("Impact Scope list metadata", () => {
+  const option = { id: "7", value: "Synthetic UI" }
+  const field = (extras = {}) => ({ mode: "single", value: [], options: [option], editable: true, ...extras })
+  const impactPage = (metadata, readOnly = false) => page(1, [], null, { readOnly, issues: [{ id: "1", storyPointsRequired: false, actualStoryPointsRequired: false, impactScope: metadata }] })
+  it("accepts editable single/multi and noneditable unknown values", async () => {
+    for (const metadata of [field(), field({ mode: "multi" }), field({ mode: null, value: null, options: [], editable: false })]) {
+      const result = await loadMissingDataList(reader([impactPage(metadata)]), signal(), "impact-scope")
+      assert.deepEqual(result.issues[0].impactScope, metadata)
+    }
+  })
+  it("accepts readonly current values without editable options", async () => {
+    const metadata = field({ value: [option], options: [], editable: false })
+    const result = await loadMissingDataList(reader([impactPage(metadata, true)]), signal(), "impact-scope")
+    assert.deepEqual(result.issues[0].impactScope.value, [option])
+  })
+  for (const [label, metadata, readOnly] of [
+    ["absent", undefined], ["unknown mode", field({ mode: "cascading" })],
+    ["missing current", field({ value: undefined })], ["malformed current", field({ value: "7" })],
+    ["populated editable", field({ value: [option] })], ["unknown editable", field({ value: null })],
+    ["no options editable", field({ options: [] })], ["unknown mode options", field({ mode: null, editable: false })],
+    ["bad editable", field({ editable: "true" })], ["null options", field({ options: null })],
+    ["duplicate options", field({ options: [option, option] })],
+    ["invalid id", field({ options: [{ id: "evil", value: "Synthetic" }] })],
+    ["empty label", field({ options: [{ id: "7", value: " " }] })],
+    ["duplicate current", field({ mode: "multi", value: [option, option], editable: false })],
+    ["multiple single current", field({ value: [option, { id: "8", value: "Synthetic API" }], editable: false })],
+    ["readonly editable", field(), true], ["readonly options", field({ editable: false }), true],
+  ]) it(`rejects ${label}`, async () => {
+    await assert.rejects(loadMissingDataList(reader([impactPage(metadata, readOnly)]), signal(), "impact-scope"), (error) => error.detail.code === "retry")
+  })
+})
+
 describe("complete dashboard dialog list", () => {
   it("collects more than 50 rows sequentially in server order", async () => {
     const calls = []

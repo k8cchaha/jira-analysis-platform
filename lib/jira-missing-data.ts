@@ -2,8 +2,8 @@ export { POINTS_SCOPE_JQL, MISSING_POINTS_JQL, MISSING_DEFECT_CAUSE_JQL, missing
 
 export { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "./jira-fields.ts"
 
-export type WritableMissingDataKind = "points" | "defect-cause"
-export type MissingDataKind = WritableMissingDataKind | "impact-scope"
+export type WritableMissingDataKind = "points" | "defect-cause" | "impact-scope"
+export type MissingDataKind = WritableMissingDataKind
 
 export const MISSING_DATA_LIMIT = 5_000
 export const MISSING_DATA_PAGE_SIZE = 50
@@ -38,6 +38,7 @@ export interface MissingIssue {
   id: string
   key: string
   summary: string
+  statusName: string | null
   assigneeDisplayName: string | null
   parentIssueType: { status: "known"; name: string } | { status: "none" | "unknown" }
   storyPoints: number | null
@@ -51,6 +52,13 @@ export interface MissingIssue {
   defectCause: string[]
   defectCauseOptions: Array<{ id: string; value: string }>
   defectCauseEditable: boolean
+  impactScope: {
+    mode: "single" | "multi" | null
+    /** [] is known empty; null is unavailable or malformed, never an editable empty value. */
+    value: Array<{ id: string; value: string }> | null
+    options: Array<{ id: string; value: string }>
+    editable: boolean
+  }
   unavailableReason?: string
 }
 
@@ -69,6 +77,7 @@ export interface MissingDataChange {
   storyPoints?: number
   actualStoryPoints?: number
   defectCause?: string[]
+  impactScope?: string[]
   expectedStoryPoints?: number | null
   expectedActualStoryPoints?: number | null
 }
@@ -95,7 +104,7 @@ export type MissingDataPageResult =
   | { status: "error"; error: MissingDataError }
 
 export function parseMissingDataChanges(kind: WritableMissingDataKind, value: unknown): MissingDataChange[] {
-  if (kind !== "points" && kind !== "defect-cause") throw new Error("不支援此更新類型。")
+  if (kind !== "points" && kind !== "defect-cause" && kind !== "impact-scope") throw new Error("不支援此更新類型。")
   if (typeof value !== "string" || value.length === 0 || value.length > 10_000) {
     throw new Error("變更資料為空或過大。")
   }
@@ -119,7 +128,7 @@ export function parseMissingDataChanges(kind: WritableMissingDataKind, value: un
     seen.add(id)
     const allowed = kind === "points"
       ? ["issueId", "storyPoints", "actualStoryPoints", "expectedStoryPoints", "expectedActualStoryPoints"]
-      : ["issueId", "defectCause"]
+      : kind === "defect-cause" ? ["issueId", "defectCause"] : ["issueId", "impactScope"]
     if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error("包含不允許更新的欄位。")
     const change: MissingDataChange = { issueId: id }
     if (kind === "points") {
@@ -137,12 +146,18 @@ export function parseMissingDataChanges(kind: WritableMissingDataKind, value: un
         change[expected] = record[expected]
       }
       if (change.storyPoints === undefined && change.actualStoryPoints === undefined) throw new Error("沒有可送出的變更。")
-    } else {
+    } else if (kind === "defect-cause") {
       const options = record.defectCause
       if (!Array.isArray(options) || options.length === 0 || options.length > 100 || options.some((option) => typeof option !== "string" || !/^\d{1,30}$/.test(option)) || new Set(options).size !== options.length) {
         throw new Error("請選擇有效且不重複的 Defect Cause 選項。")
       }
       change.defectCause = options as string[]
+    } else if (kind === "impact-scope") {
+      const options = record.impactScope
+      if (!Array.isArray(options) || options.length === 0 || options.length > 100 || options.some((option) => typeof option !== "string" || !/^\d{1,30}$/.test(option)) || new Set(options).size !== options.length) {
+        throw new Error("請選擇有效且不重複的 Impact Scope 選項。")
+      }
+      change.impactScope = options as string[]
     }
     return change
   })

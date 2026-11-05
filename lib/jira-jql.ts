@@ -240,9 +240,9 @@ export const MISSING_POINTS_JQL =
 export const MISSING_DEFECT_CAUSE_JQL =
   `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
 
-/** SUN 的 Story／Task／Bug，已離開 To Do 且 Impact Scope 未填；唯讀缺失資料。 */
+/** SUN 的 Story／Task／Bug，Impact Scope 未填（不限狀態）；self 可依 Jira 權限補填。 */
 export const MISSING_IMPACT_SCOPE_JQL =
-  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser()`
+  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser()`
 
 /** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {
@@ -286,9 +286,10 @@ export function missingDataListJql(kind: MissingDataKind, scope: ResolvedDashboa
 
 /** 缺失資料的更新查詢：以原始 `missingDataJql(kind)`（含 `assignee = currentUser()`，不隨 scope
  *  放寬）為括號 base，再限制到指定 issue id，確保只能改到「現在仍屬於自己的缺失清單」。
- *  對應真實 JQL：`(<MISSING_POINTS_JQL | MISSING_DEFECT_CAUSE_JQL>) AND id in (<issueIdA>, <issueIdB>, …)` */
+ *  對應真實 JQL：`(<MISSING_POINTS_JQL | MISSING_DEFECT_CAUSE_JQL | MISSING_IMPACT_SCOPE_JQL>) AND id in (<issueIdA>, <issueIdB>, …)` */
 export function missingDataUpdateJql(kind: WritableMissingDataKind, issueIds: readonly string[]): string {
-  if (kind !== "points" && kind !== "defect-cause") throw new DashboardFilterError("不支援此更新類型。")
+  if (kind !== "points" && kind !== "defect-cause" && kind !== "impact-scope") throw new DashboardFilterError("不支援此更新類型。")
+  if (!issueIds.length || issueIds.length > 50 || issueIds.some((id) => typeof id !== "string" || !/^\d{1,30}$/.test(id)) || new Set(issueIds).size !== issueIds.length) throw new DashboardFilterError("Issue ID 無效或重複。")
   return `(${missingDataJql(kind)}) AND id in (${issueIds.join(",")})`
 }
 

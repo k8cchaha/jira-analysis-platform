@@ -20,7 +20,7 @@ export async function updateMissingDataAction(
     submissionId, status: "error", message, succeededIssueIds: [], failures: [],
   })
   if (formData.getAll("mode").length > 1 || (formData.has("mode") && formData.get("mode") !== "self") || ["accountId", "group", "project", "exclude", "days"].some((key) => formData.has(key))) return errorState("只有自己模式可以補填資料。")
-  if (kind !== "points" && kind !== "defect-cause") return errorState("不支援此更新類型。")
+  if (kind !== "points" && kind !== "defect-cause" && kind !== "impact-scope") return errorState("不支援此更新類型。")
   const session = await auth()
   if (!session?.user?.id) return errorState("登入狀態已失效，請重新登入。")
   let changes

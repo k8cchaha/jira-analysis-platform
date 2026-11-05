@@ -28,14 +28,16 @@ const parseDefects = (changes) => parseMissingDataChanges("defect-cause", JSON.s
 
 describe("missing-data JQL contract", () => {
   it("uses the requested SUN Impact Scope population without inherited exclusions", () => {
-    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()')
+    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()')
     assert.equal(missingDataJql("impact-scope"), MISSING_IMPACT_SCOPE_JQL)
-    assert.doesNotMatch(MISSING_IMPACT_SCOPE_JQL, /created >= -|updated|resolution|Dev Ready|In Progress/)
+    assert.doesNotMatch(MISSING_IMPACT_SCOPE_JQL, /status|created >= -|updated|resolution|Dev Ready|In Progress/)
     assert.throws(() => missingDataJql("unknown"))
   })
-  it("rejects the read-only kind at both write parser and JQL boundaries", () => {
-    assert.throws(() => parseMissingDataChanges("impact-scope", JSON.stringify([{ issueId: "1", defectCause: ["7"] }])), /不支援/)
-    assert.throws(() => missingDataUpdateJql("impact-scope", ["1"]), /不支援/)
+  it("retains the exact self Impact eligibility query AND submitted IDs", () => {
+    assert.equal(missingDataUpdateJql("impact-scope", ["1", "2"]), `(${MISSING_IMPACT_SCOPE_JQL}) AND id in (1,2)`)
+    assert.throws(() => parseMissingDataChanges("impact-scope", JSON.stringify([{ issueId: "1", defectCause: ["7"] }])), /不允許/)
+    assert.throws(() => missingDataUpdateJql("unknown", ["1"]), /不支援/)
+    for (const ids of [[], ["1", "1"], ["1) OR project is not EMPTY"], [1], ["1".repeat(31)], Array.from({ length: 51 }, (_, i) => String(i + 1))]) assert.throws(() => missingDataUpdateJql("impact-scope", ids))
   })
   it("uses the exact status-dependent Points union across all projects", () => {
     assert.equal(
@@ -260,6 +262,26 @@ describe("parseMissingDataChanges defect-cause", () => {
     for (const extra of [{ defectCauseOptions: [{ id: "7", value: "label" }] }, { storyPoints: 1 }, { expectedStoryPoints: null }]) {
       assert.throws(() => parseDefects([{ issueId: "101", defectCause: ["7"], ...extra }]))
     }
+  })
+})
+
+describe("parseMissingDataChanges impact-scope", () => {
+  const parseImpact = (changes) => parseMissingDataChanges("impact-scope", JSON.stringify(changes))
+  it("accepts only option IDs without client-select mode, preserving distinct selections", () => {
+    const change = { issueId: "101", impactScope: ["7", "22", "1".repeat(30)] }
+    assert.deepEqual(parseImpact([change]), [change])
+    assert.deepEqual(parseImpact([{ issueId: "1", impactScope: Array.from({ length: 100 }, (_, i) => String(i + 1)) }])[0].impactScope.length, 100)
+  })
+  it("rejects clears, duplicates, excessive selections, and invalid IDs", () => {
+    for (const impactScope of [undefined, null, [], "7", {}, ["7", "7"], [7], [{ id: "7", value: "label" }], ["-1"], [" 7"], ["7.5"], ["1".repeat(31)], Array.from({ length: 101 }, (_, i) => String(i + 1))]) assert.throws(() => parseImpact([{ issueId: "1", impactScope }]))
+    for (const issueId of [null, 1, "", "SUN-1", "1".repeat(31)]) assert.throws(() => parseImpact([{ issueId, impactScope: ["7"] }]))
+    assert.throws(() => parseImpact([{ issueId: "1", impactScope: ["7"] }, { issueId: "1", impactScope: ["8"] }]))
+    assert.throws(() => parseImpact(Array.from({ length: 51 }, (_, i) => ({ issueId: String(i + 1), impactScope: ["7"] }))))
+  })
+  it("rejects metadata, labels, field IDs, other kinds, and client mode/schema", () => {
+    for (const extra of [{ mode: "single" }, { schema: { type: "option" } }, { fieldId: "customfield_14848" }, { impactScopeOptions: [{ id: "7", value: "label" }] }, { value: "label" }, { defectCause: ["7"] }, { storyPoints: 1 }, { expectedStoryPoints: null }, { customfield_14848: [{ id: "7" }] }]) assert.throws(() => parseImpact([{ issueId: "1", impactScope: ["7"], ...extra }]))
+    assert.throws(() => parsePoints([{ ...pointsChange, impactScope: ["7"] }]))
+    assert.throws(() => parseDefects([{ issueId: "1", defectCause: ["7"], impactScope: ["7"] }]))
   })
 })
 

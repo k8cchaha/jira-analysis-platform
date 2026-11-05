@@ -15,21 +15,29 @@ const self = { mode: "self" }
 const person = { mode: "person", accountId: "a", name: "Fixture person", days: 7 }
 const panelPath = "app/(app)/dashboard/missing-data-panel.tsx"
 const dialogPath = "app/(app)/dashboard/impact-scope-dialog.tsx"
+const editorPath = "app/(app)/dashboard/missing-data-dialog.tsx"
+const options = [{ id: "7", value: "Synthetic UI" }, { id: "8", value: "Synthetic API" }]
+const impact = (mode = "single", editable = true) => ({ mode, value: [], options: editable ? options : [], editable })
 const summary = (kind, total = 2) => ({ status: "success", summary: { kind, total, storyPointsMissing: 0, actualStoryPointsMissing: 0, jql: "fixture query", jiraBaseUrl: null } })
-const issue = (id) => ({ id: String(id), key: `SUN-${id}`, summary: `Fixture <summary> ${id}`, assigneeDisplayName: "Fixture member", storyPointsRequired: false, actualStoryPointsRequired: false })
-const page = (ids, number = 1, token = null, readOnly = true) => ({ status: "success", data: { readOnly, issues: ids.map(issue), page: number, nextPageToken: token, previousPageToken: null, jiraBaseUrl: "https://fixture.example.invalid", warnings: [] } })
+const issue = (id, field = impact()) => ({ id: String(id), key: `SUN-${id}`, summary: `Fixture <summary> ${id}`, statusName: "To Do", assigneeDisplayName: "Fixture member", storyPointsRequired: false, actualStoryPointsRequired: false, impactScope: field })
+const page = (ids, number = 1, token = null, readOnly = true) => ({ status: "success", data: { readOnly, issues: ids.map((id) => issue(id, impact("single", !readOnly))), page: number, nextPageToken: token, previousPageToken: null, jiraBaseUrl: "https://fixture.example.invalid", warnings: [] } })
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r }); return { promise, resolve } }
 const response = (body, ok = true) => ({ ok, json: async () => body })
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 
 // Controlled offline hooks test; not a real browser/modal/router concurrency test.
-function harness(fetcher) {
+function harness(fetcher, updater = async () => ({ status: "error", message: "Synthetic failure", succeededIssueIds: [], failures: [] })) {
   const slots = []
   let index = 0
   let effects = []
   const modules = new Map()
   const calls = []
   const authorizations = []
+  const updates = []
+  const blockers = []
+  const listeners = new Map()
+  const setBlocked = (source, blocked) => blockers.push({ source, blocked })
+  const window = { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: (name) => listeners.delete(name) }
   const stub = (label) => function Stub(props) { return React.createElement("div", { "data-component": label }, props.children) }
   const impactStub = stub("impact-dialog")
   const editDialog = (props) => React.createElement("section", { "aria-label": props.title }, React.createElement("h2", null, props.title), props.children)
@@ -42,17 +50,32 @@ function harness(fetcher) {
     },
     useRef(initial) { const slot = index++; return slots[slot] ??= { current: initial } },
     useId() { return "fixture-id" },
-    useCallback(fn) { return fn },
+    useCallback(fn, deps) {
+      const slot = index++
+      const old = slots[slot]
+      if (!old || deps.some((dep, i) => dep !== old.deps[i])) slots[slot] = { deps, fn }
+      return slots[slot].fn
+    },
+    useActionState(fn, initial) {
+      const slot = index++
+      slots[slot] ??= { state: initial, pending: false }
+      const action = async (data) => {
+        slots[slot].pending = true
+        try { slots[slot].state = await fn(slots[slot].state, data) }
+        finally { slots[slot].pending = false }
+      }
+      return [slots[slot].state, action, slots[slot].pending]
+    },
     useEffect(fn, deps) {
       const slot = index++
       const old = slots[slot]
       if (!old || deps.some((dep, i) => dep !== old.deps[i])) effects.push(() => { old?.cleanup?.(); slots[slot] = { deps, cleanup: fn() } })
     },
   }
-  const sandbox = vm.createContext({ URL, URLSearchParams, AbortController, Error, Number, console, queueMicrotask, fetch: async (url, init) => { calls.push({ url, init }); return fetcher(url, init) } })
+  const sandbox = vm.createContext({ URL, URLSearchParams, AbortController, Error, Number, console, queueMicrotask, window, fetch: async (url, init) => { calls.push({ url, init }); return fetcher(url, init) } })
   function load(filename) {
     if (modules.has(filename)) return modules.get(filename).exports
-    assert.ok([panelPath, dialogPath, "lib/jira-missing-data.ts", "lib/jira-missing-data-list.ts", "lib/jira-jql.ts", "lib/jira-fields.ts", "lib/jira-dashboard-filter.ts", "lib/date-range.ts"].includes(filename), `Unexpected module ${filename}`)
+    assert.ok([panelPath, dialogPath, editorPath, "lib/jira-missing-data.ts", "lib/jira-missing-data-list.ts", "lib/jira-jql.ts", "lib/jira-fields.ts", "lib/jira-dashboard-filter.ts", "lib/date-range.ts", "lib/status-color.ts"].includes(filename), `Unexpected module ${filename}`)
     const loadedModule = { exports: {} }
     modules.set(filename, loadedModule)
     if (!compiled.has(filename)) compiled.set(filename, ts.transpileModule(readFileSync(path.join(root, filename), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)
@@ -61,10 +84,11 @@ function harness(fetcher) {
       if (specifier === "react/jsx-runtime") return require(specifier)
       if (specifier === "next/navigation") return { useRouter: () => ({ push() {} }) }
       if (specifier === "@/components/edit-dialog") return { EditDialog: editDialog }
-      if (specifier === "@/components/navigation-blocker") return { useNavigationBlocker: () => ({ isBlocked: false }) }
-      if (specifier === "./actions") return { reauthorizeDashboardAction: async (href) => { authorizations.push(href) } }
+      if (specifier === "@/components/navigation-blocker") return { useNavigationBlocker: () => ({ isBlocked: false, setBlocked }) }
+      if (specifier === "./parent-issue-type-icon") return { ParentIssueTypeIcon: stub("parent-type") }
+      if (specifier === "./actions") return { reauthorizeDashboardAction: async (href) => { authorizations.push(href) }, updateMissingDataAction: async (kind, previous, data) => { updates.push({ kind, data }); return updater(kind, previous, data) } }
       if (specifier === "./impact-scope-dialog") return { ImpactScopeDialog: impactStub }
-      if (specifier === "./missing-data-dialog") return { MissingDataDialog: stub("write-dialog") }
+      if (specifier === "./missing-data-dialog") return filename === dialogPath ? load(editorPath) : { MissingDataDialog: stub("write-dialog") }
       if (specifier === "./dashboard-filter") return { DashboardFilter: stub("filter") }
       if (specifier === "./dashboard-alert-cards") return { DashboardAlertCards: stub("alerts") }
       if (specifier === "./bug-alert-dialog") return { BugAlertDialog: stub("bugs") }
@@ -80,19 +104,21 @@ function harness(fetcher) {
   }
   return {
     panel: load(panelPath).MissingDataPanel,
-    dialog: load(dialogPath).ImpactScopeDialog,
+    editor: load(editorPath).MissingDataDialog,
+    dialog: (props) => { const wrapped = load(dialogPath).ImpactScopeDialog(props); return wrapped.type(wrapped.props) },
     invoke(component, props) { index = 0; effects = []; const tree = component(props); effects.forEach((fn) => fn()); return tree },
     unmount() { slots.forEach((slot) => slot?.cleanup?.()) },
-    calls, authorizations, impactStub,
+    calls, authorizations, impactStub, updates, blockers, listeners,
   }
 }
 function nodes(tree) {
   if (!tree || typeof tree !== "object") return []
   if (Array.isArray(tree)) return tree.flatMap(nodes)
+  if (["ImpactScopeInput", "DefectCauseInput"].includes(tree.type?.name)) return [tree, ...nodes(tree.type(tree.props))]
   return [tree, ...nodes(tree.props?.children)]
 }
 const articles = (tree) => nodes(tree).filter((node) => node.type === "article")
-const clickByText = (tree, text) => nodes(tree).find((node) => node.type === "button" && node.props.children === text).props.onClick()
+const clickByText = (tree, text) => nodes(tree).find((node) => node.type === "button" && [node.props.children].flat().join("") === text).props.onClick()
 const markup = (tree) => renderToStaticMarkup(tree)
 
 describe("Impact Scope missing-data cards", () => {
@@ -127,11 +153,16 @@ describe("Impact Scope missing-data cards", () => {
     tree = h.invoke(h.panel, props)
     const impact = articles(tree)[2]
     assert.match(markup(impact), /查看明細/)
-    assert.doesNotMatch(markup(impact), /補填/)
+    assert.match(markup(impact), /查看明細與補填/)
+    const countCalls = h.calls.length
     nodes(impact).find((node) => node.type === "button" && node.props["aria-haspopup"] === "dialog").props.onClick()
     tree = h.invoke(h.panel, props)
     const dialog = nodes(tree).find((node) => node.type === h.impactStub)
     assert.equal(dialog.props.filter, self)
+    dialog.props.onSaved()
+    await settle()
+    assert.equal(h.calls.length, countCalls + 1)
+    assert.equal(new URL(h.calls.at(-1).url, "https://fixture.invalid").searchParams.get("kind"), "impact-scope")
     const changed = h.invoke(h.panel, { applied: { filter: person, error: null } })
     const retained = nodes(changed).find((node) => node.type === h.impactStub)
     assert.equal(retained.props.filter, self)
@@ -172,15 +203,315 @@ describe("Impact Scope missing-data cards", () => {
   })
 })
 
-describe("Impact Scope read-only details", () => {
-  for (const filter of [self, person]) it(`loads all pages with responsive read-only rows for ${filter.mode}`, async () => {
+function selector(tree, id = "1") {
+  return nodes(tree).find((node) => node.type === "select" && node.props.id === `desktop-${id}-impact-scope`)
+}
+function formData(tree) {
+  const data = new FormData()
+  for (const node of nodes(tree).filter((node) => node.type === "input" && node.props.type === "hidden")) data.set(node.props.name, node.props.value)
+  return data
+}
+function submitTree(tree) {
+  const form = nodes(tree).find((node) => node.type === "form")
+  let prevented = false
+  form.props.onSubmit({ preventDefault() { prevented = true } })
+  assert.equal(prevented, false)
+  return form.props.action(formData(tree))
+}
+
+describe("Impact Scope supplementation", () => {
+  const props = (extras = {}) => ({ filter: self, scopeChanged: false, onClose() {}, onSaved() {}, ...extras })
+  it("selects single options, clears drafts and protects dirty closing/reload", async () => {
+    let closes = 0
+    const h = harness(async () => response(page([1], 1, null, false)))
+    const p = props({ onClose() { closes++ } })
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree).props.value, "7")
+    assert.match(markup(tree), /1 張未儲存/)
+    assert.equal(h.listeners.has("beforeunload"), true)
+    assert.equal(h.blockers.at(-1).blocked, true)
+    clickByText(tree, "重新載入")
+    tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /放棄尚未儲存的變更/)
+    assert.equal(h.calls.length, 1)
+    clickByText(tree, "繼續編輯")
+    tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "" } })
+    tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /0 張未儲存/)
+    assert.equal(h.listeners.has("beforeunload"), false)
+    selector(tree).props.onChange({ target: { value: "8" } })
+    tree = h.invoke(h.dialog, p)
+    nodes(tree).find((node) => node.props?.title === "Impact Scope 缺失明細").props.onClose()
+    tree = h.invoke(h.dialog, p)
+    assert.equal(closes, 0)
+    clickByText(tree, "放棄變更並關閉")
+    assert.equal(closes, 1)
+    h.unmount()
+  })
+  it("retains dirty drafts when confirmed reload fails", async () => {
+    let failed = false
+    const h = harness(async () => failed ? response({ status: "error", error: { code: "retry", message: "Synthetic reload failed" } }, false) : response(page([1], 1, null, false)))
+    const p = props()
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    clickByText(tree, "重新載入")
+    tree = h.invoke(h.dialog, p)
+    failed = true
+    clickByText(tree, "放棄變更並繼續")
+    await settle()
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree).props.value, "7")
+    assert.match(markup(tree), /Synthetic reload failed|1 張未儲存/)
+    assert.equal(h.listeners.has("beforeunload"), true)
+    h.unmount()
+  })
+  it("renders accessible multi-options and submits only selected IDs", async () => {
+    const h = harness(async () => {
+      const result = page([1], 1, null, false)
+      result.data.issues[0].impactScope = impact("multi")
+      return response(result)
+    })
+    const p = props()
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree), undefined)
+    const input = nodes(tree).find((node) => node.type?.name === "ImpactScopeInput" && node.props.prefix === "desktop")
+    input.props.onChange(["7", "8"])
+    tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /Synthetic UI、Synthetic API/)
+    const ids = JSON.parse(formData(tree).get("changes"))
+    assert.deepEqual(ids, [{ issueId: "1", impactScope: ["7", "8"] }])
+    assert.equal(nodes(tree).filter((node) => node.type === "input" && node.props.type === "checkbox").length, 4)
+    await submitTree(tree)
+    assert.equal(h.updates[0].kind, "impact-scope")
+    assert.equal(h.updates[0].data.has("fieldId"), false)
+    h.unmount()
+  })
+  it("locks while saving, preserves failed snapshot drafts and refreshes successful count", async () => {
+    const waiting = deferred()
+    let saves = 0
+    const h = harness(async () => response(page([1, 2], 1, null, false)), async (_kind, _previous, data) => {
+      await waiting.promise
+      return { submissionId: data.get("submissionId"), status: "partial", message: "Synthetic partial success", succeededIssueIds: ["1"], failures: [{ issueId: "2", message: "Synthetic denied" }] }
+    })
+    const p = props({ onSaved() { saves++ } })
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree, "1").props.onChange({ target: { value: "7" } })
+    selector(tree, "2").props.onChange({ target: { value: "8" } })
+    tree = h.invoke(h.dialog, p)
+    const submitted = submitTree(tree)
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree, "2").props.disabled, true)
+    selector(tree, "2").props.onChange({ target: { value: "7" } })
+    waiting.resolve()
+    await submitted
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree, "1"), undefined)
+    assert.equal(selector(tree, "2").props.value, "8")
+    assert.match(markup(tree), /Synthetic denied/)
+    assert.match(markup(tree), /1 張未儲存/)
+    assert.equal(saves, 1)
+    assert.equal(h.calls.length, 1)
+    assert.deepEqual(JSON.parse(formData(tree).get("changes")), [{ issueId: "2", impactScope: ["8"] }])
+    h.unmount()
+  })
+  it("reloads the list after all changes succeed", async () => {
+    let saves = 0
+    let completed = false
+    const h = harness(async () => response(page(completed ? [] : [1], 1, null, false)), async (_kind, _previous, data) => {
+      completed = true
+      return { submissionId: data.get("submissionId"), status: "success", message: "Synthetic saved", succeededIssueIds: ["1"], failures: [] }
+    })
+    const p = props({ onSaved() { saves++ } })
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    await submitTree(tree)
+    await settle()
+    tree = h.invoke(h.dialog, p)
+    assert.equal(saves, 1)
+    assert.equal(h.calls.length, 2)
+    assert.match(markup(tree), /目前沒有待補資料/)
+    assert.equal(h.listeners.has("beforeunload"), false)
+    h.unmount()
+  })
+  it("shows unavailable/unknown values without controls or a valid submission", async () => {
+    const h = harness(async () => {
+      const result = page([1], 1, null, false)
+      result.data.issues[0] = { ...issue(1, { mode: null, value: null, options: [], editable: false }), unavailableReason: "Synthetic unsupported schema" }
+      return response(result)
+    })
+    const p = props()
+    h.invoke(h.dialog, p)
+    await settle()
+    const tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /無法識別欄位值|Synthetic unsupported schema/)
+    assert.equal(selector(tree), undefined)
+    assert.equal(nodes(tree).find((node) => node.type === "button" && node.props.type === "submit").props.disabled, true)
+    assert.equal(h.updates.length, 0)
+    h.unmount()
+  })
+  it("keeps nonself current labels readonly even when populated", async () => {
+    const h = harness(async () => {
+      const result = page([1])
+      result.data.issues[0].impactScope.value = [options[0]]
+      return response(result)
+    })
+    const p = props({ filter: person })
+    h.invoke(h.dialog, p)
+    await settle()
+    const tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /Synthetic UI|Assignee/)
+    assert.equal(selector(tree), undefined)
+    assert.equal(nodes(tree).some((node) => node.type === "button" && node.props.type === "submit"), false)
+    assert.equal(h.updates.length, 0)
+    h.unmount()
+  })
+  it("rejects unknown selected IDs and caps drafts at 50 rows", async () => {
+    const h = harness(async (url) => new URL(url, "https://fixture.invalid").searchParams.has("pageToken") ? response(page([51], 2, null, false)) : response(page(Array.from({ length: 50 }, (_, i) => i + 1), 1, "second", false)))
+    const p = props()
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "999" } })
+    tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /請選擇有效的 Impact Scope/)
+    assert.equal(nodes(tree).find((node) => node.type === "button" && node.props.type === "submit").props.disabled, true)
+    for (let id = 1; id <= 50; id++) selector(tree, String(id)).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree, "51").props.disabled, true)
+    selector(tree, "51").props.onChange({ target: { value: "8" } })
+    tree = h.invoke(h.dialog, p)
+    assert.equal(JSON.parse(formData(tree).get("changes")).length, 50)
+    assert.equal(selector(tree, "51").props.value, "")
+    h.unmount()
+  })
+  it("preserves drafts when a save result cannot match its submission", async () => {
+    let saves = 0
+    const h = harness(async () => response(page([1], 1, null, false)), async () => ({ submissionId: "wrong", status: "success", message: "Synthetic untrusted result", succeededIssueIds: ["1"], failures: [] }))
+    const p = props({ onSaved() { saves++ } })
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    await submitTree(tree)
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree).props.value, "7")
+    assert.match(markup(tree), /無法核對儲存結果/)
+    assert.equal(saves, 0)
+    h.unmount()
+  })
+  it("rejects malformed metadata and HTTP failures claiming success", async () => {
+    for (const malformed of [true, false]) {
+      const h = harness(async () => {
+        const result = page([1], 1, null, false)
+        if (malformed) delete result.data.issues[0].impactScope
+        return response(result, malformed)
+      })
+      const p = props()
+      h.invoke(h.dialog, p)
+      await settle()
+      const html = markup(h.invoke(h.dialog, p))
+      assert.doesNotMatch(html, /SUN-1|<select/)
+      assert.match(html, /不完整|無法載入完整明細/)
+      h.unmount()
+    }
+  })
+})
+
+describe("existing shared editor regression", () => {
+  it("retains Points columns without Impact Scope controls", async () => {
+    const h = harness(async () => {
+      const result = page([1])
+      result.data.issues[0] = { ...result.data.issues[0], storyPoints: 0, actualStoryPoints: null, storyPointsRequired: true, actualStoryPointsRequired: true, parentIssueType: { status: "none" } }
+      return response(result)
+    })
+    const p = { kind: "points", filter: person, onClose() {}, onSaved() {} }
+    h.invoke(h.editor, p)
+    await settle()
+    const html = markup(h.invoke(h.editor, p))
+    assert.match(html, /SP<\/th>|Actual SP<\/th>/)
+    assert.doesNotMatch(html, /Impact Scope|Defect Cause|Root Cause|Status<\/th>|Status：/)
+    h.unmount()
+  })
+  it("retains Defect Cause drafts and fields without Impact fallthrough", async () => {
+    const h = harness(async () => {
+      const result = page([1], 1, null, false)
+      result.data.issues[0] = { ...result.data.issues[0], rootCause: "Synthetic Root", solution: "Synthetic Solution", defectCause: [], defectCauseOptions: options, defectCauseEditable: true }
+      return response(result)
+    })
+    const p = { kind: "defect-cause", filter: self, onClose() {}, onSaved() {} }
+    h.invoke(h.editor, p)
+    await settle()
+    let tree = h.invoke(h.editor, p)
+    assert.match(markup(tree), /Root Cause|Solution|Defect Cause/)
+    assert.doesNotMatch(markup(tree), /Impact Scope|Status<\/th>|Status：/)
+    nodes(tree).find((node) => node.type?.name === "DefectCauseInput" && node.props.prefix === "desktop").props.onChange(["7"])
+    tree = h.invoke(h.editor, p)
+    assert.deepEqual(JSON.parse(formData(tree).get("changes")), [{ issueId: "1", defectCause: ["7"] }])
+    h.unmount()
+  })
+})
+
+describe("Impact Scope guarded details", () => {
+  for (const [status, color] of [
+    ["In Progress", "text-blue-600 dark:text-blue-300"],
+    ["In Review", "text-blue-600 dark:text-blue-300"],
+    ["Done", "text-green-600 dark:text-green-400"],
+    ["To Do", "text-slate-600 dark:text-slate-300"],
+    ["Unknown status", "text-slate-600 dark:text-slate-300"],
+    [null, "text-slate-600 dark:text-slate-300"],
+  ]) it(`applies the shared ${status ?? "unavailable"} status color on desktop and mobile`, async () => {
+    const result = page([1], 1, null, false)
+    result.data.issues[0].statusName = status
+    const h = harness(async () => response(result))
+    const props = { filter: self, onClose() {}, onSaved() {} }
+    h.invoke(h.dialog, props)
+    await settle()
+    const tree = h.invoke(h.dialog, props)
+    const text = status ?? "—"
+    const desktop = nodes(tree).find((node) => node.type === "td" && node.props.children === text)
+    const mobile = nodes(tree).find((node) => node.type === "span" && node.props.children === text)
+    assert.equal(desktop.props.className, `break-words px-3 py-3 ${color}`)
+    assert.equal(mobile.props.className, color)
+    h.unmount()
+  })
+  it("shows a neutral Status placeholder when Jira has no status name", async () => {
+    const result = page([1], 1, null, false)
+    result.data.issues[0].statusName = null
+    const h = harness(async () => response(result))
+    const props = { filter: self, onClose() {}, onSaved() {} }
+    h.invoke(h.dialog, props)
+    await settle()
+    const html = markup(h.invoke(h.dialog, props))
+    assert.match(html, /Status<\/th>/)
+    assert.match(html, /Status：<span[^>]*>—<\/span>/)
+    assert.match(html, /<td[^>]*>—<\/td>/)
+    h.unmount()
+  })
+  for (const filter of [self, person]) it(`loads all pages with responsive scoped rows for ${filter.mode}`, async () => {
     const second = deferred()
-    const h = harness(async (url) => new URL(url, "https://fixture.invalid").searchParams.has("pageToken") ? second.promise : response(page([1], 1, "next")))
-    const props = { filter, scopeChanged: true, onClose() {} }
+    const readOnly = filter.mode !== "self"
+    const h = harness(async (url) => new URL(url, "https://fixture.invalid").searchParams.has("pageToken") ? second.promise : response(page([1], 1, "next", readOnly)))
+    const props = { filter, scopeChanged: true, onClose() {}, onSaved() {} }
     let tree = h.invoke(h.dialog, props)
     await settle()
     assert.match(markup(h.invoke(h.dialog, props)), /正在載入/)
-    second.resolve(response(page([2], 2)))
+    second.resolve(response(page([2], 2, null, readOnly)))
     await settle()
     tree = h.invoke(h.dialog, props)
     const html = markup(tree)
@@ -192,7 +523,15 @@ describe("Impact Scope read-only details", () => {
     assert.match(html, /md:block/)
     assert.match(html, /md:hidden/)
     assert.match(html, /保留開啟時的範圍/)
-    assert.doesNotMatch(html, /<form|<input|<select|儲存|補填/)
+    assert.match(html, /Impact Scope<\/th>/)
+    assert.match(html, /Status<\/th>/)
+    assert.match(html, /Status：<span[^>]*>To Do<\/span>/)
+    assert.ok(html.indexOf("Summary</th>") < html.indexOf("Status</th>"))
+    assert.ok(html.indexOf("Status</th>") < html.indexOf("Impact Scope</th>"))
+    assert.match(html, /<td[^>]*>To Do<\/td>/)
+    assert.doesNotMatch(html, /Root Cause|Solution|Defect Cause/)
+    assert.equal(html.includes("<select"), !readOnly)
+    assert.equal(html.includes("確認儲存"), !readOnly)
     assert.equal(h.calls.length, 2)
     assert.ok(h.calls.every((call) => call.init.cache === "no-store" && new URL(call.url, "https://fixture.invalid").searchParams.get("kind") === "impact-scope"))
     h.unmount()
@@ -201,7 +540,7 @@ describe("Impact Scope read-only details", () => {
   it("does not show partial rows on later-page failure and supports retry/reauthorization", async () => {
     let failed = true
     const h = harness(async (url) => response(failed && new URL(url, "https://fixture.invalid").searchParams.has("pageToken") ? { status: "error", error: { code: "forbidden", message: "Fixture denied" } } : page([1], 1, failed ? "next" : null)))
-    const props = { filter: self, scopeChanged: false, onClose() {} }
+    const props = { filter: person, scopeChanged: false, onClose() {}, onSaved() {} }
     h.invoke(h.dialog, props)
     await settle()
     let tree = h.invoke(h.dialog, props)
@@ -218,23 +557,23 @@ describe("Impact Scope read-only details", () => {
     assert.match(markup(tree), /SUN-1/)
     h.unmount()
   })
-  it("rejects non-read-only detail responses even in self mode", async () => {
+  it("rejects editable detail responses in nonself mode", async () => {
     const h = harness(async () => response(page([1], 1, null, false)))
-    const props = { filter: self, scopeChanged: false, onClose() {} }
+    const props = { filter: person, scopeChanged: false, onClose() {}, onSaved() {} }
     h.invoke(h.dialog, props)
     await settle()
     const html = markup(h.invoke(h.dialog, props))
-    assert.match(html, /無法載入 Impact Scope 完整明細/)
+    assert.match(html, /無法載入完整明細/)
     assert.doesNotMatch(html, /SUN-1/)
     h.unmount()
   })
   it("renders a complete empty list without implying loading or failure", async () => {
     const h = harness(async () => response(page([])))
-    const props = { filter: self, scopeChanged: false, onClose() {} }
+    const props = { filter: self, scopeChanged: false, onClose() {}, onSaved() {} }
     h.invoke(h.dialog, props)
     await settle()
     const html = markup(h.invoke(h.dialog, props))
-    assert.match(html, /目前沒有符合條件的 Issue/)
+    assert.match(html, /目前沒有待補資料/)
     assert.doesNotMatch(html, /正在載入|role="alert"/)
     h.unmount()
   })
@@ -256,7 +595,7 @@ describe("Impact Scope read-only details", () => {
   it("aborts unmounted work without accepting later results", async () => {
     const waiting = deferred()
     const h = harness(async () => waiting.promise)
-    const props = { filter: self, scopeChanged: false, onClose() {} }
+    const props = { filter: self, scopeChanged: false, onClose() {}, onSaved() {} }
     h.invoke(h.dialog, props)
     await settle()
     h.unmount()

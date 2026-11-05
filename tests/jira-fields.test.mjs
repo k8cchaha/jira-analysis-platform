@@ -6,6 +6,7 @@ import {
   ACTUAL_STORY_POINTS_FIELD,
   customFieldJql,
   matchesJiraFieldSchema,
+  jiraSelectMode,
 } from "../lib/jira-fields.ts"
 import {
   STORY_POINTS_FIELD as missingStoryPoints,
@@ -27,6 +28,19 @@ describe("central Jira field definitions", () => {
   it("records Impact Scope without guessing its schema", () => {
     assert.deepEqual(JIRA_FIELDS.impactScope, { id: "customfield_14848", name: "Impact Scope" })
     assert.equal(customFieldJql(JIRA_FIELDS.impactScope.id), "cf[14848]")
+  })
+
+  it("recognizes only complete standard single/multiple select schemas", () => {
+    const single = { type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select" }
+    const multi = { type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multiselect" }
+    assert.equal(jiraSelectMode({ ...single, customId: 14848 }), "single")
+    assert.equal(jiraSelectMode({ ...multi, customId: 14848 }), "multi")
+    for (const schema of [null, undefined, [], {}, { type: "option" }, { ...single, items: "option" }, { ...single, custom: "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect" }, { ...multi, items: "string" }, { ...multi, type: "option" }, { ...single, custom: "select" }]) assert.equal(jiraSelectMode(schema), null)
+    for (const schema of [single, multi]) for (const key of Object.keys(schema)) {
+      const partial = { ...schema }
+      delete partial[key]
+      assert.equal(jiraSelectMode(partial), null)
+    }
   })
 
   it("records Release Package without guessing its schema", () => {
