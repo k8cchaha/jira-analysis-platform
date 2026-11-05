@@ -12,6 +12,7 @@ import {
   type MissingDataChange,
   type MissingDataError,
   type MissingDataKind,
+  type WritableMissingDataKind,
   type MissingDataPage,
   type MissingDataSummary,
   type MissingIssue,
@@ -107,7 +108,7 @@ async function responseJson(response: Response): Promise<unknown> {
   }
 }
 
-async function getFields(credentials: JiraCredentials, kind: MissingDataKind): Promise<FieldSet> {
+async function getFields(credentials: JiraCredentials, kind: WritableMissingDataKind): Promise<FieldSet> {
   const data = await responseJson(await jiraFetch(credentials, "/rest/api/3/field"))
   if (!Array.isArray(data)) throw invalidResponse()
   const all: JiraField[] = []
@@ -152,7 +153,7 @@ function requireField(candidates: JiraField[], issue: RawIssue) {
   }
   return field
 }
-function fieldIds(fields: FieldSet, kind: MissingDataKind, detail: boolean) {
+function fieldIds(fields: FieldSet, kind: WritableMissingDataKind, detail: boolean) {
   const selected = kind === "points"
     ? [...fields.points, ...fields.actualPoints]
     : [...fields.defectCause, ...(detail ? [...fields.rootCause, ...fields.solution] : [])]
@@ -236,8 +237,12 @@ export async function getMissingDataSummary(kind: MissingDataKind, filter: Dashb
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
   const jql = missingDataListJql(kind, scope)
-  const fields = await getFields(credentials, kind)
   const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0, jql, jiraBaseUrl: baseUrl() }
+  if (kind === "impact-scope") {
+    summary.total = await countJiraIssues(credentials, jql)
+    return summary
+  }
+  const fields = await getFields(credentials, kind)
   const seen = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | null = null
@@ -317,9 +322,9 @@ function parentIssueType(value: unknown): MissingIssue["parentIssueType"] {
   const name = value.fields.issuetype.name
   return nonemptyString(name) && name.trim() ? { status: "known", name } : { status: "unknown" }
 }
-function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind, editmeta: RecordValue, warnings: Set<string>, readOnly = false): MissingIssue | null {
+function commonMissingIssue(issue: RawIssue): MissingIssue {
   const assignee = issue.fields.assignee
-  const row: MissingIssue = {
+  return {
     id: issue.id, key: issue.key, summary: typeof issue.fields.summary === "string" ? issue.fields.summary : "未命名議題",
     assigneeDisplayName: record(assignee) && nonemptyString(assignee.displayName) && assignee.displayName.trim() ? assignee.displayName : null,
     parentIssueType: parentIssueType(issue.fields.parent),
@@ -327,6 +332,9 @@ function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind
     storyPointsEditable: false, actualStoryPointsEditable: false,
     rootCause: "—", solution: "—", defectCause: [], defectCauseOptions: [], defectCauseEditable: false,
   }
+}
+function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: WritableMissingDataKind, editmeta: RecordValue, warnings: Set<string>, readOnly = false): MissingIssue | null {
+  const row = commonMissingIssue(issue)
   if (kind === "points") {
     const values = pointsValues(fields, issue)
     const { storyPointsMissing, actualStoryPointsMissing } = missingPoints(values)
@@ -356,7 +364,7 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   if (!session?.user?.id) throw new JiraDashboardError("reauthorize", "登入狀態已失效，請重新登入。")
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
-  const readOnly = scope.mode !== "self"
+  const readOnly = kind === "impact-scope" || scope.mode !== "self"
   const jql = missingDataListJql(kind, scope)
   const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql, filterKey: serializeDashboardFilter(filter) }
   const secret = process.env.AUTH_SECRET
@@ -370,14 +378,16 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
     }
   }
   if (cursor.path.length > MISSING_DATA_LIMIT / MISSING_DATA_PAGE_SIZE) throw limitError()
-  const fields = await getFields(credentials, kind)
-  const selectedFields = fieldIds(fields, kind, true)
+  const fields = kind === "impact-scope" ? null : await getFields(credentials, kind)
+  const selectedFields = fields && kind !== "impact-scope" ? fieldIds(fields, kind, true) : ["project", "summary", "assignee"]
   const result = await search(credentials, jql, selectedFields, MISSING_DATA_PAGE_SIZE, cursor.path.at(-1))
   const warnings = new Set<string>()
   const seen = new Set<string>()
   const issues = await mapConcurrent(result.issues, async (original) => {
     if (seen.has(original.id)) throw invalidResponse()
     seen.add(original.id)
+    if (kind === "impact-scope") return commonMissingIssue(original)
+    if (!fields) throw invalidResponse()
     try {
       const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, readOnly)
       return toMissingIssue(fields, issue, kind, editmeta, warnings, readOnly)
@@ -401,7 +411,8 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   }
 }
 
-export async function updateMissingData(kind: MissingDataKind, changes: MissingDataChange[]) {
+export async function updateMissingData(kind: WritableMissingDataKind, changes: MissingDataChange[]) {
+  if (kind !== "points" && kind !== "defect-cause") throw new JiraDashboardError("configuration", "不支援此更新類型。")
   const credentials = await getJiraToken(true)
   const fields = await getFields(credentials, kind)
   const ids = changes.map((change) => change.issueId)

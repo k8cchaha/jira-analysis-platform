@@ -1,7 +1,7 @@
 import { DEV_TYPE_FIELD, JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
 import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 import { requireDateRange, type DateRange } from "./date-range.ts"
-import type { MissingDataKind } from "./jira-missing-data.ts"
+import type { MissingDataKind, WritableMissingDataKind } from "./jira-missing-data.ts"
 
 export const SPRINT_PROJECTS = [
   { label: "Saku", key: "SUN" },
@@ -240,10 +240,18 @@ export const MISSING_POINTS_JQL =
 export const MISSING_DEFECT_CAUSE_JQL =
   `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
 
-/** 依 kind 選一段缺失資料查詢：points → MISSING_POINTS_JQL、defect-cause → MISSING_DEFECT_CAUSE_JQL。
- *  對應真實 JQL：即上述 `MISSING_POINTS_JQL` 或 `MISSING_DEFECT_CAUSE_JQL` 之實際語法。 */
+/** SUN 的 Story／Task／Bug，已離開 To Do 且 Impact Scope 未填；唯讀缺失資料。 */
+export const MISSING_IMPACT_SCOPE_JQL =
+  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and assignee = currentUser()`
+
+/** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {
-  return kind === "points" ? MISSING_POINTS_JQL : MISSING_DEFECT_CAUSE_JQL
+  switch (kind) {
+    case "points": return MISSING_POINTS_JQL
+    case "defect-cause": return MISSING_DEFECT_CAUSE_JQL
+    case "impact-scope": return MISSING_IMPACT_SCOPE_JQL
+    default: throw new DashboardFilterError("不支援此查詢類型。")
+  }
 }
 
 /**
@@ -279,7 +287,8 @@ export function missingDataListJql(kind: MissingDataKind, scope: ResolvedDashboa
 /** 缺失資料的更新查詢：以原始 `missingDataJql(kind)`（含 `assignee = currentUser()`，不隨 scope
  *  放寬）為括號 base，再限制到指定 issue id，確保只能改到「現在仍屬於自己的缺失清單」。
  *  對應真實 JQL：`(<MISSING_POINTS_JQL | MISSING_DEFECT_CAUSE_JQL>) AND id in (<issueIdA>, <issueIdB>, …)` */
-export function missingDataUpdateJql(kind: MissingDataKind, issueIds: readonly string[]): string {
+export function missingDataUpdateJql(kind: WritableMissingDataKind, issueIds: readonly string[]): string {
+  if (kind !== "points" && kind !== "defect-cause") throw new DashboardFilterError("不支援此更新類型。")
   return `(${missingDataJql(kind)}) AND id in (${issueIds.join(",")})`
 }
 

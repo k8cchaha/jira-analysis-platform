@@ -15,6 +15,16 @@ export const JIRA_FIELDS = {
     name: "Dev Type",
     schema: { type: "option" },
   },
+  /** Known ID; schema is not assumed for read-only missing-data queries. */
+  impactScope: {
+    id: "customfield_14848",
+    name: "Impact Scope",
+  },
+  /** Known ID; read-only JQL references do not assume a field schema. */
+  releasePackage: {
+    id: "customfield_13476",
+    name: "Release Package",
+  },
   // These IDs are resolved from Jira metadata by name and schema.
   defectCause: {
     name: "Defect Cause",

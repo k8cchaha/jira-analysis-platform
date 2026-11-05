@@ -9,6 +9,8 @@ export function SprintSelector({
   project,
   sprints,
   selectedSprintId,
+  projectRequired = false,
+  sprintSlot,
   teamSlot,
   trailing,
   basePath = "/sprint/burndown",
@@ -17,6 +19,9 @@ export function SprintSelector({
   project: SprintProjectKey | null
   sprints: readonly SprintRecord[]
   selectedSprintId: number | null
+  projectRequired?: boolean
+  /** 可選的替代 Sprint 控制；原單選行為維持預設。 */
+  sprintSlot?: ReactNode
   teamSlot?: ReactNode
   trailing?: ReactNode
   /** 切換專案／Sprint 時跳轉的基底路徑（預設 Burn Down，供 Planning 等改指）。 */
@@ -56,6 +61,7 @@ export function SprintSelector({
           kind="project"
           id="sprint-project"
           label="專案"
+          required={projectRequired}
           value={projectLabel}
           open={open}
           onOpenChange={setOpen}
@@ -99,6 +105,7 @@ export function SprintSelector({
       </div>
 
       <div className={FILTER_SELECT_WIDTH_CLASS.sprint}>
+        {sprintSlot !== undefined ? sprintSlot : <>
         <FilterDropdown
           kind="sprint"
           id="sprint"
@@ -141,6 +148,7 @@ export function SprintSelector({
         <p id="sprint-help" className="sr-only">
           選擇要查看的 Sprint。
         </p>
+        </>}
       </div>
       {teamSlot ? <div className={FILTER_SELECT_WIDTH_CLASS.team}>{teamSlot}</div> : null}
       {trailing ? <div className="w-auto lg:ml-auto">{trailing}</div> : null}

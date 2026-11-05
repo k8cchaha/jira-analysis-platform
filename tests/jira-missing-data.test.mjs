@@ -16,6 +16,8 @@ import {
   parseMissingDataChanges,
 } from "../lib/jira-missing-data.ts"
 
+import { MISSING_IMPACT_SCOPE_JQL, missingDataUpdateJql } from "../lib/jira-jql.ts"
+
 const pointsChange = {
   issueId: "101",
   storyPoints: 1.25,
@@ -25,6 +27,16 @@ const parsePoints = (changes) => parseMissingDataChanges("points", JSON.stringif
 const parseDefects = (changes) => parseMissingDataChanges("defect-cause", JSON.stringify(changes))
 
 describe("missing-data JQL contract", () => {
+  it("uses the requested SUN Impact Scope population without inherited exclusions", () => {
+    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or cf[13476] = "Sprint9") and assignee = currentUser()')
+    assert.equal(missingDataJql("impact-scope"), MISSING_IMPACT_SCOPE_JQL)
+    assert.doesNotMatch(MISSING_IMPACT_SCOPE_JQL, /created >= -|updated|resolution|Dev Ready|In Progress/)
+    assert.throws(() => missingDataJql("unknown"))
+  })
+  it("rejects the read-only kind at both write parser and JQL boundaries", () => {
+    assert.throws(() => parseMissingDataChanges("impact-scope", JSON.stringify([{ issueId: "1", defectCause: ["7"] }])), /不支援/)
+    assert.throws(() => missingDataUpdateJql("impact-scope", ["1"]), /不支援/)
+  })
   it("uses the exact status-dependent Points union across all projects", () => {
     assert.equal(
       POINTS_SCOPE_JQL,

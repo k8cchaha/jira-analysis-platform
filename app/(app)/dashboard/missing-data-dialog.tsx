@@ -11,7 +11,7 @@ import {
   type MissingDataActionState,
   type MissingDataChange,
   type MissingDataError,
-  type MissingDataKind,
+  type WritableMissingDataKind,
   type MissingDataPageResult,
   type MissingIssue,
 } from "@/lib/jira-missing-data"
@@ -31,7 +31,7 @@ const secondaryButton = "rounded-lg border border-slate-300 px-3 py-2 text-sm fo
 const primaryButton = "rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
 
 export function MissingDataDialog({ kind, filter = SELF_FILTER, scopeChanged = false, onClose, onSaved }: {
-  kind: MissingDataKind
+  kind: WritableMissingDataKind
   filter?: DashboardFilter
   scopeChanged?: boolean
   onClose: () => void

@@ -93,7 +93,11 @@ function harness(t, options = {}) {
             if (body.jql !== `${scope} ORDER BY key ASC`) return fail(`Unexpected or altered scoped query: ${body.jql}`)
           } else {
             if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${scope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
-            if (/\b(created|updated|resolved|resolutiondate|startOfDay|now)\b|\b30d\b/i.test(body.jql)) return fail("A date restriction leaked into missing-data JQL")
+            // Impact Scope has an intentional fixed-date OR release base, not a self near-N window.
+            const dateCheckedJql = options.kind === "impact-scope"
+              ? body.jql.replace('and (created >= "2026-11-01" or cf[13476] = "Sprint9") ', "")
+              : body.jql
+            if (/\b(created|updated|resolved|resolutiondate|startOfDay|now)\b|\b30d\b/i.test(dateCheckedJql)) return fail("An unexpected date restriction leaked into missing-data JQL")
           }
         }
         data = options.search ? options.search(body, searches++) : { issues: options.issues ?? [], isLast: true }
@@ -190,6 +194,99 @@ const teamScope = (extra = {}) => ({ mode: "team-project", accountIds: ["person-
 const pagedSearch = (body) => body.nextPageToken
   ? { issues: [pointIssue(2)], isLast: true }
   : { issues: [pointIssue(1)], nextPageToken: "fixture-next", isLast: false }
+
+describe("Impact Scope read-only dashboard", () => {
+  const impactIssue = (id) => ({ id: String(id), key: `SUN-${id}`, fields: { project: { id: "10" }, summary: `Impact fixture ${id}`, assignee: { displayName: "Fixture member" } } })
+  const self = { mode: "self" }
+  const scenarios = [
+    { label: "self", filter: self, scope: self },
+    { label: "person", filter: personFilter(), scope: personScope(), users: { "person-1": fixtureUser("person-1") } },
+    ...[[], ["sun"], ["tkk"], ["sun", "tkk"]].map((projects) => ({ label: `team ${projects.join(",")}`, filter: teamFilter({ projects }), scope: teamScope({ projects }), groups: { "ent-web": [fixtureUser("person-1")] } })),
+  ]
+  for (const scenario of scenarios) it(`uses identical count/detail query and no metadata: ${scenario.label}`, async (t) => {
+    const h = harness(t, { ...scenario, kind: "impact-scope", issues: [impactIssue(1)] })
+    const summary = await h.service.getMissingDataSummary("impact-scope", scenario.filter)
+    const page = await h.service.getMissingDataPage("impact-scope", null, scenario.filter)
+    const searches = h.calls.filter((call) => call.body?.jql)
+    assert.equal(summary.total, 1)
+    assert.equal(summary.storyPointsMissing, 0)
+    assert.equal(summary.actualStoryPointsMissing, 0)
+    assert.equal(searches.length, 2)
+    assert.equal(searches[0].body.jql, searches[1].body.jql)
+    assert.equal(summary.jql, searches[1].body.jql)
+    assert.ok(summary.jql.startsWith("project = sun"))
+    assert.ok(summary.jql.includes('and (created >= "2026-11-01" or cf[13476] = "Sprint9") and assignee'))
+    assert.equal(summary.jql.includes("created >= -"), scenario.label !== "self")
+    assert.equal(page.readOnly, true)
+    const row = page.issues[0]
+    assert.equal(row.summary, "Impact fixture 1")
+    assert.equal(row.assigneeDisplayName, "Fixture member")
+    for (const flag of ["storyPointsRequired", "actualStoryPointsRequired", "storyPointsEditable", "actualStoryPointsEditable", "defectCauseEditable"]) assert.equal(row[flag], false)
+    assert.deepEqual(plain(row.defectCauseOptions), [])
+    assert.equal(h.calls.some((call) => call.path === "/rest/api/3/field"), false)
+    assert.equal(liveReads(h).length, 0)
+    assert.equal(puts(h).length, 0)
+  })
+  it("counts every page and returns authenticated complete detail pages", async (t) => {
+    const h = harness(t, { kind: "impact-scope", search: (body) => body.nextPageToken ? { issues: [impactIssue(2)], isLast: true } : { issues: [impactIssue(1)], nextPageToken: "impact-next", isLast: false } })
+    assert.equal((await h.service.getMissingDataSummary("impact-scope")).total, 2)
+    const first = await h.service.getMissingDataPage("impact-scope")
+    const second = await h.service.getMissingDataPage("impact-scope", first.nextPageToken)
+    assert.equal(second.page, 2)
+    assert.equal(second.nextPageToken, null)
+    assert.deepEqual(plain([...first.issues, ...second.issues].map((row) => row.id)), ["1", "2"])
+    assert.ok(second.previousPageToken)
+    assert.equal(second.readOnly, true)
+    const otherKind = harness(t)
+    await rejectsCode(() => otherKind.service.getMissingDataPage("points", first.nextPageToken), "invalid_page")
+    assert.equal(otherKind.calls.length, 0)
+    const otherScope = harness(t, { kind: "impact-scope", scope: personScope(), users: { "person-1": fixtureUser("person-1") } })
+    await rejectsCode(() => otherScope.service.getMissingDataPage("impact-scope", first.nextPageToken, personFilter()), "invalid_page")
+    assert.equal(otherScope.calls.some((call) => call.body?.jql), false)
+  })
+  for (const scenario of [
+    { label: "duplicate issues", search: () => ({ issues: [impactIssue(1)], nextPageToken: "same", isLast: false }) },
+    { label: "looping cursor", search: (_body, index) => ({ issues: [impactIssue(index + 1)], nextPageToken: "same", isLast: false }) },
+    { label: "incomplete pagination", search: () => ({ issues: [impactIssue(1)] }) },
+    { label: "second-page failure", search: (_body, index) => index ? { invalid: true } : { issues: [impactIssue(1)], nextPageToken: "next", isLast: false } },
+  ]) it(`never publishes a partial count on ${scenario.label}`, async (t) => {
+    const h = harness(t, { kind: "impact-scope", search: scenario.search })
+    await rejectsCode(() => h.service.getMissingDataSummary("impact-scope"), "retry")
+  })
+  it("enforces the 5,000-issue complete-count limit", async (t) => {
+    const h = harness(t, { kind: "impact-scope", search: (_body, index) => ({ issues: Array.from({ length: 100 }, (_, i) => impactIssue(index * 100 + i + 1)), nextPageToken: `next-${index}`, isLast: false }) })
+    await rejectsCode(() => h.service.getMissingDataSummary("impact-scope"), "limit")
+  })
+  for (const view of ["summary", "page"]) it(`supports ${view} GET with private no-store responses`, async (t) => {
+    const h = harness(t, { kind: "impact-scope", issues: [impactIssue(1)] })
+    const response = await h.route().GET(new Request(`https://fixture.example.invalid/api/dashboard/missing-data?kind=impact-scope&view=${view}`))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store")
+    const payload = await response.json()
+    assert.equal(payload.status, "success")
+    if (view === "page") assert.equal(payload.data.readOnly, true)
+    else assert.equal(payload.summary.kind, "impact-scope")
+  })
+  it("rejects invalid and duplicate route filters before Jira access", async (t) => {
+    const h = harness(t, { kind: "impact-scope" })
+    for (const extra of ["kind=points", "view=page", "mode=team-project&group=bad", "jql=project%20is%20not%20empty"]) {
+      assert.equal((await h.route().GET(new Request(`https://fixture.example.invalid/api/dashboard/missing-data?kind=impact-scope&view=summary&${extra}`))).status, 400)
+    }
+    assert.equal(h.calls.length, 0)
+  })
+  it("rejects direct and action writes before requesting write credentials", async (t) => {
+    const h = harness(t, { kind: "impact-scope" })
+    await rejectsCode(() => h.service.updateMissingData("impact-scope", [{ issueId: "1", defectCause: ["7"] }]), "configuration")
+    const form = new FormData()
+    form.set("mode", "self")
+    form.set("changes", JSON.stringify([{ issueId: "1", defectCause: ["7"] }]))
+    const result = await h.actions().updateMissingDataAction("impact-scope", {}, form)
+    assert.equal(result.status, "error")
+    assert.match(result.message, /不支援/)
+    assert.equal(h.tokenCalls.length, 0)
+    assert.equal(h.calls.length, 0)
+  })
+})
 
 describe("shared field definitions in assigned Story Points", () => {
   it("discovers numeric fields by fixed ID even when renamed", async (t) => {

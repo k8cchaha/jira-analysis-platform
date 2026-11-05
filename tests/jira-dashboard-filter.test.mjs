@@ -83,6 +83,29 @@ describe("dashboard filter model", () => {
 })
 
 describe("scoped missing-data JQL", () => {
+  it("retains SUN Impact Scope base and intersects all selected project scopes", () => {
+    const releaseWindow = 'and (created >= "2026-11-01" or cf[13476] = "Sprint9")'
+    const self = missingDataReadJql("impact-scope", { mode: "self" })
+    assert.equal(self, missingDataJql("impact-scope"))
+    assert.ok(self.includes(releaseWindow))
+    assert.doesNotMatch(self, /created >= -/)
+    assert.ok(self.endsWith(') and assignee = currentUser()'))
+    const person = missingDataReadJql("impact-scope", { mode: "person", accountIds: ["a"], projects: [], days: 30 })
+    assert.match(person, /^project = sun and issuetype in \(story, task, bug\) and cf\[14848\] is EMPTY/)
+    assert.ok(person.includes(releaseWindow))
+    assert.match(person, /\) and assignee in \("a"\) AND created >= -30d$/)
+    for (const projects of [["sun"], ["tkk"], ["sun", "tkk"], []]) {
+      const jql = missingDataReadJql("impact-scope", { mode: "team-project", accountIds: ["b", "a", "b"], projects, days: 7 })
+      assert.ok(jql.startsWith("project = sun"))
+      assert.ok(jql.includes(releaseWindow))
+      assert.ok(jql.includes('assignee in ("a", "b") AND created >= -7d'))
+      assert.ok(jql.endsWith(projects.length ? `AND project in (${projects.join(", ")})` : "AND created >= -7d"))
+    }
+    for (const accountIds of [[], ['evil" OR 1=1'], Array.from({ length: 1001 }, (_, i) => `a${i}`)]) {
+      assert.throws(() => missingDataReadJql("impact-scope", { mode: "team-project", accountIds, projects: ["sun"], days: 30 }), DashboardFilterError)
+    }
+    assert.throws(() => missingDataReadJql("impact-scope", { mode: "team-project", accountIds: ["a"], projects: ["unknown"], days: 30 }), DashboardFilterError)
+  })
   it("leaves both self queries byte-for-byte unchanged", () => {
     for (const kind of ["points", "defect-cause"]) assert.equal(missingDataReadJql(kind, { mode: "self" }), missingDataJql(kind))
     assert.equal(missingDataReadJql("points", { mode: "self" }).includes("30d"), false)

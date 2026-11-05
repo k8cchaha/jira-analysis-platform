@@ -1,9 +1,12 @@
+import type { ReactNode } from "react"
 import { GuardedLink } from "@/components/navigation-blocker"
 import { PageHeader } from "@/components/page-header"
 
 type ComingSoonProps = {
   title: string
   description: string
+  showDescription?: boolean
+  filters?: ReactNode
   plannedCapabilities?: readonly string[]
   unavailableReason?: string
   relatedLinks?: readonly { href: string; label: string }[]
@@ -12,6 +15,8 @@ type ComingSoonProps = {
 export function ComingSoon({
   title,
   description,
+  showDescription = true,
+  filters,
   plannedCapabilities = [description],
   unavailableReason = "相關資料與操作功能仍在開發中，因此本次版本尚未開放。",
   relatedLinks = [],
@@ -20,8 +25,9 @@ export function ComingSoon({
     <>
       <PageHeader
         title={title}
-        description={description}
+        description={showDescription ? description : undefined}
       />
+      {filters ? <div className="mb-8">{filters}</div> : null}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="h-1 bg-blue-600" />
         <div className="px-6 py-12 sm:px-10 sm:py-16">

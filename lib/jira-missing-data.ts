@@ -2,7 +2,8 @@ export { POINTS_SCOPE_JQL, MISSING_POINTS_JQL, MISSING_DEFECT_CAUSE_JQL, missing
 
 export { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "./jira-fields.ts"
 
-export type MissingDataKind = "points" | "defect-cause"
+export type WritableMissingDataKind = "points" | "defect-cause"
+export type MissingDataKind = WritableMissingDataKind | "impact-scope"
 
 export const MISSING_DATA_LIMIT = 5_000
 export const MISSING_DATA_PAGE_SIZE = 50
@@ -93,7 +94,8 @@ export type MissingDataPageResult =
   | { status: "success"; data: MissingDataPage }
   | { status: "error"; error: MissingDataError }
 
-export function parseMissingDataChanges(kind: MissingDataKind, value: unknown): MissingDataChange[] {
+export function parseMissingDataChanges(kind: WritableMissingDataKind, value: unknown): MissingDataChange[] {
+  if (kind !== "points" && kind !== "defect-cause") throw new Error("不支援此更新類型。")
   if (typeof value !== "string" || value.length === 0 || value.length > 10_000) {
     throw new Error("變更資料為空或過大。")
   }

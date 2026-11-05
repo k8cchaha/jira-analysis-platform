@@ -24,6 +24,16 @@ describe("central Jira field definitions", () => {
     assert.deepEqual(JIRA_FIELDS.actualStoryPoints.schema, { type: "number" })
   })
 
+  it("records Impact Scope without guessing its schema", () => {
+    assert.deepEqual(JIRA_FIELDS.impactScope, { id: "customfield_14848", name: "Impact Scope" })
+    assert.equal(customFieldJql(JIRA_FIELDS.impactScope.id), "cf[14848]")
+  })
+
+  it("records Release Package without guessing its schema", () => {
+    assert.deepEqual(JIRA_FIELDS.releasePackage, { id: "customfield_13476", name: "Release Package" })
+    assert.equal(customFieldJql(JIRA_FIELDS.releasePackage.id), "cf[13476]")
+  })
+
   it("derives numeric JQL references from the REST IDs", () => {
     assert.equal(customFieldJql(STORY_POINTS_FIELD), "cf[10005]")
     assert.equal(customFieldJql(ACTUAL_STORY_POINTS_FIELD), "cf[13736]")

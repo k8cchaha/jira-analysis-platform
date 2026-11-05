@@ -586,6 +586,20 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     }
   })
 
+  it("marks a dropdown as required only when explicitly requested without unsupported button ARIA", () => {
+    const h = harness()
+    const { FilterDropdown } = h.load("components/filter-dropdown.tsx")
+    const props = { id: "required-project", kind: "project", label: "專案", value: "選擇專案", open: false, onOpenChange: () => {}, describedBy: "help" }
+    const standard = render(FilterDropdown, props)
+    assert.doesNotMatch(standard, /（必選）|>\*</)
+    const required = render(FilterDropdown, { ...props, required: true })
+    assert.match(required, /aria-hidden="true"[^>]*>\*<\/span>/)
+    assert.match(required, /sr-only[^>]*>（必選）/)
+    assert.match(required, /aria-labelledby="required-project-label required-project-value"/)
+    assert.doesNotMatch(required, /aria-required/)
+    assert.match(required, /w-40 max-w-full min-w-0/)
+  })
+
   it("keeps search submits the same width in idle, loading, and both Dashboard modes", () => {
     const h = harness(undefined, {})
     const { SearchButton } = h.load("components/search-button.tsx")
@@ -638,7 +652,7 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     assert.ok(projectDropdown)
     assert.ok(projectDropdown.startsWith(`<div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}">`))
     assert.match(projectDropdown, /class="truncate"/)
-    for (const basePath of ["/sprint/burndown", "/sprint/planning", "/sprint/capacity"]) {
+    for (const basePath of ["/sprint/burndown", "/sprint/planning", "/sprint/capacity", "/analytics/projects"]) {
       const markup = render(SprintSelector, { basePath, project: null, sprints: [], selectedSprintId: null })
       assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.project}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}"><span id="sprint-project-label"`))
       assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.sprint}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.sprint}"><span id="sprint-label"`))

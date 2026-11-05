@@ -18,9 +18,10 @@ export function Chevron({ open }: { open: boolean }) {
   )
 }
 
-export function FilterDropdown({ id, label, value, open, onOpenChange, describedBy, kind, children }: {
+export function FilterDropdown({ id, label, required = false, value, open, onOpenChange, describedBy, kind, children }: {
   id: string
   label: string
+  required?: boolean
   value: string
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -59,7 +60,9 @@ export function FilterDropdown({ id, label, value, open, onOpenChange, described
       // Outside pointerdown/focusin listeners still close the dropdown normally.
       if (open && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) onOpenChange(false)
     }}>
-      <span id={`${id}-label`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">{label}</span>
+      <span id={`${id}-label`} className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
+        {label}{required ? <><span aria-hidden="true" className="ml-1 text-rose-600 dark:text-rose-400">*</span><span className="sr-only">（必選）</span></> : null}
+      </span>
       <button ref={trigger} id={`${id}-trigger`} type="button" aria-expanded={open} aria-controls={`${id}-options`} aria-labelledby={`${id}-label ${id}-value`} aria-describedby={describedBy} onClick={() => onOpenChange(!open)} className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
         <span id={`${id}-value`} className="truncate" title={value}>{value}</span>
         <span className="shrink-0"><Chevron open={open} /></span>
