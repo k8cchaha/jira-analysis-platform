@@ -215,7 +215,7 @@ describe("Impact Scope read-only dashboard", () => {
     assert.equal(searches[0].body.jql, searches[1].body.jql)
     assert.equal(summary.jql, searches[1].body.jql)
     assert.ok(summary.jql.startsWith("project = sun"))
-    assert.ok(summary.jql.includes('and (created >= "2026-11-01" or cf[13476] = "Sprint9") and assignee'))
+    assert.ok(summary.jql.includes('and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee'))
     assert.equal(summary.jql.includes("created >= -"), scenario.label !== "self")
     assert.equal(page.readOnly, true)
     const row = page.issues[0]

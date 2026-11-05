@@ -28,7 +28,7 @@ const parseDefects = (changes) => parseMissingDataChanges("defect-cause", JSON.s
 
 describe("missing-data JQL contract", () => {
   it("uses the requested SUN Impact Scope population without inherited exclusions", () => {
-    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or cf[13476] = "Sprint9") and assignee = currentUser()')
+    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()')
     assert.equal(missingDataJql("impact-scope"), MISSING_IMPACT_SCOPE_JQL)
     assert.doesNotMatch(MISSING_IMPACT_SCOPE_JQL, /created >= -|updated|resolution|Dev Ready|In Progress/)
     assert.throws(() => missingDataJql("unknown"))

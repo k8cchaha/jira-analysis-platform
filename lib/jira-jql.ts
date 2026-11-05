@@ -242,7 +242,7 @@ export const MISSING_DEFECT_CAUSE_JQL =
 
 /** SUN 的 Story／Task／Bug，已離開 To Do 且 Impact Scope 未填；唯讀缺失資料。 */
 export const MISSING_IMPACT_SCOPE_JQL =
-  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and assignee = currentUser()`
+  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and statusCategory != "To Do" and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser()`
 
 /** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {

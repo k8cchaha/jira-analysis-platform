@@ -84,16 +84,16 @@ describe("dashboard filter model", () => {
 
 describe("scoped missing-data JQL", () => {
   it("retains SUN Impact Scope base and intersects all selected project scopes", () => {
-    const releaseWindow = 'and (created >= "2026-11-01" or cf[13476] = "Sprint9")'
+    const releaseWindow = 'and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY'
     const self = missingDataReadJql("impact-scope", { mode: "self" })
     assert.equal(self, missingDataJql("impact-scope"))
     assert.ok(self.includes(releaseWindow))
     assert.doesNotMatch(self, /created >= -/)
-    assert.ok(self.endsWith(') and assignee = currentUser()'))
+    assert.ok(self.endsWith(') and cf[13476] is not EMPTY and assignee = currentUser()'))
     const person = missingDataReadJql("impact-scope", { mode: "person", accountIds: ["a"], projects: [], days: 30 })
     assert.match(person, /^project = sun and issuetype in \(story, task, bug\) and cf\[14848\] is EMPTY/)
     assert.ok(person.includes(releaseWindow))
-    assert.match(person, /\) and assignee in \("a"\) AND created >= -30d$/)
+    assert.match(person, /\) and cf\[13476\] is not EMPTY and assignee in \("a"\) AND created >= -30d$/)
     for (const projects of [["sun"], ["tkk"], ["sun", "tkk"], []]) {
       const jql = missingDataReadJql("impact-scope", { mode: "team-project", accountIds: ["b", "a", "b"], projects, days: 7 })
       assert.ok(jql.startsWith("project = sun"))
