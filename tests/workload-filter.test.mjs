@@ -173,6 +173,25 @@ describe("page-configurable DateRangeField shortcuts", () => {
     assert.ok(choices.every((button) => /h-10 shrink-0/.test(button.props.className)))
     assert.equal(f.changes.length, 0)
   })
+  it("uses compact equal-width date inputs without changing date values or calendar access", () => {
+    const f = fieldFixture()
+    const tree = f.draw()
+    const dateInputs = elements(tree, (node) => node.type?.name === "DateInput")
+    assert.equal(dateInputs.length, 2)
+    assert.deepEqual(dateInputs.map((node) => node.props.value), ["2026-10-13", today])
+    for (const node of dateInputs) {
+      const input = one(f.h.component(node), (node) => node.type === "input")
+      assert.match(input.props.className, /\bw-28\b/)
+      assert.match(input.props.className, /min-w-0/)
+      assert.doesNotMatch(input.props.className, /\bw-32\b/)
+      assert.equal(input.props.type, "text")
+      assert.equal(input.props.value, node.props.value)
+    }
+    const calendar = one(tree, (node) => node.props?.["aria-label"] === "開啟月曆選擇分析區間")
+    assert.equal(calendar.props.disabled, false)
+    assert.equal(f.changes.length, 0)
+    assert.equal(f.commits.length, 0)
+  })
   it("renders page order and labels, and commits built-in and custom dates through the same callbacks", () => {
     const f = fieldFixture({ shortcuts: [sprint, monthly, recent] })
     let tree = f.draw()

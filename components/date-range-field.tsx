@@ -174,7 +174,7 @@ function DateInput({ id, label, value, today, describedBy, onCommit }: {
           if (event.key === "Enter") { event.preventDefault(); commit() }
           if (event.key === "Escape" && edited) { event.preventDefault(); setEdited(false) }
         }}
-        className={`${inputClass} w-32 text-center`}
+        className={`${inputClass} w-28 text-center`}
       />
     </label>
   )

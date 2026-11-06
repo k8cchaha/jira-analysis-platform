@@ -141,7 +141,8 @@ function isParentBlocked(
  *   的 `remainingPoints` 為 null（未到、不畫）。
  * - `throughDate`（可選）：串流已逐日掃描到的最新日期。實際剩餘線只畫到
  *   `date <= throughDate`，之後還未掃描的天一律 null（不一次畫完、逐日長出）；
- *   未提供（一次算完）時等同 `today`，畫到今天為止。
+ *   `null` 表示尚未收到任何逐日資料，實際線完全不畫；未提供（一次算完）
+ *   時等同 `today`，畫到今天為止。
  * - `days` 最前面含一個「空起點格」（`startDate` 前一天，remaining＝total），
  *   x=0 的初始值讓實際線與理想線對齊。其 `donePoints` 顯示「sprint 開始前就
  *   Done」的點數（client 以綠色長條呈現），不累計 sprint 內每日 done。
@@ -164,7 +165,7 @@ export function computeBurndownSeries({
   startDate: string
   endDate: string
   today: string
-  /** 串流已掃描到的最新日期；省略＝一次算完（畫到今天）。 */
+  /** 串流已掃描到的最新日期；null＝尚未收到 day，省略＝一次算完（畫到今天）。 */
   throughDate?: string | null
   tasks: readonly BurndownTask[]
   unestimated: readonly BurndownUnestimated[]
@@ -243,15 +244,14 @@ export function computeBurndownSeries({
     {
       date: idealStart,
       donePoints: roundedPreSprintDone,
-      remainingPoints: hasDoneRecord ? roundedRemainingStart : null,
+      remainingPoints: throughDate !== null && hasDoneRecord ? roundedRemainingStart : null,
       idealPoints: roundedRemainingStart,
     },
   ]
 
-  // 實際剩餘線的「畫到哪」：串流已逐日掃描到的最新日期；未提供＝畫到今天。
-  // 超過此限（串流尚未掃描到）的天 remaining 為 null，避免一收到第一筆完成
-  // 資料就把整段畫完。
-  const effectiveThrough = throughDate ?? today
+  // null＝base 已到但尚未掃描任何一天；只有 undefined（非串流呼叫）才預設 today。
+  // 不可用 ??，否則初始 base 的開局前 Done 會讓整條實際線短暫畫到今天。
+  const effectiveThrough = throughDate === undefined ? today : throughDate
   // 剩餘＝總點數 − 已完成。sprint 開始前就 Done 的點數先扣（開局即已完成），
   // 之後逐日再加扣當天完成的點數，讓剩餘線反映「第一天的實際點已落後理想線」。
   // 受阻母票的點數**不**在開局扣：全部歸到 `effectiveThrough` 那天節點。
@@ -259,7 +259,7 @@ export function computeBurndownSeries({
   for (const date of eachDay(startDate, endDate)) {
     const donePoints = Math.round((byDate.get(date) ?? 0) * 10) / 10
     const future = date > today
-    const beyondStream = date > effectiveThrough
+    const beyondStream = effectiveThrough === null || date > effectiveThrough
     // 受阻點數只放在「目前的最後一天」節點（可見區內），疊在當天完成長條之上。
     const blocked = date === effectiveThrough ? roundedBlockedDone : 0
     // 只有「今天以前（含）」且「串流已掃描到」的完成才往前累計剩餘點數。

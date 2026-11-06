@@ -1,20 +1,18 @@
 import { parseProjectKey, parseSprintId } from "./burndown-params"
+import { requireDateRange, type DateRange } from "./date-range"
 import { getProjectSprints, type SprintRecord } from "./jira-sprint-data"
 import type { SprintProjectKey } from "./jira-jql"
 
-export interface ProjectsSelection {
-  project: SprintProjectKey | null
-  selectedSprintIds: readonly number[]
-  error: string | null
-}
-
-interface ProjectsFilterResult extends ProjectsSelection {
-  sprints: readonly SprintRecord[]
-}
+type ProjectsScope = { project: SprintProjectKey | null; error: string | null }
+export type ProjectsSelection = ProjectsScope & (
+  | { mode: "sprints"; selectedSprintIds: readonly number[] }
+  | { mode: "dates"; dateRange: DateRange | null }
+)
+type ProjectsFilterResult = ProjectsSelection & { sprints: readonly SprintRecord[] }
 
 const MAX_SPRINT_VALUES = 128
 const MAX_QUERY_LENGTH = 16_384
-const INVALID_FILTER = "篩選條件無效，請重新選擇專案與 Sprints。"
+const INVALID_FILTER = "篩選條件無效，請重新選擇專案與資料區間。"
 
 function validSprintIds(project: SprintProjectKey, values: readonly string[]): number[] {
   if (values.length > MAX_SPRINT_VALUES) throw new Error(INVALID_FILTER)
@@ -27,15 +25,17 @@ function validSprintIds(project: SprintProjectKey, values: readonly string[]): n
   return [...new Set(ids)].sort((a, b) => a - b)
 }
 
-/** 專案分析專用；多 Sprint 不使用 Planning 的日期篩選或預設回退。 */
+/** 專案分析專用：舊網址預設 Sprints，日期與 Sprint 條件不得混用。 */
 export function projectsFilterResult(params: Record<string, string | string[] | undefined>): ProjectsFilterResult {
   const project = parseProjectKey(typeof params.project === "string" ? params.project : undefined)
   const sprints = project ? getProjectSprints(project) : []
+  const mode = params.mode === "dates" ? "dates" : "sprints"
   try {
     let length = 0
     for (const [key, value] of Object.entries(params)) {
       if (value === undefined) continue
-      if (key !== "project" && key !== "sprint") throw new Error(INVALID_FILTER)
+      if (!["project", "sprint", "mode", "from", "to"].includes(key)) throw new Error(INVALID_FILTER)
+      if (key !== "sprint" && typeof value !== "string") throw new Error(INVALID_FILTER)
       const values = Array.isArray(value) ? value : [value]
       if (values.length > MAX_SPRINT_VALUES) throw new Error(INVALID_FILTER)
       for (const item of values) {
@@ -43,25 +43,44 @@ export function projectsFilterResult(params: Record<string, string | string[] | 
         if (length > MAX_QUERY_LENGTH) throw new Error(INVALID_FILTER)
       }
     }
-    const values = params.sprint === undefined ? [] : Array.isArray(params.sprint) ? params.sprint : [params.sprint]
+    if (params.mode !== undefined && params.mode !== "sprints" && params.mode !== "dates") throw new Error(INVALID_FILTER)
     if (!project) {
-      if (params.project !== undefined || values.length > 0) throw new Error(INVALID_FILTER)
-      return { project: null, sprints: [], selectedSprintIds: [], error: null }
+      if (Object.values(params).some((value) => value !== undefined)) throw new Error(INVALID_FILTER)
+      return { project: null, sprints: [], mode: "sprints", selectedSprintIds: [], error: null }
     }
-    return { project, sprints, selectedSprintIds: validSprintIds(project, values), error: null }
+    if (mode === "dates") {
+      if (params.sprint !== undefined || typeof params.from !== "string" || typeof params.to !== "string") throw new Error(INVALID_FILTER)
+      const dateRange = requireDateRange({ from: params.from, to: params.to })
+      return { project, sprints, mode, dateRange, error: null }
+    }
+    if (params.from !== undefined || params.to !== undefined) throw new Error(INVALID_FILTER)
+    const values = params.sprint === undefined ? [] : Array.isArray(params.sprint) ? params.sprint : [params.sprint]
+    return { project, sprints, mode, selectedSprintIds: validSprintIds(project, values), error: null }
   } catch {
-    // 錯誤狀態不可視為空選取／不限制 Sprint；保留合法專案供使用者重新選取。
-    return { project, sprints, selectedSprintIds: [], error: INVALID_FILTER }
+    // 無效 URL 不可視為空選取／不限區間；保留合法專案及明確錯誤，不自動修正。
+    return mode === "dates"
+      ? { project, sprints, mode, dateRange: null, error: INVALID_FILTER }
+      : { project, sprints, mode, selectedSprintIds: [], error: INVALID_FILTER }
   }
 }
 
-/** 固定頁面路徑；驗證完整 selection 後才建立可分享的重複 sprint 參數。 */
-export function projectsFilterHref(project: SprintProjectKey, selectedSprintIds: readonly number[]): string {
-  if (parseProjectKey(project) === null || selectedSprintIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
-    throw new Error(INVALID_FILTER)
-  }
-  const ids = validSprintIds(project, selectedSprintIds.map(String))
+/** 固定頁面路徑；驗證完整作用中區間後才產生可分享的網址。 */
+export function projectsFilterHref(selection: ProjectsSelection): string {
+  const { project } = selection
+  if (!project || parseProjectKey(project) === null || selection.error) throw new Error(INVALID_FILTER)
   const params = new URLSearchParams({ project })
-  for (const id of ids) params.append("sprint", String(id))
+  if (selection.mode === "sprints") {
+    if ("dateRange" in selection || !Array.isArray(selection.selectedSprintIds) || selection.selectedSprintIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) throw new Error(INVALID_FILTER)
+    const ids = validSprintIds(project, selection.selectedSprintIds.map(String))
+    for (const id of ids) params.append("sprint", String(id))
+  } else if (selection.mode === "dates") {
+    if ("selectedSprintIds" in selection || !selection.dateRange) throw new Error(INVALID_FILTER)
+    try {
+      const range = requireDateRange(selection.dateRange)
+      params.set("mode", "dates")
+      params.set("from", range.from)
+      params.set("to", range.to)
+    } catch { throw new Error(INVALID_FILTER) }
+  } else { throw new Error(INVALID_FILTER) }
   return `/analytics/projects?${params.toString()}`
 }

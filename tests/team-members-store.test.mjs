@@ -49,7 +49,7 @@ function harness(fetcher = async () => success(), hookSnapshot, effects, reactOv
       if (name === "@/components/team-members-provider" && hookSnapshot) {
         return { useTeamMembers: () => ({ groupStates: typeof hookSnapshot === "function" ? hookSnapshot() : hookSnapshot, loadGroup: () => Promise.resolve(), retryGroup: () => Promise.resolve() }) }
       }
-      const owned = ["@/lib/jira-dashboard-filter", "@/lib/assignment-status", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown", "@/components/search-button"]
+      const owned = ["@/lib/jira-dashboard-filter", "@/lib/assignment-status", "@/lib/team-members-store", "@/components/team-members-provider", "@/components/filter-dropdown", "@/components/search-button", "@/components/project-selector"]
       if (owned.includes(name)) return load(`${name.slice(2)}.${name.startsWith("@/components/") ? "tsx" : "ts"}`)
       throw new Error(`Unexpected import: ${name}`)
     }
@@ -654,7 +654,8 @@ describe("team membership consumer wiring (SSR only, not browser lifecycle)", ()
     assert.match(projectDropdown, /class="truncate"/)
     for (const basePath of ["/sprint/burndown", "/sprint/planning", "/sprint/capacity", "/analytics/projects"]) {
       const markup = render(SprintSelector, { basePath, project: null, sprints: [], selectedSprintId: null })
-      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.project}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}"><span id="sprint-project-label"`))
+      assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.project}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.project}"><span id="`))
+      assert.match(markup, /id="[^"]+-label"[^>]*>專案/)
       assert.ok(markup.includes(`<div class="${FILTER_SELECT_WIDTH_CLASS.sprint}"><div class="relative ${FILTER_SELECT_WIDTH_CLASS.sprint}"><span id="sprint-label"`))
       assert.doesNotMatch(markup, /lg:w-44|lg:w-40/) // No per-page breakpoint width overrides.
     }
