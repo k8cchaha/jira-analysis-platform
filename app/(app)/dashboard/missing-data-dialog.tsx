@@ -404,7 +404,7 @@ function PointInput({ issue, field, raw, disabled, prefix, onChange }: {
         </div>
       </div>
       {invalid && <p id={`${id}-error`} className="mt-1 text-xs text-red-700 dark:text-red-300">請輸入大於 0 的有限數值。</p>}
-    </> : <p title={editable ? undefined : "Jira 欄位無編輯權限"} className="flex h-[30px] w-20 items-center justify-center text-sm tabular-nums text-slate-600 dark:text-slate-300">{isMissingPoint(issue[field]) ? "—" : issue[field]}</p>}
+    </> : <p title={issue.unavailableReason ?? "Jira 欄位無編輯權限"} className="flex h-[30px] w-20 items-center justify-center text-sm tabular-nums text-slate-600 dark:text-slate-300">{isMissingPoint(issue[field]) ? "—" : issue[field]}</p>}
   </div>
 }
 

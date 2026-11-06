@@ -309,6 +309,12 @@ describe("workload UI URL selections", () => {
     assert.doesNotMatch(serialized, /days=/)
     assert.doesNotMatch(serializeWorkloadFilter({ ...filter, from: "2026-10-01", to: "2026-10-30" }), /days=/)
   })
+  it("keeps the Dashboard-only checkbox out of workload URLs", () => {
+    assert.equal(serializeWorkloadFilter({ ...filter, includeUnexpectedClosed: true }), serializeWorkloadFilter(filter))
+    const result = workloadFilterResult(new URLSearchParams(`${serializeWorkloadFilter(filter)}&includeUnexpectedClosed=1`))
+    assert.equal(result.filter, null)
+    assert.equal(typeof result.error, "string")
+  })
   for (const query of [
     "mode=self", "mode=person&accountId=a", "mode=team-project&group=ent-web", "jql=project%3Dsun", "unknown=1", "days=30", "project=sun", "group=ent-qa", "group=ent-web&project=bad", "group=ent-web&exclude=ent-be1%7Ca", "group=ent-web&exclude=invalid", "group=ent-web&days=1&days=2",
     // 區間是本頁的查詢範圍：缺少、只有一端、重複、顛倒或畸形一律不套用。

@@ -78,6 +78,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   // The parent keys this component by the serialized applied scope, including back/forward.
   const [appliedFilter] = useState(filter)
   const [mode, setMode] = useState<DashboardFilterValue["mode"]>(filter?.mode ?? "self")
+  const [includeUnexpectedClosed, setIncludeUnexpectedClosed] = useState(filter?.includeUnexpectedClosed === true)
   const [days, setDays] = useState(String(filter && filter.mode !== "self" ? filter.days : 30))
   const [name, setName] = useState(filter?.mode === "person" ? filter.name : "")
   const [selectedPerson, setSelectedPerson] = useState<DashboardUser | null>(filter?.mode === "person" ? { accountId: filter.accountId, displayName: filter.name } : null)
@@ -160,7 +161,13 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
     // Membership preloads belong to the application, not this draft mode.
     setDropdown(null)
     setMode(next)
-    if (next === "self") apply(SELF_FILTER)
+    if (next === "self") apply({ ...SELF_FILTER, includeUnexpectedClosed })
+  }
+
+  function toggleUnexpectedClosed(checked: boolean) {
+    editDraft()
+    setIncludeUnexpectedClosed(checked)
+    if (mode === "self") apply({ ...SELF_FILTER, includeUnexpectedClosed: checked })
   }
 
   function toggleGroup(group: string, checked: boolean) {
@@ -204,7 +211,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
     event.preventDefault()
     setError(null)
     if (mode === "self") {
-      apply(SELF_FILTER)
+      apply({ ...SELF_FILTER, includeUnexpectedClosed })
       return
     }
     let parsedDays: number
@@ -225,14 +232,14 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
         includedDashboardMembers(groups, exclusions, members)
         const selectedExclusions: Record<string, string[]> = {}
         for (const group of groups) if (exclusions[group]?.length) selectedExclusions[group] = exclusions[group]
-        apply({ mode, groups: [...groups], exclusions: selectedExclusions, projects: [...projects], days: parsedDays })
+        apply({ mode, groups: [...groups], exclusions: selectedExclusions, projects: [...projects], days: parsedDays, includeUnexpectedClosed })
       } catch (failure) {
         setError({ code: "validation", message: failure instanceof Error ? failure.message : "請重新選擇團隊成員。" })
       }
       return
     }
     if (selectedPerson) {
-      apply({ mode: "person", accountId: selectedPerson.accountId, name: selectedPerson.displayName, days: parsedDays })
+      apply({ mode: "person", accountId: selectedPerson.accountId, name: selectedPerson.displayName, days: parsedDays, includeUnexpectedClosed })
       return
     }
     const queryName = name.trim()
@@ -265,7 +272,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
     } else if (result.users.length === 1) {
       const user = result.users[0]
       setSelectedPerson(user)
-      apply({ mode: "person", accountId: user.accountId, name: user.displayName, days: parsedDays })
+      apply({ mode: "person", accountId: user.accountId, name: user.displayName, days: parsedDays, includeUnexpectedClosed })
     } else {
       setCandidates(result.users)
     }
@@ -309,21 +316,27 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   return (
     <section aria-label="查詢範圍" className="mb-4 min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <form onSubmit={(event) => void query(event)} className="space-y-3">
-        <fieldset className="min-w-0">
-          <legend className="sr-only">資料範圍</legend>
-          <div className="flex flex-wrap gap-x-5 gap-y-2">
-            {([
-              { value: "self", label: "自己" },
-              { value: "person", label: "指定人" },
-              { value: "team-project", label: "團隊／專案" },
-            ] as const).map((option) => (
-              <label key={option.value} className="flex cursor-pointer items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
-                <input type="radio" name={`${id}-scope`} value={option.value} checked={mode === option.value} onChange={() => changeMode(option.value)} className={choiceClass} />
-                <span>{option.label}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-5 gap-y-2">
+          <fieldset className="min-w-0">
+            <legend className="sr-only">資料範圍</legend>
+            <div className="flex flex-wrap gap-x-5 gap-y-2">
+              {([
+                { value: "self", label: "自己" },
+                { value: "person", label: "指定人" },
+                { value: "team-project", label: "團隊／專案" },
+              ] as const).map((option) => (
+                <label key={option.value} className="flex cursor-pointer items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
+                  <input type="radio" name={`${id}-scope`} value={option.value} checked={mode === option.value} onChange={() => changeMode(option.value)} className={choiceClass} />
+                  <span>{option.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label className="ml-auto flex min-w-0 cursor-pointer items-center gap-2 py-1 text-sm text-slate-800 dark:text-slate-200">
+            <input type="checkbox" checked={includeUnexpectedClosed} onChange={(event) => toggleUnexpectedClosed(event.target.checked)} className={choiceClass} />
+            <span>顯示非預期關閉的票</span>
+          </label>
+        </div>
         {mode !== "self" && <div className={mode === "team-project" ? "grid min-w-0 grid-cols-2 items-end gap-2 lg:grid-cols-[14rem_10rem_max-content_max-content]" : "grid min-w-0 grid-cols-2 items-end gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]"}>
           {mode === "person" && (
             <div className="col-span-2 min-w-0 sm:col-span-1">

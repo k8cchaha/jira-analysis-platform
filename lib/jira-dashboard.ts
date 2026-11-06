@@ -258,7 +258,7 @@ function causeValues(fields: FieldSet, issue: RawIssue): string[] {
 export async function getMissingDataSummary(kind: MissingDataKind, filter: DashboardFilter = SELF_FILTER): Promise<MissingDataSummary> {
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
-  const jql = missingDataListJql(kind, scope)
+  const jql = missingDataListJql(kind, scope, filter)
   const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0, jql, jiraBaseUrl: baseUrl() }
   if (kind === "impact-scope") {
     summary.total = await countJiraIssues(credentials, jql)
@@ -433,7 +433,7 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
   const readOnly = scope.mode !== "self"
-  const jql = missingDataListJql(kind, scope)
+  const jql = missingDataListJql(kind, scope, filter)
   const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql, filterKey: serializeDashboardFilter(filter) }
   const secret = process.env.AUTH_SECRET
   if (!secret) throw new JiraDashboardError("configuration", "分頁加密設定不完整。")
@@ -450,18 +450,36 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   const selectedFields = fieldIds(fields, kind, true)
   const result = await search(credentials, jql, selectedFields, MISSING_DATA_PAGE_SIZE, cursor.path.at(-1))
   const warnings = new Set<string>()
-  const seen = new Set<string>()
+  const pageIds = result.issues.map((issue) => issue.id)
+  if (new Set(pageIds).size !== pageIds.length) throw invalidResponse()
+  // Expanded reads must not grant editing through editmeta alone. Ask Jira to intersect
+  // this page with the unchanged original self/write query; never copy its predicate here.
+  let originalEligibleIds: Set<string> | null = null
+  if (kind === "points" && !readOnly && filter.includeUnexpectedClosed === true) {
+    originalEligibleIds = new Set<string>()
+    if (pageIds.length) {
+      const eligible = await search(credentials, missingDataUpdateJql("points", pageIds), selectedFields, MISSING_DATA_PAGE_SIZE)
+      if (eligible.nextPageToken) throw invalidResponse()
+      for (const issue of eligible.issues) {
+        if (!pageIds.includes(issue.id) || originalEligibleIds.has(issue.id)) throw invalidResponse()
+        originalEligibleIds.add(issue.id)
+      }
+    }
+  }
   const issues = await mapConcurrent(result.issues, async (original) => {
-    if (seen.has(original.id)) throw invalidResponse()
-    seen.add(original.id)
+    const outsideOriginalScope = originalEligibleIds !== null && !originalEligibleIds.has(original.id)
+    const rowReadOnly = readOnly || outsideOriginalScope
+    const scopeReason = outsideOriginalScope ? "此票不符合原本的本人補填範圍，僅供查看。" : undefined
     if (kind === "impact-scope" && readOnly) return toMissingIssue(fields, original, kind, {}, warnings, true)
     try {
-      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, readOnly)
-      return toMissingIssue(fields, issue, kind, editmeta, warnings, readOnly)
+      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, rowReadOnly)
+      const row = toMissingIssue(fields, issue, kind, editmeta, warnings, rowReadOnly)
+      if (row && scopeReason) row.unavailableReason = scopeReason
+      return row
     } catch (error) {
       if (!(error instanceof JiraDashboardError) || error.code === "reauthorize" || (error.code === "configuration" && kind !== "impact-scope")) throw error
-      const row = toMissingIssue(fields, original, kind, {}, warnings, kind === "impact-scope" || readOnly)
-      if (row) row.unavailableReason = error.message
+      const row = toMissingIssue(fields, original, kind, {}, warnings, kind === "impact-scope" || rowReadOnly)
+      if (row) row.unavailableReason = scopeReason ? `${scopeReason} ${error.message}` : error.message
       return row
     }
   })

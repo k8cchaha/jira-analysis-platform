@@ -95,7 +95,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
 
   function applyFilter(next: DashboardFilter) {
     if (activeDialog || bugDialogFilter || dueDialogFilter || pendingDialogFilter || isBlocked) return
-    if (next.mode === "self" && filter?.mode === "self") return
+    if (next.mode === "self" && filter?.mode === "self" && serializeDashboardFilter(next) === query) return
     router.push(dashboardHref(next))
   }
 

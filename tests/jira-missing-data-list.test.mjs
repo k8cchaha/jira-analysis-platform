@@ -68,6 +68,17 @@ describe("complete dashboard dialog list", () => {
     assert.deepEqual(result.warnings, ["A", "B"])
     assert.equal(result.issues.length, 1)
   })
+  it("preserves mixed self editable/read-only rows and their reason across complete batches", async () => {
+    const editable = { id: "1", storyPointsRequired: true, actualStoryPointsRequired: true, storyPointsEditable: true, actualStoryPointsEditable: true }
+    const readonly = { id: "2", storyPointsRequired: true, actualStoryPointsRequired: false, storyPointsEditable: false, actualStoryPointsEditable: false, unavailableReason: "此票不符合原本的本人補填範圍，僅供查看。" }
+    const result = await loadMissingDataList(reader([
+      page(1, [], "second", { issues: [editable] }), page(2, [], null, { issues: [readonly] }),
+    ]), signal(), "points")
+    assert.equal(result.readOnly, false)
+    assert.deepEqual(result.issues, [editable, readonly])
+    assert.equal(result.issues[1].storyPointsEditable, false)
+    assert.equal(result.issues[1].actualStoryPointsEditable, false)
+  })
   it("preserves status-dependent Points flags across complete batches", async () => {
     const progress = { id: "1", storyPointsRequired: true, actualStoryPointsRequired: false }
     const done = { id: "2", storyPointsRequired: true, actualStoryPointsRequired: true }

@@ -97,11 +97,12 @@ function harness(t, options = {}) {
         } else {
           const rules = load("lib/jira-missing-data.ts")
           const resolvedScope = typeof options.scope === "function" ? options.scope() : options.scope
-          const scope = resolvedScope ? rules.missingDataReadJql(options.kind ?? "points", resolvedScope) : rules.missingDataJql(options.kind ?? "points")
+          const originalScope = rules.missingDataJql(options.kind ?? "points")
+          const scope = rules.missingDataReadJql(options.kind ?? "points", resolvedScope ?? { mode: "self" }, options.readOptions ?? {})
           if (resolvedScope && resolvedScope.mode !== "self") {
             if (body.jql !== `${scope} ORDER BY key ASC`) return fail(`Unexpected or altered scoped query: ${body.jql}`)
           } else {
-            if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${scope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
+            if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${originalScope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
             // Impact Scope has an intentional fixed-date OR release base, not a self near-N window.
             const dateCheckedJql = options.kind === "impact-scope"
               ? body.jql.replace('and (created >= "2026-11-01" or cf[13476] = "Sprint9") ', "")
@@ -129,10 +130,10 @@ function harness(t, options = {}) {
         if (options.liveStatus) return new Response(null, { status: options.liveStatus })
         const urlObject = new URL(url)
         const resolvedScope = typeof options.scope === "function" ? options.scope() : options.scope
-        if (resolvedScope && resolvedScope.mode !== "self") {
+        const id = path.match(/\/issue\/(\d+)/)[1]
+        if ((resolvedScope && resolvedScope.mode !== "self") || options.readOnlyIssueIds?.includes(id)) {
           if (urlObject.searchParams.has("expand")) return fail("Read-only issue reads must not request edit metadata")
         } else if (urlObject.searchParams.get("expand") !== "editmeta") return fail("Missing per-issue edit metadata")
-        const id = path.match(/\/issue\/(\d+)/)[1]
         data = options.live ? options.live(id) : (options.issues ?? []).find((issue) => issue.id === id)
         if (!data) return fail(`Unexpected live issue read: ${id}`)
       } else if (/^\/rest\/api\/3\/issue\/\d+$/.test(path) && method === "PUT") {
@@ -203,6 +204,179 @@ const teamScope = (extra = {}) => ({ mode: "team-project", accountIds: ["person-
 const pagedSearch = (body) => body.nextPageToken
   ? { issues: [pointIssue(2)], isLast: true }
   : { issues: [pointIssue(1)], nextPageToken: "fixture-next", isLast: false }
+
+describe("unexpected closed Points read-only expansion", () => {
+  const checked = { mode: "self", includeUnexpectedClosed: true }
+  const expandedJql = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() ORDER BY key ASC'
+  const issues = [pointIssue(1), pointIssue(2, null, null, "10", pointStatus("Closed", "done"))]
+  const expandedSearch = (body) => ({ issues: body.jql.startsWith("(") ? [issues[0]] : issues, isLast: true })
+  it("shares count/detail JQL while independently checking original editing eligibility", async (t) => {
+    const h = harness(t, { issues, readOptions: checked, readOnlyIssueIds: ["2"], search: expandedSearch })
+    const summary = await h.service.getMissingDataSummary("points", checked)
+    const page = await h.service.getMissingDataPage("points", null, checked)
+    assert.equal(summary.total, 2)
+    assert.equal(summary.storyPointsMissing, 2)
+    assert.equal(summary.actualStoryPointsMissing, 1)
+    assert.equal(summary.jql, expandedJql)
+    assert.equal(summary.jiraBaseUrl, "https://fixture.example.invalid")
+    assert.deepEqual(h.calls.filter((call) => call.body?.jql).map((call) => call.body.jql), [expandedJql, expandedJql, `(${pointsJql}) AND id in (1,2)`])
+    assert.equal(page.readOnly, false)
+    assert.deepEqual(plain(page.issues.map((row) => [row.id, row.storyPointsEditable, row.actualStoryPointsEditable])), [["1", true, true], ["2", false, false]])
+    assert.match(page.issues[1].unavailableReason, /原本的本人補填範圍.*僅供查看/)
+    assert.equal(page.issues[1].actualStoryPointsRequired, false)
+    assert.equal(page.issues[1].storyPoints, null)
+    assert.equal(page.issues[1].actualStoryPoints, null)
+    assert.equal(liveReads(h).length, 2)
+    assert.equal(puts(h).length, 0)
+  })
+  it("keeps originally eligible supplementation and rejects a forged expanded row without PUT", async (t) => {
+    const h = harness(t, { issues, search: expandedSearch })
+    const result = await h.service.updateMissingData("points", [change(1), change(2)])
+    assert.deepEqual(plain(result.succeededIssueIds), ["1"])
+    assert.equal(result.failures[0].issueId, "2")
+    assert.match(result.failures[0].message, /不在缺失清單/)
+    assert.deepEqual(puts(h).map((call) => [call.path, call.body]), [["/rest/api/3/issue/1", { fields: { [SP]: 1.25 } }]])
+    assert.deepEqual(liveReads(h).map((call) => call.path.match(/issue\/(\d+)/)[1]), ["1"])
+    assert.equal(h.calls.find((call) => call.body?.jql).body.jql, `(${pointsJql}) AND id in (1,2)`)
+  })
+  it("skips eligibility and hydration for an empty expanded page", async (t) => {
+    const h = harness(t, { readOptions: checked, issues: [] })
+    const page = await h.service.getMissingDataPage("points", null, checked)
+    assert.deepEqual(plain(page.issues), [])
+    assert.equal(h.calls.filter((call) => call.body?.jql).length, 1)
+    assert.equal(liveReads(h).length, 0)
+  })
+  it("allows a complete empty eligibility result but makes every added row read-only", async (t) => {
+    const h = harness(t, { issues, readOptions: checked, readOnlyIssueIds: ["1", "2"], search: (body) => ({ issues: body.jql.startsWith("(") ? [] : issues, isLast: true }) })
+    const page = await h.service.getMissingDataPage("points", null, checked)
+    assert.equal(page.readOnly, false)
+    assert.ok(page.issues.every((row) => !row.storyPointsEditable && !row.actualStoryPointsEditable && row.unavailableReason))
+    assert.ok(liveReads(h).every((call) => !call.path.includes("expand=")))
+  })
+  for (const [label, response] of [
+    ["incomplete", { issues: [issues[0]] }],
+    ["continuation", { issues: [issues[0]], nextPageToken: "more", isLast: false }],
+    ["duplicate", { issues: [issues[0], issues[0]], isLast: true }],
+    ["outside ID", { issues: [pointIssue(3)], isLast: true }],
+    ["malformed ID", { issues: [{ ...issues[0], id: "invalid" }], isLast: true }],
+  ]) it(`fails closed before hydration on ${label} eligibility`, async (t) => {
+    const h = harness(t, { issues, readOptions: checked, search: (body) => body.jql.startsWith("(") ? response : { issues, isLast: true } })
+    await rejectsCode(() => h.service.getMissingDataPage("points", null, checked), "retry")
+    assert.equal(liveReads(h).length, 0)
+    assert.equal(puts(h).length, 0)
+  })
+  for (const rows of [[issues[0], issues[0]], [{ ...issues[0], id: "invalid" }]]) it("rejects invalid source IDs before any eligibility read", async (t) => {
+    const h = harness(t, { readOptions: checked, issues: rows })
+    await rejectsCode(() => h.service.getMissingDataPage("points", null, checked), "retry")
+    assert.equal(h.calls.filter((call) => call.body?.jql).length, 1)
+    assert.equal(liveReads(h).length, 0)
+  })
+  it("retains Jira numeric schema/permission checks for originally eligible rows", async (t) => {
+    const issue = pointIssue(1)
+    issue.editmeta.fields[SP].operations = []
+    issue.editmeta.fields[AP].schema = { type: "string" }
+    const h = harness(t, { issues: [issue], readOptions: checked })
+    const page = await h.service.getMissingDataPage("points", null, checked)
+    assert.equal(page.readOnly, false)
+    assert.equal(page.issues[0].storyPointsEditable, false)
+    assert.equal(page.issues[0].actualStoryPointsEditable, false)
+    assert.match(page.issues[0].unavailableReason, /部分缺失欄位無法編輯/)
+    assert.ok(liveReads(h)[0].path.includes("expand=editmeta"))
+  })
+  it("keeps expanded readonly flags and scope reason when live hydration is unavailable", async (t) => {
+    const h = harness(t, { issues: [issues[1]], readOptions: checked, liveStatus: 403, search: (body) => ({ issues: body.jql.startsWith("(") ? [] : [issues[1]], isLast: true }) })
+    const page = await h.service.getMissingDataPage("points", null, checked)
+    assert.equal(page.issues[0].storyPointsEditable, false)
+    assert.equal(page.issues[0].actualStoryPointsEditable, false)
+    assert.match(page.issues[0].unavailableReason, /原本的本人補填範圍.*僅供查看/)
+    assert.ok(liveReads(h).every((call) => !call.path.includes("expand=")))
+  })
+  it("completes checked pages with independent page-ID eligibility checks and valid return tokens", async (t) => {
+    const h = harness(t, { issues, readOptions: checked, readOnlyIssueIds: ["2"], search: (body) => {
+      if (body.jql.startsWith("(")) {
+        assert.equal(body.nextPageToken, undefined)
+        return { issues: body.jql.endsWith("id in (1)") ? [issues[0]] : [], isLast: true }
+      }
+      return body.nextPageToken ? { issues: [issues[1]], isLast: true } : { issues: [issues[0]], nextPageToken: "expanded-next", isLast: false }
+    } })
+    const first = await h.service.getMissingDataPage("points", null, checked)
+    const second = await h.service.getMissingDataPage("points", first.nextPageToken, checked)
+    const previous = await h.service.getMissingDataPage("points", second.previousPageToken, checked)
+    assert.equal(first.page, 1)
+    assert.equal(second.page, 2)
+    assert.equal(second.nextPageToken, null)
+    assert.equal(previous.page, 1)
+    assert.equal(first.issues[0].storyPointsEditable, true)
+    assert.equal(second.issues[0].storyPointsEditable, false)
+    assert.equal(previous.issues[0].storyPointsEditable, true)
+    assert.deepEqual(h.calls.filter((call) => call.body?.jql.startsWith("(")).map((call) => call.body.jql), [`(${pointsJql}) AND id in (1)`, `(${pointsJql}) AND id in (2)`, `(${pointsJql}) AND id in (1)`])
+    assert.equal(puts(h).length, 0)
+  })
+  it("caps each eligibility intersection at the page's 50 IDs", async (t) => {
+    const rows = Array.from({ length: 50 }, (_, i) => pointIssue(i + 1))
+    const h = harness(t, { readOptions: checked, issues: rows, readOnlyIssueIds: rows.map((row) => row.id), search: (body) => ({ issues: body.jql.startsWith("(") ? [] : rows, isLast: true }) })
+    assert.equal((await h.service.getMissingDataPage("points", null, checked)).issues.length, 50)
+    const call = h.calls.find((call) => call.body?.jql.startsWith("("))
+    assert.equal(call.body.jql, `(${pointsJql}) AND id in (${rows.map((row) => row.id).join(",")})`)
+    assert.equal(call.body.maxResults, 50)
+  })
+  for (const scenario of [
+    { filter: { ...personFilter(), includeUnexpectedClosed: true }, scope: personScope(), users: { "person-1": fixtureUser("person-1") } },
+    { filter: { ...teamFilter(), includeUnexpectedClosed: true }, scope: teamScope(), groups: { "ent-web": [fixtureUser("person-1")] } },
+  ]) it(`preserves ${scenario.filter.mode} restrictions without any eligibility or editmeta reads`, async (t) => {
+    const h = harness(t, { ...scenario, issues, readOptions: checked })
+    const summary = await h.service.getMissingDataSummary("points", scenario.filter)
+    const page = await h.service.getMissingDataPage("points", null, scenario.filter)
+    const searches = h.calls.filter((call) => call.body?.jql)
+    assert.equal(searches.length, 2)
+    assert.equal(summary.jql, searches[1].body.jql)
+    assert.match(summary.jql, /assignee in \("person-1"\) AND created >= -17d/)
+    assert.equal(summary.jql.includes("AND project in (sun)"), scenario.filter.mode === "team-project")
+    assert.doesNotMatch(summary.jql, /resolution in|currentUser/)
+    assert.equal(page.readOnly, true)
+    assert.ok(page.issues.every((row) => !row.storyPointsEditable && !row.actualStoryPointsEditable))
+  })
+  for (const view of ["summary", "page"]) it(`propagates the valid read option through ${view} GET`, async (t) => {
+    const h = harness(t, { issues, readOptions: checked, readOnlyIssueIds: ["2"], search: expandedSearch })
+    const response = await h.route().GET(new Request(`https://fixture.example.invalid/api/dashboard/missing-data?kind=points&view=${view}&includeUnexpectedClosed=1`))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("Cache-Control"), "private, no-store")
+    assert.equal((await response.json()).status, "success")
+    assert.equal(h.calls.find((call) => call.body?.jql).body.jql, expandedJql)
+  })
+  it("rejects malformed checkbox GETs before credentials or Jira access", async (t) => {
+    const h = harness(t)
+    for (const value of ["", "0", "true", "false", "2", "1&includeUnexpectedClosed=1"]) {
+      const response = await h.route().GET(new Request(`https://fixture.example.invalid/api/dashboard/missing-data?kind=points&view=summary&includeUnexpectedClosed=${value}`))
+      assert.equal(response.status, 400)
+    }
+    assert.equal(h.tokenCalls.length, 0)
+    assert.equal(h.calls.length, 0)
+  })
+  it("rejects nonboolean options in direct self reads rather than coercing them", async (t) => {
+    const h = harness(t)
+    for (const value of ["1", "true", 1, null]) {
+      await assert.rejects(() => h.service.getMissingDataSummary("points", { mode: "self", includeUnexpectedClosed: value }), /篩選條件無效/)
+      await assert.rejects(() => h.service.getMissingDataPage("points", null, { mode: "self", includeUnexpectedClosed: value }), /篩選條件無效/)
+    }
+    assert.equal(h.calls.length, 0)
+  })
+  for (const initialChecked of [false, true]) it(`rejects tokens from the opposite Points population (initial checked=${initialChecked})`, async (t) => {
+    const filter = { mode: "self", includeUnexpectedClosed: initialChecked }
+    const h = harness(t, { issues, readOptions: filter, search: (body) => body.jql.startsWith("(") ? { issues: [issues[0]], isLast: true } : { issues: [issues[0]], nextPageToken: "next", isLast: false } })
+    const first = await h.service.getMissingDataPage("points", null, filter)
+    const before = h.calls.length
+    await rejectsCode(() => h.service.getMissingDataPage("points", first.nextPageToken, { ...filter, includeUnexpectedClosed: !initialChecked }), "invalid_page")
+    assert.equal(h.calls.length, before)
+  })
+  it("binds checkbox identity even to unchanged Defect/Impact query populations", async (t) => {
+    const h = harness(t, { kind: "impact-scope", issues: [impactIssue(1)], search: () => ({ issues: [impactIssue(1)], nextPageToken: "next", isLast: false }) })
+    const first = await h.service.getMissingDataPage("impact-scope", null, checked)
+    const before = h.calls.length
+    await rejectsCode(() => h.service.getMissingDataPage("impact-scope", first.nextPageToken, { mode: "self" }), "invalid_page")
+    assert.equal(h.calls.length, before)
+  })
+})
 
 describe("Impact Scope dashboard", () => {
   const self = { mode: "self" }
@@ -583,6 +757,7 @@ describe("exact missing-data summary against fixture Jira", () => {
       const h = harness(t, { issues })
       assert.deepEqual(plain(await h.service.getMissingDataSummary("points")), {
         kind: "points", total: 6, storyPointsMissing: 3, actualStoryPointsMissing: 4,
+        jql: `${pointsJql} ORDER BY key ASC`, jiraBaseUrl: "https://fixture.example.invalid",
       })
     })
   }
@@ -612,6 +787,7 @@ describe("exact missing-data summary against fixture Jira", () => {
     } })
     assert.deepEqual(plain(await h.service.getMissingDataSummary("points")), {
       kind: "points", total: 3, storyPointsMissing: 2, actualStoryPointsMissing: 2,
+      jql: `${pointsJql} ORDER BY key ASC`, jiraBaseUrl: "https://fixture.example.invalid",
     })
   })
 
@@ -622,6 +798,8 @@ describe("exact missing-data summary against fixture Jira", () => {
     const h = harness(t, { kind: "defect-cause", fields: defectFields, issues })
     assert.deepEqual(plain(await h.service.getMissingDataSummary("defect-cause")), {
       kind: "defect-cause", total: 2, storyPointsMissing: 0, actualStoryPointsMissing: 0,
+      jql: 'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY ORDER BY key ASC',
+      jiraBaseUrl: "https://fixture.example.invalid",
     })
   })
 

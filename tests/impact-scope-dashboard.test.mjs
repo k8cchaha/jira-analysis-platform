@@ -32,6 +32,8 @@ function harness(fetcher, updater = async () => ({ status: "error", message: "Sy
   let effects = []
   const modules = new Map()
   const calls = []
+  const pushes = []
+  let navigationBlocked = false
   const authorizations = []
   const updates = []
   const blockers = []
@@ -40,6 +42,8 @@ function harness(fetcher, updater = async () => ({ status: "error", message: "Sy
   const window = { addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: (name) => listeners.delete(name) }
   const stub = (label) => function Stub(props) { return React.createElement("div", { "data-component": label }, props.children) }
   const impactStub = stub("impact-dialog")
+  const filterStub = stub("filter")
+  const alertsStub = stub("alerts")
   const editDialog = (props) => React.createElement("section", { "aria-label": props.title }, React.createElement("h2", null, props.title), props.children)
   const hooks = {
     ...React,
@@ -82,15 +86,15 @@ function harness(fetcher, updater = async () => ({ status: "error", message: "Sy
     function fixtureRequire(specifier) {
       if (specifier === "react") return hooks
       if (specifier === "react/jsx-runtime") return require(specifier)
-      if (specifier === "next/navigation") return { useRouter: () => ({ push() {} }) }
+      if (specifier === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
       if (specifier === "@/components/edit-dialog") return { EditDialog: editDialog }
-      if (specifier === "@/components/navigation-blocker") return { useNavigationBlocker: () => ({ isBlocked: false, setBlocked }) }
+      if (specifier === "@/components/navigation-blocker") return { useNavigationBlocker: () => ({ isBlocked: navigationBlocked, setBlocked }) }
       if (specifier === "./parent-issue-type-icon") return { ParentIssueTypeIcon: stub("parent-type") }
       if (specifier === "./actions") return { reauthorizeDashboardAction: async (href) => { authorizations.push(href) }, updateMissingDataAction: async (kind, previous, data) => { updates.push({ kind, data }); return updater(kind, previous, data) } }
       if (specifier === "./impact-scope-dialog") return { ImpactScopeDialog: impactStub }
       if (specifier === "./missing-data-dialog") return filename === dialogPath ? load(editorPath) : { MissingDataDialog: stub("write-dialog") }
-      if (specifier === "./dashboard-filter") return { DashboardFilter: stub("filter") }
-      if (specifier === "./dashboard-alert-cards") return { DashboardAlertCards: stub("alerts") }
+      if (specifier === "./dashboard-filter") return { DashboardFilter: filterStub }
+      if (specifier === "./dashboard-alert-cards") return { DashboardAlertCards: alertsStub }
       if (specifier === "./bug-alert-dialog") return { BugAlertDialog: stub("bugs") }
       if (specifier === "./due-reminder-dialog") return { DueReminderDialog: stub("due") }
       if (specifier === "./pending-issue-dialog") return { PendingIssueDialog: stub("pending") }
@@ -108,7 +112,8 @@ function harness(fetcher, updater = async () => ({ status: "error", message: "Sy
     dialog: (props) => { const wrapped = load(dialogPath).ImpactScopeDialog(props); return wrapped.type(wrapped.props) },
     invoke(component, props) { index = 0; effects = []; const tree = component(props); effects.forEach((fn) => fn()); return tree },
     unmount() { slots.forEach((slot) => slot?.cleanup?.()) },
-    calls, authorizations, impactStub, updates, blockers, listeners,
+    calls, pushes, authorizations, impactStub, filterStub, alertsStub, updates, blockers, listeners,
+    blockNavigation(value) { navigationBlocked = value },
   }
 }
 function nodes(tree) {
@@ -199,6 +204,142 @@ describe("Impact Scope missing-data cards", () => {
     const impact = articles(h.invoke(h.panel, props))[2]
     assert.doesNotMatch(markup(impact), /999/)
     assert.match(markup(impact), />3<\/span>/)
+    h.unmount()
+  })
+})
+
+const controls = (h, tree) => nodes(tree).find((node) => node.type === h.filterStub)
+const queryParams = (url) => new URL(url, "https://fixture.invalid").searchParams
+const filterQuery = (url) => {
+  const params = queryParams(url)
+  for (const key of ["kind", "view", "pageToken"]) params.delete(key)
+  return params.toString()
+}
+
+describe("Dashboard applied checkbox identity and snapshots", () => {
+  it("pushes changed self flags, suppresses identical self, and keys URL history remounts by the full query", async () => {
+    const h = harness(async (url) => response(summary(queryParams(url).get("kind"))))
+    const p = (filter) => ({ applied: { filter, error: null }, viewerId: "fixture-viewer" })
+    let tree = h.invoke(h.panel, p(self))
+    const initialKey = controls(h, tree).key
+    controls(h, tree).props.onApply(self)
+    controls(h, tree).props.onApply({ ...self, includeUnexpectedClosed: false })
+    assert.deepEqual(h.pushes, [])
+    controls(h, tree).props.onApply({ ...self, includeUnexpectedClosed: true })
+    assert.deepEqual(h.pushes, ["/dashboard?includeUnexpectedClosed=1"])
+    tree = h.invoke(h.panel, p({ ...self, includeUnexpectedClosed: true }))
+    assert.notEqual(controls(h, tree).key, initialKey)
+    const enabledKey = controls(h, tree).key
+    assert.equal(nodes(tree).find((node) => node.type === h.alertsStub).props.query, "includeUnexpectedClosed=1")
+    controls(h, tree).props.onApply({ ...self, includeUnexpectedClosed: true })
+    assert.equal(h.pushes.length, 1)
+    h.blockNavigation(true)
+    tree = h.invoke(h.panel, p({ ...self, includeUnexpectedClosed: true }))
+    controls(h, tree).props.onApply(self)
+    assert.equal(h.pushes.length, 1)
+    h.blockNavigation(false)
+    tree = h.invoke(h.panel, p({ ...self, includeUnexpectedClosed: true }))
+    controls(h, tree).props.onApply(self)
+    assert.deepEqual(h.pushes, ["/dashboard?includeUnexpectedClosed=1", "/dashboard"])
+    tree = h.invoke(h.panel, p(self))
+    assert.equal(controls(h, tree).key, initialKey)
+    tree = h.invoke(h.panel, p({ ...self, includeUnexpectedClosed: true }))
+    assert.equal(controls(h, tree).key, enabledKey)
+    await settle()
+    h.unmount()
+  })
+
+  it("marks all cards loading and ignores stale summary results after a flag-only self change", async () => {
+    const old = deferred()
+    const h = harness(async (url) => queryParams(url).has("includeUnexpectedClosed") ? response(summary(queryParams(url).get("kind"), 3)) : old.promise)
+    h.invoke(h.panel, { applied: { filter: self, error: null } })
+    await settle()
+    assert.equal(h.calls.length, 3)
+    const p = { applied: { filter: { ...self, includeUnexpectedClosed: true }, error: null } }
+    let tree = h.invoke(h.panel, p)
+    assert.ok(articles(tree).every((node) => node.props["aria-busy"] === true))
+    assert.equal(nodes(tree).some((node) => node.props?.["aria-haspopup"] === "dialog"), false)
+    await settle()
+    old.resolve(response(summary("impact-scope", 999)))
+    await settle()
+    tree = h.invoke(h.panel, p)
+    assert.equal(h.calls.length, 6)
+    assert.ok(h.calls.slice(3).every(({ url }) => filterQuery(url) === "includeUnexpectedClosed=1"))
+    assert.ok(articles(tree).every((node) => node.props["aria-busy"] === false && markup(node).includes(">3</span>")))
+    assert.doesNotMatch(markup(tree), /999/)
+    h.unmount()
+  })
+
+  for (const kind of ["points", "defect-cause", "impact-scope", "bugs", "due", "pending"]) it(`pins the complete ${kind} dialog query on a flag-only URL change until close`, async () => {
+    const original = { mode: "team-project", groups: ["ent-web", "ent-be1"], exclusions: { "ent-web": ["excluded"] }, projects: ["sun", "tkk"], days: 7, includeUnexpectedClosed: true }
+    const changed = { ...original, includeUnexpectedClosed: false }
+    const h = harness(async (url) => response(summary(queryParams(url).get("kind"))))
+    const p = (filter) => ({ applied: { filter, error: null }, viewerId: "fixture-viewer" })
+    h.invoke(h.panel, p(original))
+    await settle()
+    let tree = h.invoke(h.panel, p(original))
+    const key = controls(h, tree).key
+    const query = nodes(tree).find((node) => node.type === h.alertsStub).props.query
+    if (["points", "defect-cause", "impact-scope"].includes(kind)) {
+      const card = articles(tree)[["points", "defect-cause", "impact-scope"].indexOf(kind)]
+      nodes(card).find((node) => node.props?.["aria-haspopup"] === "dialog").props.onClick()
+    } else {
+      const alerts = nodes(tree).find((node) => node.type === h.alertsStub)
+      alerts.props[{ bugs: "onOpenBugs", due: "onOpenDue", pending: "onOpenPending" }[kind]]()
+    }
+    tree = h.invoke(h.panel, p(changed))
+    const dialog = nodes(tree).find((node) => node.props?.scopeChanged !== undefined && node.props.onClose)
+    assert.ok(dialog)
+    assert.equal(dialog.props.filter, original)
+    assert.equal(dialog.props.scopeChanged, true)
+    assert.equal(controls(h, tree).key, key)
+    assert.equal(controls(h, tree).props.filter, original)
+    assert.equal(nodes(tree).find((node) => node.type === h.alertsStub).props.query, query)
+    controls(h, tree).props.onApply(changed)
+    assert.deepEqual(h.pushes, [])
+    await settle()
+    assert.equal(h.calls.length, 3)
+    if (dialog.props.onSaved) {
+      dialog.props.onSaved()
+      await settle()
+      assert.equal(h.calls.length, 4)
+      assert.equal(filterQuery(h.calls.at(-1).url), query)
+      assert.equal(queryParams(h.calls.at(-1).url).get("kind"), kind)
+    }
+    const beforeClose = h.calls.length
+    dialog.props.onClose()
+    tree = h.invoke(h.panel, p(changed))
+    assert.notEqual(controls(h, tree).key, key)
+    assert.equal(controls(h, tree).props.filter, changed)
+    assert.ok(articles(tree).every((node) => node.props["aria-busy"] === true))
+    await settle()
+    assert.equal(h.calls.length, beforeClose + 3)
+    assert.ok(h.calls.slice(beforeClose).every(({ url }) => !queryParams(url).has("includeUnexpectedClosed")))
+    h.unmount()
+  })
+
+  it("summary retry and save refresh retain the enabled self query while an Impact dialog is open", async () => {
+    let failed = true
+    const original = { ...self, includeUnexpectedClosed: true }
+    const h = harness(async (url) => queryParams(url).get("kind") === "points" && failed
+      ? response({ status: "error", error: { code: "retry", message: "Synthetic retry" } }, false)
+      : response(summary(queryParams(url).get("kind"))))
+    const p = (filter) => ({ applied: { filter, error: null } })
+    h.invoke(h.panel, p(original))
+    await settle()
+    let tree = h.invoke(h.panel, p(original))
+    nodes(articles(tree)[2]).find((node) => node.props?.["aria-haspopup"] === "dialog").props.onClick()
+    tree = h.invoke(h.panel, p(self))
+    failed = false
+    clickByText(articles(tree)[0], "重試")
+    nodes(tree).find((node) => node.type === h.impactStub).props.onSaved()
+    await settle()
+    assert.equal(h.calls.length, 5)
+    assert.ok(h.calls.every(({ url }) => filterQuery(url) === "includeUnexpectedClosed=1"))
+    assert.deepEqual(h.calls.slice(3).map(({ url }) => queryParams(url).get("kind")), ["points", "impact-scope"])
+    tree = h.invoke(h.panel, p(self))
+    assert.match(markup(articles(tree)[2]), /查看明細與補填/)
+    assert.equal(nodes(tree).find((node) => node.type === h.impactStub).props.scopeChanged, true)
     h.unmount()
   })
 })
@@ -434,6 +575,35 @@ describe("Impact Scope supplementation", () => {
 })
 
 describe("existing shared editor regression", () => {
+  it("renders expanded self Points read-only reasons and excludes those rows from drafts", async () => {
+    const reason = "此票不符合原本的本人補填範圍，僅供查看。"
+    const h = harness(async () => {
+      const result = page([1, 2], 1, null, false)
+      result.data.issues = result.data.issues.map((row, index) => ({ ...row,
+        storyPoints: null, actualStoryPoints: 0, storyPointsRequired: true, actualStoryPointsRequired: true,
+        storyPointsEditable: index === 0, actualStoryPointsEditable: index === 0,
+        parentIssueType: { status: "none" }, ...(index === 1 ? { unavailableReason: reason } : {}),
+      }))
+      return response(result)
+    })
+    const p = { kind: "points", filter: { ...self, includeUnexpectedClosed: true }, onClose() {}, onSaved() {} }
+    h.invoke(h.editor, p)
+    await settle()
+    let tree = h.invoke(h.editor, p)
+    const html = markup(tree)
+    assert.match(html, /id="desktop-1-storyPoints"[^>]*type="number"|type="number"[^>]*id="desktop-1-storyPoints"/)
+    assert.doesNotMatch(html, /id="(?:desktop|mobile)-2-(?:storyPoints|actualStoryPoints)"/)
+    assert.ok(html.includes(`title="${reason}"`))
+    assert.ok(html.includes(reason))
+    const inputs = nodes(tree).filter((node) => node.type?.name === "PointInput" && node.props.prefix === "desktop")
+    inputs.find((node) => node.props.issue.id === "2" && node.props.field === "storyPoints").props.onChange("99")
+    inputs.find((node) => node.props.issue.id === "1" && node.props.field === "storyPoints").props.onChange("2")
+    tree = h.invoke(h.editor, p)
+    assert.deepEqual(JSON.parse(formData(tree).get("changes")), [{ issueId: "1", storyPoints: 2, expectedStoryPoints: null }])
+    assert.equal(formData(tree).has("includeUnexpectedClosed"), false)
+    assert.ok(h.calls.every(({ url }) => new URL(url, "https://fixture.invalid").searchParams.get("includeUnexpectedClosed") === "1"))
+    h.unmount()
+  })
   it("retains Points columns without Impact Scope controls", async () => {
     const h = harness(async () => {
       const result = page([1])
@@ -463,6 +633,97 @@ describe("existing shared editor regression", () => {
     nodes(tree).find((node) => node.type?.name === "DefectCauseInput" && node.props.prefix === "desktop").props.onChange(["7"])
     tree = h.invoke(h.editor, p)
     assert.deepEqual(JSON.parse(formData(tree).get("changes")), [{ issueId: "1", defectCause: ["7"] }])
+    h.unmount()
+  })
+})
+
+describe("Impact Scope full-query checkbox detail regressions", () => {
+  it("rejects a late detail result on a flag-only self scope change", async () => {
+    const old = deferred()
+    const h = harness(async (url) => queryParams(url).has("includeUnexpectedClosed") ? response(page([2], 1, null, false)) : old.promise)
+    h.invoke(h.dialog, { filter: self, scopeChanged: false, onClose() {}, onSaved() {} })
+    await settle()
+    const p = { filter: { ...self, includeUnexpectedClosed: true }, scopeChanged: false, onClose() {}, onSaved() {} }
+    h.invoke(h.dialog, p)
+    await settle()
+    assert.equal(h.calls.length, 2)
+    assert.equal(h.calls[0].init.signal.aborted, true)
+    assert.equal(h.calls[1].init.signal.aborted, false)
+    assert.equal(filterQuery(h.calls[1].url), "includeUnexpectedClosed=1")
+    old.resolve(response(page([1], 1, null, false)))
+    await settle()
+    const tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /SUN-2/)
+    assert.doesNotMatch(markup(tree), /SUN-1/)
+    assert.ok(selector(tree, "2"), "enabling a read option does not turn self into read-only")
+    h.unmount()
+  })
+
+  it("retains the full enabled person snapshot for detail retry and Jira reauthorization", async () => {
+    const filter = { ...person, includeUnexpectedClosed: true }
+    let failed = true
+    const h = harness(async () => failed ? response({ status: "error", error: { code: "forbidden", message: "Synthetic permission retry" } }, false) : response(page([2])))
+    const p = { filter, scopeChanged: true, onClose() {}, onSaved() {} }
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    assert.match(markup(tree), /保留開啟時的範圍/)
+    clickByText(tree, "重新授權 Jira")
+    await settle()
+    assert.equal(h.authorizations.length, 1)
+    assert.equal(filterQuery(h.authorizations[0]), "mode=person&accountId=a&name=Fixture+person&days=7&includeUnexpectedClosed=1")
+    // Reauthorization is an intentional navigation; a fresh offline instance drives the retry.
+    h.unmount()
+    const retry = harness(async () => failed ? response({ status: "error", error: { code: "retry", message: "Synthetic list retry" } }, false) : response(page([2])))
+    retry.invoke(retry.dialog, p)
+    await settle()
+    tree = retry.invoke(retry.dialog, p)
+    failed = false
+    clickByText(tree, "重試載入")
+    await settle()
+    tree = retry.invoke(retry.dialog, p)
+    assert.equal(retry.calls.length, 2)
+    assert.ok(retry.calls.every(({ url }) => filterQuery(url) === filterQuery(h.authorizations[0])))
+    assert.match(markup(tree), /SUN-2/)
+    assert.equal(selector(tree, "2"), undefined)
+    assert.equal(nodes(tree).some((node) => node.type === "button" && node.props.type === "submit"), false)
+    retry.unmount()
+  })
+
+  it("keeps enabled self edits locked to the submitted draft and refreshes with the retained flag after save", async () => {
+    const waiting = deferred()
+    let completed = false
+    let saves = 0
+    const filter = { ...self, includeUnexpectedClosed: true }
+    const h = harness(async () => response(page(completed ? [] : [1], 1, null, false)), async (_kind, _previous, data) => {
+      await waiting.promise
+      completed = true
+      return { submissionId: data.get("submissionId"), status: "success", message: "Synthetic saved", succeededIssueIds: ["1"], failures: [] }
+    })
+    const p = { filter, scopeChanged: true, onClose() {}, onSaved() { saves++ } }
+    h.invoke(h.dialog, p)
+    await settle()
+    let tree = h.invoke(h.dialog, p)
+    selector(tree).props.onChange({ target: { value: "7" } })
+    tree = h.invoke(h.dialog, p)
+    const saving = submitTree(tree)
+    tree = h.invoke(h.dialog, p)
+    assert.equal(selector(tree).props.disabled, true)
+    selector(tree).props.onChange({ target: { value: "8" } })
+    assert.equal(h.updates.length, 1)
+    assert.equal(h.updates[0].data.get("mode"), "self")
+    assert.equal(h.updates[0].data.has("includeUnexpectedClosed"), false)
+    assert.deepEqual(JSON.parse(h.updates[0].data.get("changes")), [{ issueId: "1", impactScope: ["7"] }])
+    waiting.resolve()
+    await saving
+    await settle()
+    tree = h.invoke(h.dialog, p)
+    assert.equal(saves, 1)
+    assert.equal(h.calls.length, 2)
+    assert.ok(h.calls.every(({ url }) => filterQuery(url) === "includeUnexpectedClosed=1"))
+    assert.match(markup(tree), /目前沒有待補資料/)
+    assert.match(markup(tree), /保留開啟時的範圍/)
+    assert.equal(h.listeners.has("beforeunload"), false)
     h.unmount()
   })
 })

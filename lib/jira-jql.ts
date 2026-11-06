@@ -1,5 +1,5 @@
 import { DEV_TYPE_FIELD, JIRA_FIELDS, customFieldJql } from "./jira-fields.ts"
-import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
+import { DASHBOARD_JQL_LIMIT, DASHBOARD_MEMBER_LIMIT, DASHBOARD_PROJECTS, DashboardFilterError, dashboardDays, isDashboardAccountId, includesUnexpectedClosed, type DashboardReadOptions, type ResolvedDashboardScope } from "./jira-dashboard-filter.ts"
 import { requireDateRange, type DateRange } from "./date-range.ts"
 import type { MissingDataKind, WritableMissingDataKind } from "./jira-missing-data.ts"
 
@@ -223,6 +223,7 @@ export const POINTS_SCOPE_JQL =
 
 const storyPointsJql = customFieldJql(JIRA_FIELDS.storyPoints.id)
 const actualStoryPointsJql = customFieldJql(JIRA_FIELDS.actualStoryPoints.id)
+const missingPointsPredicate = `((status = Done and ${actualStoryPointsJql} in (EMPTY, 0)) or (statusCategory not in ("To Do") and ${storyPointsJql} in (EMPTY, 0)))`
 
 /** 指派給我的工作單中，「Story Points」或「Actual Story Points」缺失者（缺失資料卡)。
  *  對應真實 JQL（POINTS_SCOPE_JQL 展開、cf[10005]=Story Points / cf[13736]=Actual Story Points）：
@@ -230,7 +231,11 @@ const actualStoryPointsJql = customFieldJql(JIRA_FIELDS.actualStoryPoints.id)
  *    ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0)))
  *    and assignee = currentUser()` */
 export const MISSING_POINTS_JQL =
-  `${POINTS_SCOPE_JQL} and ((status = Done and ${actualStoryPointsJql} in (EMPTY, 0)) or (statusCategory not in ("To Do") and ${storyPointsJql} in (EMPTY, 0))) and assignee = currentUser()`
+  `${POINTS_SCOPE_JQL} and ${missingPointsPredicate} and assignee = currentUser()`
+
+/** Expanded Points READ population only; original supplementation eligibility remains unchanged. */
+export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
+  `issuetype in (DEV-Task, QA-Task) and ${missingPointsPredicate} and assignee = currentUser()`
 
 /** 指派給我的 Defect（Bug）中，「Defect Cause」未填者。限定 SUN／TKK／jiratry 專案（僅這些專案有此欄位）。
  *  對應真實 JQL（defectCause 欄位在 Jira 中為 `"Defect Cause[Select List (multiple choices)]"`）：
@@ -255,7 +260,8 @@ export function missingDataJql(kind: MissingDataKind) {
 }
 
 /**
- * 缺失資料的「唯讀」查詢：self 直接回 `missingDataJql(kind)`；person／team 把
+ * 缺失資料的讀取查詢：預設 self 回 `missingDataJql(kind)`；Points 可透過
+ * read option 納入非預期關閉票（只移除 resolution 限制，不改更新資格）。person／team 把
  * `assignee = currentUser()` 改為 `assignee in (<accountIds>)`，並疊加 `created >= -Nd`
  * 近-N 天視窗與（有選 project 時）`project in (...)`。
  *
@@ -265,12 +271,14 @@ export function missingDataJql(kind: MissingDataKind) {
  *  and assignee in ("<idA>", "<idB>", …) AND created >= -<scope.days>d [AND project in (<SUN, TKK, PRIDE…>)]`
  * kind = defect-cause 時以 MISSING_DEFECT_CAUSE_JQL 為 base，同樣以 `assignee in (...)` 代換。
  */
-export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboardScope): string {
-  if (scope.mode === "self") return missingDataJql(kind)
+export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboardScope, options: DashboardReadOptions = {}): string {
+  const includeUnexpected = includesUnexpectedClosed(options)
+  const selfQuery = kind === "points" && includeUnexpected ? MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL : missingDataJql(kind)
+  if (scope.mode === "self") return selfQuery
   dashboardDays(String(scope.days))
   if (!scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT || scope.accountIds.some((id) => !isDashboardAccountId(id)) || scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))) throw new DashboardFilterError()
   const assignees = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`).join(", ")
-  const base = missingDataJql(kind).replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+  const base = selfQuery.replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
   const date = `created >= -${scope.days}d`
   const projects = scope.projects.length ? ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})` : ""
   const jql = `${base} AND ${date}${projects}`
@@ -280,8 +288,8 @@ export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboa
 
 /** 缺失資料清單查詢（唯讀，依 key 升冪排序）。
  *  對應真實 JQL：`<missingDataReadJql(kind, scope)> ORDER BY key ASC` */
-export function missingDataListJql(kind: MissingDataKind, scope: ResolvedDashboardScope): string {
-  return `${missingDataReadJql(kind, scope)} ORDER BY key ASC`
+export function missingDataListJql(kind: MissingDataKind, scope: ResolvedDashboardScope, options: DashboardReadOptions = {}): string {
+  return `${missingDataReadJql(kind, scope, options)} ORDER BY key ASC`
 }
 
 /** 缺失資料的更新查詢：以原始 `missingDataJql(kind)`（含 `assignee = currentUser()`，不隨 scope

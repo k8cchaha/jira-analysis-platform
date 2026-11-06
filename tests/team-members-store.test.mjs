@@ -14,7 +14,7 @@ const member = (accountId = "fixture-member") => ({ accountId, displayName: `Fix
 const success = (members = [member()]) => Response.json({ status: "success", members })
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
-function harness(fetcher = async () => success(), hookSnapshot, effects, reactOverride) {
+function harness(fetcher = async () => success(), hookSnapshot, effects, reactOverride, environment = {}) {
   const modules = new Map()
   const calls = []
   const sandbox = vm.createContext({
@@ -29,6 +29,7 @@ function harness(fetcher = async () => success(), hookSnapshot, effects, reactOv
       calls.push(call)
       return fetcher(call, calls.length)
     },
+    ...environment,
   })
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
@@ -172,6 +173,198 @@ function teamExclusionsFixture({ groups = [], ...props } = {}) {
   }
   return fixture
 }
+
+const dashboardNodes = (tree) => Array.isArray(tree) ? tree.flatMap(dashboardNodes)
+  : tree && typeof tree === "object" ? [tree, ...dashboardNodes(tree.props?.children)] : []
+const closedLabel = "顯示非預期關閉的票"
+const dashboardCheckbox = (tree) => {
+  const label = dashboardNodes(tree).find((node) => node.type === "label" && dashboardNodes(node).some((child) => child.type === "span" && child.props.children === closedLabel))
+  assert.ok(label, "native unexpected-closed checkbox label")
+  return dashboardNodes(label).find((node) => node.type === "input")
+}
+
+/** Offline callback/effect snapshots; URL remounts are explicit, not a browser history simulation. */
+function dashboardFixture({ filter = { mode: "self" }, saved = {}, snapshot = {}, fetcher } = {}) {
+  let cursor = 0
+  const slots = []
+  let effects = []
+  const applied = []
+  const calls = []
+  const storage = new Map([["jira-dashboard-filter:fixture-viewer", JSON.stringify(saved)]])
+  const writes = []
+  const h = harness(undefined, snapshot, undefined, {
+    useState(initial) {
+      const index = cursor++
+      if (!(index in slots)) slots[index] = typeof initial === "function" ? initial() : initial
+      return [slots[index], (next) => { slots[index] = typeof next === "function" ? next(slots[index]) : next }]
+    },
+    useRef(initial) { const index = cursor++; return slots[index] ??= { current: initial } },
+    useId: () => "fixture-dashboard",
+    useTransition: () => [false, (fn) => fn()],
+    useEffect(fn, deps) {
+      const index = cursor++
+      const old = slots[index]
+      if (!old || deps.some((dep, i) => dep !== old.deps[i])) effects.push(() => {
+        old?.cleanup?.()
+        slots[index] = { deps, cleanup: fn() }
+      })
+    },
+  }, {
+    localStorage: {
+      getItem: (key) => storage.get(key) ?? null,
+      setItem: (key, value) => { writes.push({ key, value: JSON.parse(value) }); storage.set(key, value) },
+    },
+    fetch: async (url, init) => {
+      assert.match(url, /^\/api\/dashboard\/lookups\?view=users&query=/)
+      assert.equal(init.cache, "no-store")
+      assert.equal(init.method, undefined)
+      assert.equal(init.body, undefined)
+      assert.ok(init.signal)
+      calls.push({ url, init })
+      assert.ok(fetcher, "unexpected person lookup")
+      return fetcher(url, init)
+    },
+  })
+  const { DashboardFilter } = h.load("app/(app)/dashboard/dashboard-filter.tsx")
+  const fixture = {
+    h, applied, calls, writes,
+    draw() {
+      cursor = 0
+      effects = []
+      const tree = DashboardFilter({ filter, viewerId: "fixture-viewer", onApply: (value) => applied.push(plain(value)) })
+      effects.forEach((fn) => fn())
+      return tree
+    },
+    toggle(checked) { dashboardCheckbox(fixture.draw()).props.onChange({ target: { checked } }); return fixture.draw() },
+    mode(value) {
+      dashboardNodes(fixture.draw()).find((node) => node.type === "input" && node.props.type === "radio" && node.props.value === value).props.onChange()
+      return fixture.draw()
+    },
+    submit() {
+      let prevented = false
+      dashboardNodes(fixture.draw()).find((node) => node.type === "form").props.onSubmit({ preventDefault() { prevented = true } })
+      assert.equal(prevented, true)
+      return fixture.draw()
+    },
+    unmount() { slots.forEach((slot) => slot?.cleanup?.()) },
+    remount(next) { fixture.unmount(); slots.length = 0; filter = next; return fixture.draw() },
+  }
+  return fixture
+}
+
+describe("Dashboard unexpected-closed checkbox UI", () => {
+  it("SSR places one unchecked native label at the far right of the first scope row in every mode", () => {
+    const h = harness(undefined, {})
+    const { DashboardFilter } = h.load("app/(app)/dashboard/dashboard-filter.tsx")
+    for (const filter of [null, { mode: "self" }, { mode: "person", accountId: "a", name: "Fixture", days: 30 }, { mode: "team-project", groups: [], exclusions: {}, projects: [], days: 30 }]) {
+      const html = render(DashboardFilter, { filter, viewerId: "fixture-viewer", onApply() {} })
+      const firstRow = html.match(/<form[^>]*><div class="([^"]+)">(<fieldset[\s\S]*?<\/fieldset>)(<label[\s\S]*?<\/label>)<\/div>/)
+      assert.ok(firstRow, "scope fieldset and checkbox are siblings before draft controls")
+      assert.match(firstRow[1], /flex-wrap/)
+      assert.match(firstRow[1], /justify-between/)
+      assert.match(firstRow[2], /<legend class="sr-only">資料範圍<\/legend>/)
+      assert.equal((firstRow[2].match(/type="radio"/g) ?? []).length, 3)
+      assert.match(firstRow[3], /ml-auto/)
+      assert.match(firstRow[3], /min-w-0/)
+      assert.match(firstRow[3], /<input[^>]*type="checkbox"/)
+      assert.match(firstRow[3], /<span>顯示非預期關閉的票<\/span>/)
+      assert.doesNotMatch(firstRow[3], /checked=|<button|role="checkbox"|role="button"/)
+      assert.equal((html.match(/顯示非預期關閉的票/g) ?? []).length, 1)
+    }
+    assert.equal(h.calls.length, 0)
+  })
+
+  it("applies self checkbox changes immediately and keeps the flag across draft mode changes", () => {
+    const fixture = dashboardFixture()
+    assert.equal(dashboardCheckbox(fixture.draw()).props.checked, false)
+    fixture.toggle(true)
+    assert.deepEqual(fixture.applied, [{ mode: "self", includeUnexpectedClosed: true }])
+    for (const mode of ["person", "team-project"]) {
+      assert.equal(dashboardCheckbox(fixture.mode(mode)).props.checked, true)
+      assert.equal(fixture.applied.length, 1)
+    }
+    fixture.toggle(false)
+    assert.equal(fixture.applied.length, 1)
+    fixture.mode("person")
+    fixture.mode("self")
+    assert.deepEqual(fixture.applied.at(-1), { mode: "self", includeUnexpectedClosed: false })
+    fixture.toggle(true)
+    fixture.toggle(false)
+    assert.deepEqual(fixture.applied.slice(-2), [{ mode: "self", includeUnexpectedClosed: true }, { mode: "self", includeUnexpectedClosed: false }])
+    assert.equal(fixture.calls.length, 0)
+    fixture.unmount()
+  })
+
+  for (const filter of [
+    { mode: "person", accountId: "a", name: "Fixture person", days: 7 },
+    { mode: "team-project", groups: ["ent-web"], exclusions: { "ent-web": ["b"] }, projects: ["sun"], days: 7 },
+  ]) it(`keeps ${filter.mode} checkbox edits draft until the shared Query/Enter form submit`, () => {
+    const fixture = dashboardFixture({ filter, snapshot: { "ent-web": { status: "success", members: [member("a"), member("b")] } } })
+    fixture.toggle(true)
+    assert.deepEqual(fixture.applied, [])
+    assert.equal(fixture.calls.length, 0)
+    const tree = fixture.submit()
+    assert.deepEqual(fixture.applied, [{ ...filter, includeUnexpectedClosed: true }])
+    assert.match(renderToStaticMarkup(tree), /<button[^>]*type="submit"/)
+    fixture.toggle(false)
+    assert.equal(fixture.applied.length, 1)
+    fixture.submit()
+    assert.deepEqual(fixture.applied.at(-1), { ...filter, includeUnexpectedClosed: false })
+    fixture.unmount()
+  })
+
+  it("URL history remount restores the applied flag and never reads or persists it in localStorage", async () => {
+    const fixture = dashboardFixture({ saved: { groups: ["ent-web"], exclusions: {}, projects: ["sun"], includeUnexpectedClosed: true } })
+    assert.equal(dashboardCheckbox(fixture.draw()).props.checked, false)
+    await tick()
+    assert.equal(dashboardCheckbox(fixture.draw()).props.checked, false, "a saved flag cannot override the URL/default after storage hydration")
+    fixture.toggle(true)
+    fixture.mode("team-project")
+    await tick()
+    fixture.draw()
+    assert.ok(fixture.writes.length > 0)
+    assert.ok(fixture.writes.every(({ value }) => Object.keys(value).sort().join(",") === "exclusions,groups,projects"))
+    const helpers = fixture.h.load("lib/jira-dashboard-filter.ts")
+    const history = ["includeUnexpectedClosed=1", "mode=person&accountId=a&name=Fixture&days=7&includeUnexpectedClosed=1", "mode=team-project&group=ent-web&project=sun&includeUnexpectedClosed=1", "", "includeUnexpectedClosed=1"]
+    for (const query of history) {
+      const filter = helpers.parseDashboardFilter(new URLSearchParams(query))
+      const tree = fixture.remount(filter)
+      assert.equal(dashboardCheckbox(tree).props.checked, filter.includeUnexpectedClosed === true)
+      assert.equal(dashboardNodes(tree).find((node) => node.type === "input" && node.props.type === "radio" && node.props.checked).props.value, filter.mode)
+      await tick()
+      fixture.draw()
+    }
+    assert.equal(fixture.calls.length, 0)
+    assert.ok(fixture.writes.every(({ value }) => !("includeUnexpectedClosed" in value)))
+    fixture.unmount()
+  })
+
+  for (const staleResult of ["single", "multiple", "error", "reject"]) it(`checkbox toggle invalidates an in-flight person ${staleResult} result even when abort is ignored`, async () => {
+    let finish
+    let fail
+    const waiting = new Promise((resolve, reject) => { finish = resolve; fail = reject })
+    let requests = 0
+    const fixture = dashboardFixture({ fetcher: () => ++requests === 1 ? waiting : Response.json({ status: "success", users: [member("fresh")] }) })
+    let tree = fixture.mode("person")
+    dashboardNodes(tree).find((node) => node.type === "input" && node.props.type === "text" && node.props.placeholder).props.onChange({ target: { value: "Fixture lookup" } })
+    fixture.submit()
+    assert.equal(fixture.calls.length, 1)
+    assert.match(renderToStaticMarkup(fixture.draw()), /正在查詢 Jira 使用者/)
+    fixture.toggle(true)
+    assert.equal(fixture.calls[0].init.signal.aborted, true)
+    assert.doesNotMatch(renderToStaticMarkup(fixture.draw()), /正在查詢 Jira 使用者/)
+    if (staleResult === "reject") fail(new Error("Synthetic ignored abort"))
+    else finish(Response.json(staleResult === "error" ? { status: "error", error: { code: "retry", message: "Synthetic stale error" } } : { status: "success", users: staleResult === "multiple" ? [member("stale-a"), member("stale-b")] : [member("stale-a")] }))
+    await tick()
+    assert.deepEqual(fixture.applied, [])
+    assert.doesNotMatch(renderToStaticMarkup(fixture.draw()), /Fixture stale|Synthetic stale error|找到多位使用者|無法查詢 Jira 使用者/)
+    fixture.submit()
+    await tick()
+    assert.deepEqual(fixture.applied, [{ mode: "person", accountId: "fresh", name: "Fixture fresh", days: 30, includeUnexpectedClosed: true }])
+    assert.equal(fixture.calls.length, 2)
+    fixture.unmount()
+  })
+})
 
 describe("TeamSelect backwards-compatible exclusions and help extensions", () => {
   it("restores cached initial exclusions, filters inactive groups, and isolates callback arrays", () => {
