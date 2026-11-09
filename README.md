@@ -222,6 +222,8 @@ Planning's 票種分布 and 開發類型分佈 charts continue to summarize the 
 
 Each chart offers a collapsed 成員明細 list in single-team mode with all category/member values and shares, accessible by keyboard or touch. The tooltip shows all rows that fit its viewport budget; longer lists explicitly show the remaining-member count and refer to 成員明細. Chart geometry, colors, totals, independent metric switches and existing Jira search links are unchanged.
 
+Planning's **總分派比例** badge uses the displayed one-decimal percentage: **<70% blue**, **70–90% green**, **>90–100% amber**, and **>100% red**, with matching light/dark text colors. An undefined ratio remains neutral (`—`). Per-member ratio styling, Capacity calculations and progress-bar geometry are unchanged.
+
 ## Sprint Capacity
 
 `/sprint/capacity` contains the Capacity block formerly shown on Planning, including team Capacity buttons, total leave days, member leave-hour details/editing and the read-only Sprint Note dialog. It reuses Planning's project and ongoing/future Sprint selection rules; Planning no longer displays this block. Assignment Status's existing per-person Capacity calculation is unchanged.
