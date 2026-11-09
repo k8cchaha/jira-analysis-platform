@@ -25,7 +25,7 @@ function validSprintIds(project: SprintProjectKey, values: readonly string[]): n
   return [...new Set(ids)].sort((a, b) => a - b)
 }
 
-/** 專案分析專用：舊網址預設 Sprints，日期與 Sprint 條件不得混用。 */
+/** 專案回顧與趨勢專用：舊網址預設 Sprints，日期與 Sprint 條件不得混用。 */
 export function projectsFilterResult(params: Record<string, string | string[] | undefined>): ProjectsFilterResult {
   const project = parseProjectKey(typeof params.project === "string" ? params.project : undefined)
   const sprints = project ? getProjectSprints(project) : []

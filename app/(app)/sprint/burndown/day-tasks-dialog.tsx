@@ -17,7 +17,7 @@ const BLOCKED_TITLE = "受阻母票的 Dev-Task"
  * （站內 state、不重發 JQL、不影響主圖）。預設「全部」。
  *
  * `beforeStart` 為 true 時代表本次點擊的是「空起點格」的綠色長條：列出
- * sprint 開始前就已 Done（`doneBeforeStart`）的 Dev-Task；`blocked` 為 true
+ * sprint 開始前就已完成（`doneBeforeStart`）的 Dev-Task；`blocked` 為 true
  * 時代表點擊的是「受阻母票」的深灰長條：列出母票目前狀態在受阻集合的
  * Dev-Task；否則依 `date` 當天完成（`doneDate === date`）過濾。
  */
@@ -82,7 +82,7 @@ export function DayTasksDialog({
       }
       description={
         beforeStart
-          ? "這些 Dev-Task 在 sprint 開始日之前就已 Done，屬於空起點格的綠色長條，也已計入總點數與剩餘。"
+          ? "這些 Dev-Task 的 Resolved 日期早於 sprint 開始日，屬於空起點格的綠色長條，也已計入總點數與剩餘。"
           : blocked
             ? "這些 Dev-Task 的母票目前處於受阻狀態（Request Info / Pending / Reproduce），勾選「受阻母票計為已完成」後視為完成；其點數歸到最後一天以深灰長條呈現。"
             : ""

@@ -153,7 +153,7 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
           <ProjectSelector project={selection.project} required onProjectChange={changeProject} idPrefix="projects-project" />
         </div>
         <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
-          <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => { if (latestSelection.current.project) setGroups(nextGroups) }} perMember={false} helpText="團隊選取僅保留於本頁；專案分析功能尚未開放，目前不會查詢分析資料。" />
+          <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => { if (latestSelection.current.project) setGroups(nextGroups) }} perMember={false} helpText="團隊選取僅保留於本頁；專案回顧與趨勢功能尚未開放，目前不會查詢分析資料。" />
         </div>
       </div>
       <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className="mt-4 min-w-0">
@@ -173,7 +173,7 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
                     </label>
                   ))}
               </FilterDropdown>
-              <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；至少勾選一個 Sprint 才能啟用查詢。專案分析功能尚未開放。</p>
+              <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；至少勾選一個 Sprint 才能啟用查詢。專案回顧與趨勢功能尚未開放。</p>
             </div>
           </div>
           <div className="flex min-w-0 max-w-full flex-1 basis-80 items-start gap-2">
@@ -190,9 +190,9 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
       </fieldset>
       {selection.error ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">{selection.error}</p> : null}
       {isPending ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在更新篩選條件…</p> : null}
-      <p id="projects-query-help" className="sr-only">請先選擇專案；Sprints 模式需至少勾選一個 Sprint，分析區間模式需有效日期區間。專案分析功能尚未開放。</p>
+      <p id="projects-query-help" className="sr-only">請先選擇專案；Sprints 模式需至少勾選一個 Sprint，分析區間模式需有效日期區間。專案回顧與趨勢功能尚未開放。</p>
       {queryNotice?.selection === selection && (selection.mode === "sprints" || queryNotice.range === dateRange)
-        ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">篩選條件已就緒；專案分析功能尚未開放，目前不會查詢分析資料。</p>
+        ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">篩選條件已就緒；專案回顧與趨勢功能尚未開放，目前不會查詢分析資料。</p>
         : null}
     </form>
   )

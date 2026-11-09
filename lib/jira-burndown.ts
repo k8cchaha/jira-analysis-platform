@@ -9,16 +9,17 @@ import { searchJiraIssues, dashboardJiraBaseUrl } from "@/lib/jira-dashboard"
 import {
   sprintParentIssuesJql,
   sprintDevTasksJql,
-  sprintDevTasksDoneOnJql,
-  sprintDevTasksDoneBeforeJql,
 } from "@/lib/jira-jql"
 import { STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD } from "@/lib/jira-fields"
 import {
   computeBurndownSeries,
+  burndownLastDate,
   type BurndownDay,
   type BurndownTask,
   type BurndownUnestimated,
 } from "@/lib/burndown-series"
+import { jiraFetch, JiraTransportError } from "@/lib/jira-http"
+import { createBurndownCompletionResolver } from "@/lib/burndown-completion"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 
@@ -33,6 +34,7 @@ export type BurndownErrorCode =
   | "invalid_response"
   | "limit"
   | "request_failed"
+  | "retry"
 
 export type { BurndownDay, BurndownTask, BurndownUnestimated }
 
@@ -57,8 +59,6 @@ export interface BurndownData {
 }
 
 const MAX_DEVTASKS = 5_000
-/** 每日查詢的天數上限（防止超長 sprint 產生大量查詢）。 */
-const MAX_DAILY_QUERIES = 60
 
 function pointValue(value: unknown): number | null {
   if (value === null || value === undefined) return null
@@ -83,9 +83,8 @@ function actualPointValue(value: unknown): number | null {
 }
 
 /**
- * 燃盡圖的「基底」資料（步驟 1+2 的結果，尚未做逐日 done-at 標記）。
- * SSE 路由先把這一塊送給 client 畫出圖表骨架；逐日資料以 `iterateDoneDays`
- * 流式補上。以 `YYYY-MM-DD` `today` 與 credential 注入，維持純、可測。
+ * 完整燃盡圖資料集：所有分頁及 resolutiondate 投影完成後才回傳。
+ * SSE 一次傳送所有完成 markers，client 只做站內團隊重算。
  */
 export interface BurndownBase {
   sprint: Pick<SprintRecord, "id" | "name" | "startDate" | "endDate">
@@ -93,7 +92,7 @@ export interface BurndownBase {
   empty: boolean
   parentKeys: string[]
   totalPoints: number
-  /** 已估計 Dev-Task，`doneDate` 全為 null（尚未標記）。 */
+  /** 已估計 Dev-Task，完成日期／開局標記已完整投影。 */
   tasks: BurndownTask[]
   unestimated: BurndownUnestimated[]
 }
@@ -107,6 +106,9 @@ export async function getBurndownBase(
   today: string,
   credentials: JiraCredentials
 ): Promise<BurndownBase> {
+  let lastDate: string | null
+  try { lastDate = burndownLastDate(sprint.startDate, sprint.endDate, today) }
+  catch { throw new JiraBurndownError("invalid_response", "Sprint 日期無效。") }
   // 1. 撈此 sprint 的母票（Story / Task / Bug）。request `status` 與 `assignee`，
   //    供「受阻母票計為已完成」的 checkbox 與受阻彈窗（母票狀態／母票 Owner）用。
   const parentKeys = new Set<string>()
@@ -137,14 +139,21 @@ export async function getBurndownBase(
   let total = 0
 
   if (!empty) {
+    const timeZone = await jiraAccountTimeZone(credentials)
+    let resolveCompletion: ReturnType<typeof createBurndownCompletionResolver>
+    try { resolveCompletion = createBurndownCompletionResolver(timeZone, sprint.startDate, lastDate) }
+    catch { throw new JiraBurndownError("invalid_response", "Jira 帳號時區無效，無法判定完成日期。") }
     // 2. 撈全部 Dev-Task：給 tasks 填上 points / actualPoints / assignee，未估計進清單。
     for await (const issues of searchJiraIssues(
       credentials,
       sprintDevTasksJql(keys),
-      ["summary", "status", "assignee", "parent", STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD]
+      ["summary", "status", "assignee", "parent", "resolutiondate", STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD]
     )) {
       for (const issue of issues) {
         const points = pointValue(issue.fields[STORY_POINTS_FIELD])
+        let completion: ReturnType<typeof resolveCompletion>
+        try { completion = resolveCompletion(issue.fields.resolutiondate) }
+        catch { throw new JiraBurndownError("invalid_response", "Jira 回傳了無法識別的 Resolved 日期，無法提供精確結果。") }
         if (points === null) {
           unestimated.push({
             key: issue.key,
@@ -162,8 +171,7 @@ export async function getBurndownBase(
             typeof issue.fields.summary === "string" ? issue.fields.summary : null,
           points,
           actualPoints: actualPointValue(issue.fields[ACTUAL_STORY_POINTS_FIELD]),
-          doneDate: null,
-          doneBeforeStart: false,
+          ...completion,
           status: statusName(issue.fields.status),
           parentStatus: parentStatusOf(issue.fields.parent, parentInfo),
           parentAssigneeDisplayName: parentAssigneeOf(issue.fields.parent, parentInfo),
@@ -172,23 +180,6 @@ export async function getBurndownBase(
           parentIssueType: parentIssueTypeOf(issue.fields.parent),
         })
         total += points
-      }
-    }
-
-    // 2b. 找出「sprint 開始日之前就已 Done」的 Dev-Task，標記 `doneBeforeStart`，
-    //     供空起點格顯示綠色已完成量（計入總點數與剩餘）。以母票範圍 + 完成
-    //     時點早於開跑日的查詢取得，標記在既有 task 上而非常新一份。
-    const before = new Set<string>()
-    for await (const issues of searchJiraIssues(
-      credentials,
-      sprintDevTasksDoneBeforeJql(keys, sprint.startDate),
-      []
-    )) {
-      for (const issue of issues) before.add(issue.key)
-    }
-    if (before.size > 0) {
-      for (const task of tasks) {
-        if (before.has(task.key)) task.doneBeforeStart = true
       }
     }
   }
@@ -202,32 +193,6 @@ export async function getBurndownBase(
     totalPoints: roundedTotal,
     tasks,
     unestimated,
-  }
-}
-
-/**
- * 步驟 3：逐日撈「當天切到 Done」的 Dev-Task，逐日 `yield { date, keys }`。
- * 以 key 傳遞最小化 payload，client 端自對應到 task。錯誤（limit /
- * invalid_response / reauthorize）直接往上拋，由呼叫端（`getBurndownData`
- * 或 SSE 路由）決定如何處理。
- */
-export async function* iterateDoneDays(
-  sprint: Pick<SprintRecord, "id" | "startDate" | "endDate">,
-  today: string,
-  credentials: JiraCredentials,
-  parentKeys: string[]
-): AsyncGenerator<{ date: string; keys: string[] }> {
-  // 未來（超過今天）尚未發生，不發查詢。
-  for (const date of eachDayUpTo(sprint.startDate, sprint.endDate, today)) {
-    const keys: string[] = []
-    for await (const issues of searchJiraIssues(
-      credentials,
-      sprintDevTasksDoneOnJql(parentKeys, date),
-      [STORY_POINTS_FIELD]
-    )) {
-      for (const issue of issues) keys.push(issue.key)
-    }
-    yield { date, keys }
   }
 }
 
@@ -261,20 +226,6 @@ export async function getBurndownData(
     }
   }
 
-  // 3. 逐日把 doneDate 刻回對應 task，再算完整系列（維持既有行為）。
-  const byKey = new Map(base.tasks.map((task) => [task.key, task]))
-  for await (const { date, keys } of iterateDoneDays(
-    sprint,
-    today,
-    credentials,
-    base.parentKeys
-  )) {
-    for (const key of keys) {
-      const task = byKey.get(key)
-      if (task) task.doneDate = date
-    }
-  }
-
   const series = computeBurndownSeries({
     startDate: sprint.startDate,
     endDate: sprint.endDate,
@@ -295,49 +246,34 @@ export async function getBurndownData(
   }
 }
 
-/** 產生 [start, end] 每天但只到 today（含）、最多 60 天的 `YYYY-MM-DD`。 */
-function* eachDayUpTo(
-  start: string,
-  end: string,
-  today: string
-): IterableIterator<string> {
-  const current = parseDate(start)
-  const capped = parseDate(today < end ? today : end)
-  const stop = capped < maxDay(current) ? capped : maxDay(current)
-  for (;;) {
-    yield toIsoDate(current)
-    if (current >= stop) return
-    current.setUTCDate(current.getUTCDate() + 1)
+/** 與 search 共用同一 OAuth 身分；Jira 會回 profile 時區或 instance default。 */
+async function jiraAccountTimeZone(credentials: JiraCredentials): Promise<string> {
+  if (typeof credentials.viewerId !== "string" || !credentials.viewerId.trim()) {
+    throw new JiraBurndownError("invalid_response", "Jira 帳號身分不完整，無法判定完成日期。")
   }
-}
-
-function maxDay(start: Date): Date {
-  const day = new Date(start.getTime())
-  day.setUTCDate(day.getUTCDate() + (MAX_DAILY_QUERIES - 1))
-  return day
-}
-
-function parseDate(date: string): Date {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
-  if (!match) {
-    throw new JiraBurndownError("invalid_response", "Sprint 日期格式無效。")
+  let response: Response
+  try {
+    response = await jiraFetch(credentials, "/rest/api/3/myself", {
+      method: "GET", redirect: "error", signal: AbortSignal.timeout(20_000),
+    })
+  } catch (error) {
+    if (error instanceof JiraTransportError) throw new JiraBurndownError("retry", "暫時無法讀取 Jira 帳號時區，請稍後重試。")
+    throw error
   }
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const value = new Date(Date.UTC(year, month - 1, day))
-  if (
-    value.getUTCFullYear() !== year ||
-    value.getUTCMonth() !== month - 1 ||
-    value.getUTCDate() !== day
-  ) {
-    throw new JiraBurndownError("invalid_response", "Sprint 日期無效。")
+  if (!response.ok) {
+    if (response.status === 401) throw new JiraBurndownError("reauthorize", "Jira 授權已失效，請重新授權。")
+    if (response.status === 403) throw new JiraBurndownError("request_failed", "無法讀取 Jira 帳號時區，請確認 read:jira-user 授權。")
+    throw new JiraBurndownError("retry", "暫時無法讀取 Jira 帳號時區，請稍後重試。")
   }
-  return value
-}
-
-function toIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10)
+  let profile: unknown
+  try { profile = await response.json() }
+  catch { throw new JiraBurndownError("invalid_response", "Jira 帳號時區資料無法識別。") }
+  if (typeof profile !== "object" || profile === null || Array.isArray(profile) ||
+      !("accountId" in profile) || profile.accountId !== credentials.viewerId ||
+      !("timeZone" in profile) || typeof profile.timeZone !== "string") {
+    throw new JiraBurndownError("invalid_response", "Jira 帳號身分或時區資料不完整，無法判定完成日期。")
+  }
+  return profile.timeZone
 }
 
 /** 從 Jira assignee 物件取出顯示名稱（可能為 null）。 */

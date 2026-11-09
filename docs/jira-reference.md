@@ -1,6 +1,6 @@
 # Jira 技術參考
 
-[回功能總覽](README.md) · 基準：2026-11-09目前工作目錄（含By Resolved），不是live Jira驗證或部署紀錄。
+[回功能總覽](README.md) · 基準：2026-11-10目前本機工作目錄（含尚未提交的Burn Down固定Resolved與專案回顧與趨勢整合），不是live Jira驗證或部署紀錄。
 
 ## 1. 「Jira指令」分三層閱讀
 | 層次 | 回答的問題 | 權威來源 |
@@ -45,11 +45,10 @@ JQL是查詢語言，不是工時或Insight計算引擎。`POST /search/jql`是�
 | PlanningReporter補查 | `epicIssuesByKeyJql()` | 補Epic Reporter；不是子票完成分析 |
 | Planning圖表外連 | `sprintChildTasksOfParentTypeJql()`、`sprintChildTasksOfDevTypeJql()`、`sprintChildTasksUnclassifiedDevTypeJql()` | 不保留Team；未分類只查EMPTY |
 | Burn Down母體 | `sprintParentIssuesJql()`→`sprintDevTasksJql()` | 已估Dev-only用於聚合 |
-| Burn Down舊完成 | `sprintDevTasksDoneBeforeJql()`／`sprintDevTasksDoneOnJql()` | 歷史Done transition，逐日keys |
-| Burn Down By Resolved | `sprintDevTasksResolvedBeforeJql()`／`sprintDevTasksResolvedOnJql()` | 現行resolved、半開日期，不fallback |
+| Burn Down完成 | 同份 Dev-Task REST `resolutiondate`＋`createBurndownCompletionResolver()` | 完整分頁後依驗證帳號時區分組，無額外開局／逐日JQL、不fallback；舊completion builders已移除 |
 | 工作量 | `workloadDoneDuringJql()`／`workloadDevTasksJql()` | 期間曾Done的Dev，再按當前欄位投影 |
 | 舊Assigned service | `RECENT_ASSIGNED_ISSUES_JQL`／`recentAssignedIssuesUpdateJql()` | 固定本人created近30天；目前無頁面 |
-| Capacity、ComingSoon頁 | 無功能資料query | Capacity mock；專案分析只有篩選；其餘未接入 |
+| Capacity、專案回顧與趨勢、其餘ComingSoon頁 | 無功能資料query | Capacity mock；專案回顧與趨勢沿用Projects篩選，無分析引擎／圖表／計算；其餘未接入 |
 
 保留的Dev-only `sprintUnestimatedJql()`／`sprintUnassignedJql()`不是目前Planning Dev＋QA清單來源。共用analysis builders存在不代表ComingSoon頁已接入。
 
@@ -124,18 +123,15 @@ parent in (SUN-50, SUN-51) AND issuetype in ("Dev-Task", "QA-Task") AND cf[10005
 ```
 未分派改由具名builder加`assignee is empty`；未開子單需要service差集，沒有本頁使用的單一「無子單」JQL。
 
-**K. Burn Down原始Done日**：`sprintDevTasksDoneOnJql(keys, "2026-10-26")`
+**K. Burn Down全部Dev工作單**：`sprintDevTasksJql(["SUN-50", "SUN-51"])`
 ```jql
-parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "2026-10-26"
+parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task"
 ```
+完整搜尋分頁包含 REST `resolutiondate`。server 用同 credentials 的 `GET /rest/api/3/myself` 驗證帳號及取得時區，再以 `createBurndownCompletionResolver()` 將帶 offset 的 timestamp 投影為帳號日曆日期：start 前為開局，其後在最後可見日內依日分組。**不另查開局或每日完成JQL**，不加目前status、不用updated或UTC+8補值、不把區間後完成夾到末日。非法非空日期或帳號／時區資料失敗，回受控錯誤，不展示部分資料。
 
-**L. By Resolved每日**：`sprintDevTasksResolvedOnJql(keys, "2026-10-26")`
-```jql
-parent in (SUN-50, SUN-51) AND issuetype = "Dev-Task" AND resolved >= "2026-10-26" AND resolved < "2026-10-27"
-```
-開局before-builder為`resolved < startDate`，不加目前status、不用updated補值。
+Burn Down已移除By Resolved checkbox及舊Done-transition／逐日Resolved查詢；新網址不帶旗標，缺省或單一舊`byResolved=1`都走同一Resolved規則，非法／重複旗標在credentials與Jira I/O前拒絕。受阻母票覆寫仍預設啟用，可使Resolved空白的工作單計完成，取消它才是純Resolved結果。
 
-**M. 工作量期間**：`workloadDevTasksJql(resolvedScope, { from: "2026-10-05", to: "2026-11-03" })`
+**L. 工作量期間**：`workloadDevTasksJql(resolvedScope, { from: "2026-10-05", to: "2026-11-03" })`
 ```jql
 issuetype = "Dev-Task" AND status CHANGED TO "Done" DURING ("2026-10-05", "2026-11-03") AND assignee = "example-account" AND project in (sun) ORDER BY key ASC
 ```
@@ -152,9 +148,10 @@ Jira請求由server透過OAuth cloud transport：`https://api.atlassian.com/ex/j
 | PUT `/rest/api/3/issue/{id}` | field-only更新，要求HTTP204 | Dashboard合格self補填；Assigned僅保留service |
 | GET `/rest/api/3/user/search` | display name搜尋，最多前20結果 | Dashboard指定人 |
 | GET `/rest/api/3/user?accountId=…` | server再次驗身分 | person scope |
+| GET `/rest/api/3/myself` | 同search credentials的accountId／timeZone；需`read:jira-user` | Burn Down帳號時區分桶 |
 | GET `/rest/api/3/group/member?groupname=…` | startAt分頁、完整會員 | team scope、共用預載、Planning群組輔助 |
 
-**沒有接入Jira Agile Sprint API**：Project與Sprint records目前是本機配置。Capacity沒有容量REST／PUT；ComingSoon頁沒有功能資料I/O，專案分析共用Team可能讀metadata但不查分析數據。
+**沒有接入Jira Agile Sprint API**：Project與Sprint records目前是本機配置。Capacity沒有容量REST／PUT；專案回顧與趨勢沒有分析JQL／REST或功能資料I/O，共用Team可能讀成員metadata但不查分析數據；其餘ComingSoon頁也未接入功能資料I/O。專案回顧、跨期趨勢與同條件比較集中於 `/analytics/projects`，舊趨勢／比較根路徑及已知子頁別名以307直接跳轉至該入口並保留所有query值（含無效／重複值），不新增Jira查詢或寫入。
 
 | 站內入口 | 資料流 |
 | --- | --- |
@@ -164,10 +161,10 @@ Jira請求由server透過OAuth cloud transport：`https://api.atlassian.com/ex/j
 | Dashboard `/api/dashboard/scrum-board`、`/lookups` | 看板與user／group metadata |
 | `updateMissingDataAction` | 驗證self提交→原始資格query＋IDs→live值／editmeta→field-onlyPUT |
 | Planning RSC＋`/api/sprint/planning/subset` | 主資料與3個品質清單，各自讀取 |
-| `/api/sprint/burndown/stream` | base母體與before標記→逐日keys→`base→day→done` |
+| `/api/sprint/burndown/stream` | 完整母票／Dev分頁＋帳號時區＋resolutiondate markers→`base→done`；收齊才顯示整圖／成員結果 |
 | `/api/analytics/workload/heatmap/stream` | 整期間搜尋、雙點數與缺值→`base→done`，無day掃描 |
 
-SSE不是Jira變更推播，仍是一次查詢／逐日掃描結果。EventSource讀不到非2xx body，開流前錯誤可能用**200＋error frame**呈現；JSON callers則取HTTP錯誤碼。判成功要看payload及done／error，不只HTTP200。
+SSE不是Jira變更推播，而是本次完整讀取結果。Burn Down不再發daily事件或逐日query，HTTP次數由資料分頁決定，不隨Sprint天數增加；任一分頁／日期投影失敗不發部分base或假done。EventSource讀不到非2xx body，開流前錯誤可能用**200＋error frame**呈現；JSON callers則取HTTP錯誤碼。判成功要看payload及done／error，不只HTTP200。
 
 ## 5. 跨功能數字與日期契約
 | 功能 | 母體／完成 | 缺值與0 | 時間與窗口 |
@@ -175,14 +172,13 @@ SSE不是Jira變更推播，仍是一次查詢／逐日掃描結果。EventSourc
 | Dashboard Points | 狀態依賴Dev＋QA缺值union；非完成度 | EMPTY／0可missing；補填只能正值 | nonself created近Nd；self無此窗口 |
 | Dashboard警示／看板 | 各base條件；看板排literalDone但其他狀態可能歸ToDo | count0只表示本query沒有匹配 | Jira due日界；Pending瀏覽器Updated日差；Bug完整24h；self看板local created-or-updated |
 | Planning | Sprint母票下Dev＋QA，全狀態 | null／非法加總0，0保留但未估JQL含0 | 本機Sprint、app UTC今天；無近Nd |
-| Burn Down預設 | 已估Dev，歷史Done ON／BEFORE | nullSP排除，0有效；非法SP報錯 | Jira轉換日界、UTC今天、min(today,end)、最多60天 |
-| Burn Down Resolved | 同Dev母體，現行resolved；另有受阻覆寫 | Resolved空不命中日期，無fallback；覆寫仍可計完成 | Jira帳號解讀`[day,nextDay)`；不將區間後完成夾到末日 |
+| Burn Down | 已估Dev，完整載入現行resolutiondate按日分組；另有預設啟用的受阻覆寫 | nullSP排除，0有效；非法SP／非空非法Resolved報錯；空日期無fallback，覆寫仍可計完成 | 驗證Jira帳號具名時區（含DST）；UTC今天、min(today,end,start+59天)；區間後完成不夾末日 |
 | 工作量 | 期間曾Done的Dev，再Resolved→Updated→末日投影 | SP／Actual獨立missing，0有效、不互補 | UTC+8分桶及截止；早於from排除、晚於to夾末日；週一起日>=from |
 | Capacity | 全mock | filled=false不代表容量0 | 固定10天×2；本機Project state不是Sprint紀錄 |
 
 三種百分比不相同：
 - **Planning分派比例**：已分派SP／有票Assignee的固定容量，SUN20／TKK40／PRIDE20。
-- **Burn Down完成度**：doneSP／全部已估SP，受目前選定完成規則與受阻覆寫影響。
+- **Burn Down完成度**：doneSP／全部已估SP，依現行Resolved與獨立受阻覆寫；取消覆寫後才是純Resolved結果。
 - **工作量Output%**：所選metric Total／（顯示週數×10），不是Planning容量或實際出勤。
 
 公式與明細限制以 [Planning](features/sprint-planning.md)、[Burn Down](features/sprint-burndown.md)、[工作量](features/analytics-workload.md) 的詳述為準。不能聲稱同一「已完成」在所有頁面得到相同答案。
@@ -190,6 +186,7 @@ SSE不是Jira變更推播，仍是一次查詢／逐日掃描結果。EventSourc
 ## 6. 授權、完整性與快取
 - Atlassian OAuth 3LO登入；read需要Jira read scopes，補填還需要`write:jira-work`及該票Jira編輯權限。user／group lookup需相應granular scopes及Jira瀏覽群組權限；新scope需重新授權，不會自動增加Jira permission。
 - credentials只server使用，encrypted HttpOnly session cookie不供browserJS讀token。文件不含credentials；導覽allowlist不代替server驗證。
+- Burn Down在母票非空時用相同credentials讀`/myself`，要求accountId等於server viewer、timeZone有效；Jira回profile時區或instance default。不接受client時區、不存進session、不靜默退UTC／UTC+8。現行OAuth scope定義包含`read:jira-user`，但未驗證真實grant。缺時區／身分不符為invalid_response，401要求重新授權，403為權限錯誤，transport／429／5xx可重試。公開規格：[Atlassian Myself REST API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-myself/)。
 - **Dashboard／工作量server scope**完整解析、先逐group排除再union／去重、驗accountId／project、維持限制；無效／不完整範圍失敗，不退self或較廣範圍。**Sprint頁的Team是已取資料client filter**，載入尚未完成可維持全體，不能當server授權邊界。
 - Dashboard補填保留原始self eligibility AND提交IDs；person／team讀取得到本人票也仍不可寫。非預期關閉只擴read。
 - SP更新要expected original及正值、schema／set檢查；Defect／Impact只補empty並驗allowed option IDs。GET與PUT非原子，一位小數投影也不是raw全精度CAS。

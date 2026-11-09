@@ -1,6 +1,6 @@
 # 功能說明文件
 
-這份文件以 **2026-11-09 目前 repository 工作目錄**為基準，包含尚未提交的 By Resolved 實作。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署版本證明、真實 Jira 資料報告或未來功能承諾**。
+這份文件以 **2026-11-10 目前 repository 本機工作目錄**為基準，包含尚未提交的 Burn Down 完整載入後依 Resolved 分析與「專案回顧與趨勢」整合。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署版本證明、真實 Jira 資料報告或未來功能承諾**。
 
 ## 建議閱讀方式
 - **第一次認識產品**：先看下方功能總覽，再讀對應頁面的「目的／Insight／使用方式」。
@@ -8,7 +8,7 @@
 - **開發、維護或稽核查詢**：看 [Jira 技術參考](jira-reference.md)，依 builder／service 回到程式來源。
 - **新增或更新文件**：使用 [功能頁文件模板](feature-template.md)。
 
-Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／PDF／Word 時應從這一份轉出，不另維護第二套內容。本次只建立 Markdown 文件，未產生或發布外部閱覽頁。
+Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／PDF／Word 時應從這一份轉出，不另維護第二套內容。功能說明以 Markdown 文件維護，未產生或發布外部閱覽頁。
 
 ## 狀態定義
 | 狀態 | 意義 |
@@ -26,11 +26,9 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | [開發狀況／Burn Down](features/sprint-burndown.md) | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
 | [Capacity](features/sprint-capacity.md) | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
 | [工作量分析](features/analytics-workload.md) | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
-| [專案分析](features/analytics-projects.md) | 選專案與Sprint／日期分析條件 | 範圍選擇不一致 | 尚無分析結果 | 部分實作；僅篩選介面 |
+| [專案回顧與趨勢](features/analytics-projects.md) | 整合專案回顧、跨期趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；目前僅可選專案與Sprint／日期條件 | 部分實作；沿用Projects篩選介面，無分析引擎 |
 | [團隊分析](features/analytics-team.md) | 規劃團隊工作摘要 | 團隊彙整負擔 | 尚無結果，規劃團隊視角 | 規劃中 |
 | [成員分析](features/analytics-members.md) | 規劃個人工作摘要 | 個人資料分散 | 尚無結果，規劃成員視角 | 規劃中 |
-| [趨勢分析](features/analytics-trends.md) | 規劃跨時間變化觀察 | 難區分波動與長期變化 | 尚無時間序列／預測 | 規劃中 |
-| [比較分析](features/analytics-comparison.md) | 規劃2～4個同類對象比較 | 比較口徑不一致 | 尚無比較結果 | 規劃中 |
 | [儲存的報表](features/reports-saved.md) | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中 |
 | [匯出紀錄](features/reports-exports.md) | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中 |
 | [系統設定](features/settings-system.md) | 規劃工作區設定入口 | 配置分散 | 管理用途，尚無操作 | 規劃中 |
@@ -39,13 +37,14 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 ### 補充路徑與舊功能
 - [Jira 連線資訊](features/settings-jira.md)：`/settings/jira` 路由存在，但不在目前主導覽分類；ComingSoon，無連線管理操作。
 - [指派給我的 Issues（舊服務）](features/legacy-assigned-issues.md)：舊 `/issues/assigned/list` **目前不存在**；只保留 service／JQL／測試，不能當可用頁面。
+- 原趨勢分析與比較分析已整合至 **專案回顧與趨勢**（唯一入口 `/analytics/projects`）；舊 `/analytics/trends`、`/analytics/comparison` 根路徑及其已知子頁別名，以 **307直接跳轉**至該入口，保留所有 query 值（含無效值與重複值），不先驗證或修正條件。舊文件保留為搬移提示，見 [趨勢分析搬移說明](features/analytics-trends.md)／[比較分析搬移說明](features/analytics-comparison.md)。
 - 登入、OAuth callback、根路徑跳轉及舊 analysis URL redirect 是支援流程，不另列分析功能頁。安全與授權見 [Jira 技術參考](jira-reference.md)。
 
-以上覆蓋目前 `app/(app)` 的15個功能頁路由，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
+以上覆蓋目前 `app/(app)` 的13個功能頁路由，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
 
 ## 五個閱讀前提醒
 1. **同名點數不一定有相同母體**：Planning Dev＋QA、Burn Down 已估Dev-only、工作量是期間曾Done的Dev、Dashboard缺值是狀態依賴的Dev＋QA。
-2. **完成日期不同**：Burn Down預設transition／可選Resolved；工作量取transition母體後以Resolved→Updated→末日投影，不能互套。
+2. **完成日期不同**：Burn Down固定Resolved，受阻母票可獨立覆寫；工作量取transition母體後以Resolved→Updated→末日投影，不能互套。
 3. **容量不同**：Planning固定點數、Capacity mock試算、工作量Output%的每週10點基準互不相通。
 4. **現值不是歷史快照**：assignee、SP、父子關係與Resolved可被修改；重查歷史可能得到不同結果。
 5. **Insight是追查線索**：票數、SP或百分比不是自動產生的因果、工時、效率或績效結論。
@@ -55,4 +54,4 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 - 完整production JQL只定義在 [jira-jql.ts](../lib/jira-jql.ts)，custom field mapping只在 [jira-fields.ts](../lib/jira-fields.ts)；文件範例不是第二份production定義。
 - 尚未接入的builders、介面或ToDo，不宣稱已實作；合成範例明確標示，不使用真實票資料、accountId或憑證。
 - 發版前以當時程式再確認「已實作／部分／規劃」與來源；本文件日期表示整理基準，不代表每次查詢的資料時間。
-- 本次整理採靜態程式查核與本機文件驗證，未新增產品程式、未呼叫live Jira或執行真實PUT。
+- 本次整合的查核採靜態／離線驗證及本機文件連結檢查，並非live Jira驗證；未呼叫live Jira或執行真實PUT，也不代表已部署。

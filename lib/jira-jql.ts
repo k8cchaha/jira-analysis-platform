@@ -114,26 +114,6 @@ export function sprintChildTasksUnassignedJql(parentKeys: readonly string[]): st
   return `${sprintChildTasksJql(parentKeys)} AND assignee is empty`
 }
 
-/** 某組母票之下、在某一天切到 Done 的 Dev-Task（每日完成度）。
- *  對應真實 JQL：`parent in (<keyA>, <keyB>, …) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "<date>"` */
-export function sprintDevTasksDoneOnJql(
-  parentKeys: readonly string[],
-  date: string
-): string {
-  const keys = enforcedSortedKeys(parentKeys)
-  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "${date}"`
-}
-
-/** 某組母票之下、在 `beforeDate` 之前就已切到 Done 的 Dev-Task（空起點格的綠色已完成量）。
- *  對應真實 JQL：`parent in (<keyA>, <keyB>, …) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "<beforeDate>"` */
-export function sprintDevTasksDoneBeforeJql(
-  parentKeys: readonly string[],
-  beforeDate: string
-): string {
-  const keys = enforcedSortedKeys(parentKeys)
-  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "${beforeDate}"`
-}
-
 /**
  * 儀表板下方的任務看板（跨專案）全部 active 開發單（Dev-Task + QA-Task）：套用上方
  * Dashboard scope 的 assignee（self→currentUser()；person→`=`；team→`in (...)`＋有選 project

@@ -68,7 +68,7 @@ function harness(today = "2026-10-21") {
   })
   const allowed = new Set([
     PAGE, FILTER, SELECTOR,
-    ...["story-points", "members", "trends", "comparison"].map((feature) => `app/(app)/analytics/${feature}/page.tsx`),
+    ...["story-points", "members"].map((feature) => `app/(app)/analytics/${feature}/page.tsx`),
     "components/coming-soon.tsx", "components/page-header.tsx",
     "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx", "components/search-button.tsx",
     "lib/projects-filter.ts", "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
@@ -782,9 +782,24 @@ describe("project Sprints multi-selection and navigation", () => {
 })
 
 describe("analysis subtitles and ComingSoon slot regressions", () => {
+  it("renders the consolidated title with the existing async filter props and honest planned purpose", async () => {
+    const h = harness()
+    const tree = await h.page({ project: "SUN", sprint: ["7518", "6823"] })
+    assert.equal(tree.props.title, "專案回顧與趨勢")
+    assert.match(tree.props.description, /回顧專案.*跨期趨勢.*相同條件.*比較/)
+    assert.equal(tree.props.showDescription, false)
+    assert.equal(tree.props.filters.type, h.load(FILTER).ProjectsFilter)
+    assert.equal(tree.props.filters.key, null, "do not remount and discard local filter drafts")
+    assert.equal(tree.props.filters.props.project, "SUN")
+    assert.deepEqual(plain(tree.props.filters.props.selectedSprintIds), [6823, 7518])
+    const markup = renderToStaticMarkup(tree)
+    assert.match(markup, /<h1[^>]*>專案回顧與趨勢<\/h1>/)
+    assert.match(markup, /專案回顧與趨勢功能尚未開放/)
+    assert.doesNotMatch(markup, /專案分析功能尚未開放/)
+  })
   it("hides header subtitles on all placeholder analysis pages but preserves planned content", async () => {
     const h = harness()
-    const pages = [await h.page(), ...["story-points", "members", "trends", "comparison"].map((feature) => h.load(`app/(app)/analytics/${feature}/page.tsx`).default())]
+    const pages = [await h.page(), ...["story-points", "members"].map((feature) => h.load(`app/(app)/analytics/${feature}/page.tsx`).default())]
     for (const tree of pages) {
       const markup = renderToStaticMarkup(tree)
       const header = markup.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0]

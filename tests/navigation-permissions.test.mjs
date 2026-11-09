@@ -66,7 +66,7 @@ describe("Analysis navigation", () => {
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
     assert.deepEqual(Array.from(analytics.features, (feature) => feature.routes[0].href), [
       "/analytics/workload", "/analytics/projects", "/analytics/story-points",
-      "/analytics/members", "/analytics/trends", "/analytics/comparison",
+      "/analytics/members",
     ])
     for (const feature of analytics.features) {
       assert.equal(feature.routes.length, 1)
@@ -76,50 +76,64 @@ describe("Analysis navigation", () => {
       })
     }
   })
-  it("orders project before team analysis and comparison directly after trends", () => {
+  it("consolidates project, trends and comparison before team analysis without changing visibility", () => {
     const nav = harness()
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
-    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案分析", "團隊分析", "成員分析", "趨勢分析", "比較分析"])
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案回顧與趨勢", "團隊分析", "成員分析"])
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.id), ["workload", "projects", "story-points", "members"])
     const team = analytics.features[2]
     assert.equal(team.icon, "members")
     assert.equal(team.routes[0].href, "/analytics/story-points")
     const project = analytics.features[1]
     assert.equal(analytics.features[3].icon, "person")
     assert.equal(project.icon, "projects")
-    assert.equal(project.routes[0].href, "/analytics/projects")
-    const comparison = analytics.features.at(-1)
-    assert.equal(comparison.icon, "comparison")
-    assert.deepEqual(JSON.parse(JSON.stringify(comparison.routes)), [{ href: "/analytics/comparison", label: "比較分析" }])
-    assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(comparison.routes[0].href))), { title: "比較分析", categoryId: "analytics" })
+    assert.deepEqual(JSON.parse(JSON.stringify(project.routes)), [{ href: "/analytics/projects", label: "專案回顧與趨勢" }])
     const adminCategories = nav.visibleNavigationCategories(nav.navigationCategories, nav.ADMIN_EMAILS[0])
-    assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "comparison"))
+    assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "projects"))
     assert.equal(nav.visibleNavigationCategories(nav.navigationCategories, "someone@example.com").length, 0)
-    for (const [path, title] of [[team.routes[0].href, "團隊分析"], [project.routes[0].href, "專案分析"]]) {
+    for (const [path, title] of [[team.routes[0].href, "團隊分析"], [project.routes[0].href, "專案回顧與趨勢"]]) {
       assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(path))), { title, categoryId: "analytics" })
     }
   })
 
-  it("keeps renamed team and new project destinations honest ComingSoon pages", () => {
+  it("keeps the consolidated async project page and team page honest ComingSoon destinations", async () => {
     for (const [path, title] of [
       ["app/(app)/analytics/story-points/page.tsx", "團隊分析"],
-      ["app/(app)/analytics/projects/page.tsx", "專案分析"],
-      ["app/(app)/analytics/comparison/page.tsx", "比較分析"],
+      ["app/(app)/analytics/projects/page.tsx", "專案回顧與趨勢"],
     ]) {
       const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
         fileName: path,
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
       }).outputText
       const ComingSoon = () => null
+      const ProjectsFilter = () => null
+      const params = { project: "SUN", sprint: ["7518", "6823"] }
+      const filter = { project: "SUN", mode: "sprints", selectedSprintIds: [6823, 7518], sprints: [], error: null }
+      let parserCalls = 0
       const mod = { exports: {} }
       const fixtureRequire = (name) => {
         if (name === "react/jsx-runtime") return require(name)
         if (name === "@/components/coming-soon") return { ComingSoon }
+        if (name === "./projects-filter") return { ProjectsFilter }
+        if (name === "@/lib/projects-filter") return { projectsFilterResult(input) {
+          assert.equal(input, params, "await the async searchParams without rewriting them")
+          parserCalls++
+          return filter
+        } }
         throw new Error(`Unexpected page import: ${name}`)
       }
       vm.runInNewContext(`(function(require,module,exports){${code}\n})`, {}, { filename: path })(fixtureRequire, mod, mod.exports)
-      const page = mod.exports.default()
+      const page = await mod.exports.default({ searchParams: Promise.resolve(params) })
       assert.equal(page.type, ComingSoon)
       assert.equal(page.props.title, title)
+      assert.equal(page.props.showDescription, false)
+      if (path.includes("/projects/")) {
+        assert.equal(parserCalls, 1)
+        assert.equal(page.props.filters.type, ProjectsFilter)
+        assert.equal(page.props.filters.key, null)
+        assert.deepEqual(JSON.parse(JSON.stringify(page.props.filters.props)), filter)
+        assert.match(page.props.description, /回顧.*趨勢.*比較/)
+      }
     }
   })
 

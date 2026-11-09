@@ -6,8 +6,6 @@ export type AppRoute =
   | "/analytics/workload"
   | "/analytics/story-points"
   | "/analytics/projects"
-  | "/analytics/trends"
-  | "/analytics/comparison"
   | "/analytics/members"
   | "/reports/saved/list"
   | "/reports/exports/list"
@@ -110,9 +108,9 @@ export const navigationCategories = [
       },
       {
         id: "projects",
-        label: "專案分析",
+        label: "專案回顧與趨勢",
         icon: "projects",
-        routes: [{ href: "/analytics/projects", label: "專案分析" }],
+        routes: [{ href: "/analytics/projects", label: "專案回顧與趨勢" }],
       },
       {
         id: "story-points",
@@ -125,18 +123,6 @@ export const navigationCategories = [
         label: "成員分析",
         icon: "person",
         routes: [{ href: "/analytics/members", label: "成員分析" }],
-      },
-      {
-        id: "trends",
-        label: "趨勢分析",
-        icon: "trends",
-        routes: [{ href: "/analytics/trends", label: "趨勢分析" }],
-      },
-      {
-        id: "comparison",
-        label: "比較分析",
-        icon: "comparison",
-        routes: [{ href: "/analytics/comparison", label: "比較分析" }],
       },
     ],
   },

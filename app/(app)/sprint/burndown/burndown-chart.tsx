@@ -99,7 +99,7 @@ export function BurndownChart({
 
   return (
     <div>
-      {/* 逐日長條的進場動畫：因 client 依日新增重繪、React 重用既有 key，只有新到當天才觸發。 */}
+      {/* 完整資料顯示時，長條一起播放既有進場動畫；不代表逐日載入。 */}
       <style>{`@keyframes burndown-bar-rise { from { transform: scaleY(0); } to { transform: scaleY(1); } } .burndown-bar-enter { transform-origin: bottom; animation: burndown-bar-rise 220ms ease-out; }`}</style>
       <svg
         viewBox={`0 0 ${W} ${H}`}
