@@ -2,6 +2,10 @@
 
 Next.js application that uses Atlassian OAuth 2.0 (3LO) for both application login and Jira Cloud API access.
 
+## 功能說明文件
+
+從 [功能總覽](docs/README.md) 查看各頁的目的、解決的問題、Insight 與實作狀態。各功能的指標、使用方式及限制整理在 [`docs/features/`](docs/features/)；JQL、REST API、欄位與日期口徑集中於 [Jira 技術參考](docs/jira-reference.md)。新增文件可使用 [功能頁模板](docs/feature-template.md)。
+
 ## Requirements
 
 - Node.js 20.9 or newer
@@ -58,15 +62,15 @@ Open the origin configured in `AUTH_URL`. The Jira login button performs one Atl
 
 After login, `/dashboard` is the personal summary landing page. The application shell exposes the complete planned navigation; unfinished destinations are explicit development-in-progress pages rather than simulated features.
 
-The working Issue editor is available at `/issues/assigned/list` and shows up to the latest 50 issues returned by:
+The former `/issues/assigned/list` route is not present in the current application. Its Story Points service and fixed recent-assignee query remain in the library, but are not a working editor:
 
 ```jql
 assignee = currentUser() AND created >= -30d ORDER BY created DESC
 ```
 
-The Assigned Issues page uses Jira field `customfield_10005` for Story Points. You can edit non-negative integer or decimal values, clear a value, and submit only the issues that changed. In JQL this field can also be referenced as `cf[10005]`; Jira REST request and response bodies use `customfield_10005`.
+See [Assigned Issues — retained legacy service](docs/features/legacy-assigned-issues.md). Its former non-negative/clear-value behavior must not be confused with the active Dashboard supplementation workflow, which requires positive submitted point values.
 
-Custom field mappings are centralized in `lib/jira-fields.ts`: Story Points, Actual Story Points, Dev Type, Impact Scope (`customfield_14848`) and Release Package (`customfield_13476`) have fixed IDs; Defect Cause, Root Cause, and Solution are resolved from Jira metadata by name and required schema. Both the Assigned Issues editor and dashboard use these shared definitions. Project-scoped resolution and per-issue edit permissions/options are still checked at runtime. Complete queries and query builders are centralized separately in `lib/jira-jql.ts`.
+Custom field mappings are centralized in `lib/jira-fields.ts`: Story Points, Actual Story Points, Dev Type, Impact Scope (`customfield_14848`) and Release Package (`customfield_13476`) have fixed IDs; Defect Cause, Root Cause, and Solution are resolved from Jira metadata by name and required schema. The Dashboard and retained legacy Assigned Issues service use these shared definitions. Project-scoped resolution and per-issue edit permissions/options are still checked at runtime. Complete queries and query builders are centralized separately in `lib/jira-jql.ts`.
 
 Reading issues requires `read:jira-work`; saving fields also requires `write:jira-work`.
 
@@ -114,7 +118,7 @@ const jql = dashboardAlertJql("overdue", scope) // scope 已由 server 驗證及
 4. **保留安全與範圍：**不可移除 server 驗證、專案交集、群組完整分頁／排除／去重、查詢長度限制，或放寬更新資格與 Issue ID 限制。集中管理不取代授權、原值比對與 Jira 編輯權限檢查。
 5. **同步維護文件與測試預期：**測試可保留查詢 literal 作為預期值、合成欄位 fixtures；文件可展示查詢，但兩者都不是 production 的第二份定義。依使用者授權執行驗證，未執行必須說明。
 
-Dashboard 的 **指定人／團隊・專案**模式，所有查詢都加上 `created >= -Nd`（預設 30 天）；**自己**不加這個近 N 天條件，但保留原始 JQL 自帶的 `updated`／`duedate` 等條件。這個例外不影響「指派給我的 Issues」頁面本來固定的 30 天查詢。Counts 與明細共用 builder；補填更新維持本人原始資格範圍並與提交的 Issue IDs 取交集。
+Dashboard 的 **指定人／團隊・專案**模式，所有查詢都加上 `created >= -Nd`（預設 30 天）；**自己**不加這個近 N 天條件，但保留原始 JQL 自帶的 `updated`／`duedate` 等條件。這個例外不影響保留的舊「指派給我的 Issues」查詢本來固定的 30 天條件；目前沒有該頁面路由。Counts 與明細共用 builder；補填更新維持本人原始資格範圍並與提交的 Issue IDs 取交集。
 
 以上是 repository 文件規則，並非新增 CI／hook 的自動強制檢查。
 
@@ -124,9 +128,9 @@ The first dashboard row shows exact, independently loaded Bug, due-reminder and 
 
 | Check | Base JQL (before assignee, nonself created-date and project conditions) |
 | --- | --- |
-| S0／S1 | `project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")` |
-| S2 超過10天未更新 | `project in (sun, tkk, jiratry, pride) and issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d` |
-| In Review | `issuetype in (DEV-Task, QA-Task) and status = "In Review"` |
+| S0／S1 | `issuetype = "Bug" AND priority IN ("Critical (P0)", "High (P1)") AND (statusCategory = "To Do" or status = "In Progress")` |
+| S2 超過10天未更新 | `issuetype = "Bug" AND priority IN ("Medium (P2)") AND (statusCategory = "To Do" or status = "In Progress") and updated < -10d` |
+| In Review | `status = "In Review"` |
 | Request Info | `status = "Request Info"` |
 | 已逾期 | `duedate < startOfDay() AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))` |
 | 即將到期 | `duedate >= startOfDay() AND duedate < startOfDay("+3d") AND (statusCategory = "To Do" or status in ("In Progress", "In Review"))` |
@@ -149,7 +153,7 @@ Its centralized base query is `project = sun and issuetype in (story, task, bug)
 
 ## Analysis navigation
 
-The Analysis menu is ordered as 工作量分析 → 專案分析 → 團隊分析 → 成員分析 → 趨勢分析 → 比較分析. 成員分析 uses a single-person icon; 團隊分析 uses a group icon, while Capacity uses a person-with-clock icon for available staffing and work hours. 團隊分析 replaces the former Story Points menu label, uses a people icon, and retains `/analytics/story-points` as its entry route. 專案分析 uses a project-folder icon and opens `/analytics/projects`. 比較分析 uses a side-by-side comparison icon and opens `/analytics/comparison`, intended to compare 2–4 same-type subjects under shared conditions. These destinations remain ComingSoon pages; these menu changes do not implement new analysis calculations.
+The Analysis menu is ordered as 工作量分析 → 專案分析 → 團隊分析 → 成員分析 → 趨勢分析 → 比較分析. 成員分析 uses a single-person icon; 團隊分析 uses a group icon, while Capacity uses a person-with-clock icon for available staffing and work hours. 團隊分析 replaces the former Story Points menu label, uses a people icon, and retains `/analytics/story-points` as its entry route. 專案分析 uses a project-folder icon and opens `/analytics/projects`. 比較分析 uses a side-by-side comparison icon and opens `/analytics/comparison`, intended to compare 2–4 same-type subjects under shared conditions. Workload analysis is implemented with live Jira reads; Project analysis currently provides filters without an analysis engine. Team, member, trend and comparison analysis remain ComingSoon. See the [feature overview](docs/README.md) for purposes, Insights and current implementation status.
 
 Every Analysis feature has one canonical page route: `/analytics/workload`, `/analytics/projects`, `/analytics/story-points`, `/analytics/members`, `/analytics/trends`, and `/analytics/comparison`. There are no summary/detail/distribution/breakdown/comparison-view subpages. 比較分析 remains a distinct feature at `/analytics/comparison`. The 14 known legacy subpage URLs redirect to their feature root with 307 and preserve query values, including repeated selections; unknown subpaths are not redirected. API routes are unchanged.
 
@@ -180,7 +184,7 @@ Ranges are plain `YYYY-MM-DD` calendar days in the **browser's local timezone**,
 
 `lib/date-range.ts` holds the pure date arithmetic (parsing, shifting, preset expansion, matching, the 3,660-day ceiling) with no I/O or React. Analysis JQL lives in `lib/jira-jql.ts`: `analysisDateJql` emits the inclusive bounds (`created` compares through `23:59` because it carries a time; `<= "YYYY-MM-DD"` suffices for date-only fields) and `analysisRangeJql` composes it over a centrally defined query with a single stable sort. Per [AGENTS.md](AGENTS.md#jira-fields-and-jql--mandatory-ownership), consumers import these builders and must not concatenate date conditions themselves. Invalid, reversed, malformed and oversized ranges fail rather than widening.
 
-These controls provide the applied scope and date range for the workload heatmap below. The other workload routes remain ComingSoon; this page adds no Jira write behavior.
+These controls provide the applied scope and date range for the workload heatmap below. Legacy workload subpage URLs redirect to this canonical page; this page adds no Jira write behavior.
 
 ## Workload heatmap
 
