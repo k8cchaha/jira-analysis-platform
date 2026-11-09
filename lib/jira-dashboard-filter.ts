@@ -12,10 +12,12 @@ export const DASHBOARD_PROJECTS = [
 ] as const
 
 export interface DashboardUser { accountId: string; displayName: string }
-export type DashboardFilter =
+export type DashboardReadOptions = { includeUnexpectedClosed?: boolean }
+export type DashboardFilter = DashboardReadOptions & (
   | { mode: "self" }
   | { mode: "person"; accountId: string; name: string; days: number }
   | { mode: "team-project"; groups: string[]; exclusions: Record<string, string[]>; projects: string[]; days: number }
+)
 export type ResolvedDashboardScope =
   | { mode: "self" }
   | { mode: "person" | "team-project"; accountIds: string[]; projects: string[]; days: number }
@@ -24,7 +26,7 @@ export const SELF_FILTER: DashboardFilter = { mode: "self" }
 export const DASHBOARD_URL_LIMIT = 16_384
 export const DASHBOARD_MEMBER_LIMIT = 1_000
 export const DASHBOARD_JQL_LIMIT = 32_000
-const filterKeys = new Set(["mode", "accountId", "name", "days", "group", "exclude", "project"])
+const filterKeys = new Set(["mode", "accountId", "name", "days", "group", "exclude", "project", "includeUnexpectedClosed"])
 const teamNames = new Set<string>(DASHBOARD_TEAMS.map((team) => team.group))
 const projectKeys = new Set<string>(DASHBOARD_PROJECTS.map((project) => project.key))
 
@@ -33,6 +35,11 @@ export class DashboardFilterError extends Error {
     super(message)
     this.name = "DashboardFilterError"
   }
+}
+/** Display population only; never part of resolved authorization or write eligibility. */
+export function includesUnexpectedClosed(options: DashboardReadOptions): boolean {
+  if (options.includeUnexpectedClosed !== undefined && typeof options.includeUnexpectedClosed !== "boolean") throw new DashboardFilterError()
+  return options.includeUnexpectedClosed === true
 }
 export function isDashboardAccountId(value: unknown): value is string {
   return typeof value === "string" && /^[a-zA-Z0-9:_-]{1,128}$/.test(value)
@@ -66,14 +73,17 @@ export function parseDashboardFilter(params: URLSearchParams, allowedExtras: str
   for (const key of params.keys()) if (!filterKeys.has(key) && !allowedExtras.includes(key)) throw new DashboardFilterError()
   const mode = single(params, "mode") ?? "self"
   if (!["self", "person", "team-project"].includes(mode)) throw new DashboardFilterError()
-  // Inactive fields are discarded when a mode is serialized, not used to broaden its query.
-  if (mode === "self") return SELF_FILTER
+  const unexpectedClosed = single(params, "includeUnexpectedClosed")
+  if (unexpectedClosed !== null && unexpectedClosed !== "1") throw new DashboardFilterError()
+  const readOptions: DashboardReadOptions = unexpectedClosed === "1" ? { includeUnexpectedClosed: true } : {}
+  // Inactive scope fields are discarded, but the shared read option survives every mode.
+  if (mode === "self") return unexpectedClosed === null ? SELF_FILTER : { mode, ...readOptions }
   const days = dashboardDays(single(params, "days") ?? "30")
   if (mode === "person") {
     const accountId = single(params, "accountId")
     const name = single(params, "name") ?? ""
     if (!isDashboardAccountId(accountId) || name.length > 200 || /[\u0000-\u001f]/.test(name)) throw new DashboardFilterError()
-    return { mode, accountId, name, days }
+    return { mode, accountId, name, days, ...readOptions }
   }
   const groups = unique(params.getAll("group"))
   const projects = unique(params.getAll("project"))
@@ -89,7 +99,7 @@ export function parseDashboardFilter(params: URLSearchParams, allowedExtras: str
     ;(exclusions[group] ??= []).push(accountId)
   }
   for (const group of Object.keys(exclusions)) exclusions[group] = unique(exclusions[group])
-  return { mode: "team-project", groups, exclusions, projects, days }
+  return { mode: "team-project", groups, exclusions, projects, days, ...readOptions }
 }
 export function dashboardFilterResult(params: URLSearchParams): DashboardFilterResult {
   try { return { filter: parseDashboardFilter(params), error: null } }
@@ -109,6 +119,7 @@ export function serializeDashboardFilter(filter: DashboardFilter): string {
     }
     if (filter.days !== 30) params.set("days", String(filter.days))
   }
+  if (includesUnexpectedClosed(filter)) params.set("includeUnexpectedClosed", "1")
   parseDashboardFilter(params)
   return params.toString()
 }

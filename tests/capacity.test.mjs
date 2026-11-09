@@ -26,7 +26,7 @@ function harness({ now = "2026-10-21T12:00:00.000Z", session = { user: { id: "vi
   const allowed = new Set([
     `${base}page.tsx`, `${base}capacity-client.tsx`, `${base}capacity-panel.tsx`, selectorPath,
     "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
-    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts",
+    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "components/project-selector.tsx",
   ])
   class FrozenDate extends Date {
     constructor(...args) { super(...(args.length ? args : [now])) }
@@ -36,6 +36,7 @@ function harness({ now = "2026-10-21T12:00:00.000Z", session = { user: { id: "vi
     getDate() { return forbidden("local date extraction") }
   }
   const react = {
+    useId: () => "fixture-project",
     useState(initial) {
       const index = cursor++
       const current = slots
@@ -295,13 +296,18 @@ describe("Capacity client and actual SprintSelector callbacks", () => {
     const selectorProps = component(draw(), "SprintSelector").props
     const selectorState = []
     const select = () => h.draw(h.SprintSelector, selectorProps, selectorState)
-    const dropdown = (kind) => one(select(), (node) => node.type.name === "FilterDropdown" && node.props.kind === kind, kind)
+    const projectState = []
+    const projectSelect = () => {
+      const node = component(select(), "ProjectSelector")
+      return h.draw(node.type, node.props, projectState)
+    }
+    const dropdown = (kind) => one(kind === "project" ? projectSelect() : select(), (node) => node.type.name === "FilterDropdown" && node.props.kind === kind, kind)
     dropdown("project").props.onOpenChange(true)
     assert.equal(dropdown("project").props.open, true)
-    one(select(), (node) => node.props?.role === "radio" && node.key === "SUN").props.onClick()
+    one(projectSelect(), (node) => node.props?.role === "radio" && node.key === "SUN").props.onClick()
     assert.equal(h.paths.length, 0, "active project is a no-op")
     assert.equal(dropdown("project").props.open, false)
-    one(select(), (node) => node.props?.role === "radio" && node.key === "TKK").props.onClick()
+    one(projectSelect(), (node) => node.props?.role === "radio" && node.key === "TKK").props.onClick()
     assert.deepEqual(h.paths, ["/sprint/capacity?project=TKK"])
     const status = one(draw(), (node) => node.props?.role === "status")
     assert.equal(status.props["aria-label"], "正在更新 Capacity")

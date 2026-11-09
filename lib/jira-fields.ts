@@ -15,6 +15,16 @@ export const JIRA_FIELDS = {
     name: "Dev Type",
     schema: { type: "option" },
   },
+  /** Known ID; select mode/schema must be discovered from Jira at runtime. */
+  impactScope: {
+    id: "customfield_14848",
+    name: "Impact Scope",
+  },
+  /** Known ID; read-only JQL references do not assume a field schema. */
+  releasePackage: {
+    id: "customfield_13476",
+    name: "Release Package",
+  },
   // These IDs are resolved from Jira metadata by name and schema.
   defectCause: {
     name: "Defect Cause",
@@ -34,6 +44,17 @@ export const JIRA_FIELDS = {
     schema: { type: "string" },
   },
 } as const
+
+/** Only Jira's standard select types are supported; fixed field definitions do not assume a mode. */
+export function jiraSelectMode(schema: unknown): "single" | "multi" | null {
+  if (matchesJiraFieldSchema(schema, {
+    type: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:select",
+  }) && (schema as Record<string, unknown>).items === undefined) return "single"
+  if (matchesJiraFieldSchema(schema, {
+    type: "array", items: "option", custom: "com.atlassian.jira.plugin.system.customfieldtypes:multiselect",
+  })) return "multi"
+  return null
+}
 
 export const STORY_POINTS_FIELD = JIRA_FIELDS.storyPoints.id
 export const ACTUAL_STORY_POINTS_FIELD = JIRA_FIELDS.actualStoryPoints.id

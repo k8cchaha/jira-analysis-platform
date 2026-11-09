@@ -77,6 +77,8 @@ export function BurndownClient({
   const [showBar, setShowBar] = useState(true)
   /** 勾選「受阻母票計為已完成」：母票受阻的 Dev-Task 在圖表與開發狀況都視為完成。預設勾選。 */
   const [countParentBlocked, setCountParentBlocked] = useState(true)
+  /** 預留另一種圖表模式；目前僅停用原有顯示選項，不改變圖表或查詢。 */
+  const [showMidSprintIssues, setShowMidSprintIssues] = useState(false)
   /** 被點擊的長條（一般日完成／開局前已完成／受阻母票）；null 表示未開啟彈窗。 */
   const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean; blocked?: boolean } | null>(null)
 
@@ -256,39 +258,49 @@ export function BurndownClient({
                         {" "}（{sprint.startDate} → {sprint.endDate}）
                       </span>
                     </h2>
-                <div className="flex items-center gap-3">
-                  <div role="group" aria-label="圖形顯示" className="flex items-center gap-3">
-                    <label className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
+                <div role="group" aria-label="圖形顯示" className="flex min-w-0 flex-col items-start gap-2 sm:items-end">
+                  <fieldset disabled={showMidSprintIssues} className={`flex min-w-0 flex-wrap items-center gap-3 ${showMidSprintIssues ? "opacity-50 grayscale" : ""}`}>
+                    <legend className="sr-only">原有圖形顯示選項</legend>
+                    <label className={`flex items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200 ${showMidSprintIssues ? "cursor-not-allowed" : "cursor-pointer"}`}>
                       <input
                         type="checkbox"
                         checked={showLine}
-                        onChange={(event) => setShowLine(event.target.checked)}
+                        onChange={(event) => { if (!showMidSprintIssues) setShowLine(event.target.checked) }}
                         className="h-4 w-4 shrink-0 accent-rose-600"
                       />
                       剩餘點數
                     </label>
-                    <label className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
+                    <label className={`flex items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200 ${showMidSprintIssues ? "cursor-not-allowed" : "cursor-pointer"}`}>
                       <input
                         type="checkbox"
                         checked={showBar}
-                        onChange={(event) => setShowBar(event.target.checked)}
+                        onChange={(event) => { if (!showMidSprintIssues) setShowBar(event.target.checked) }}
                         className="h-4 w-4 shrink-0 accent-blue-600"
                       />
                       已完成
                     </label>
                     <label
-                      className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200"
+                      className={`flex items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200 ${showMidSprintIssues ? "cursor-not-allowed" : "cursor-pointer"}`}
                       title="母票處於受阻狀態（如 Request Info）時，其 Dev-Task 視為已完成來計算剩餘與完成度。"
                     >
                       <input
                         type="checkbox"
                         checked={countParentBlocked}
-                        onChange={(event) => setCountParentBlocked(event.target.checked)}
+                        onChange={(event) => { if (!showMidSprintIssues) setCountParentBlocked(event.target.checked) }}
                         className="h-4 w-4 shrink-0 appearance-none rounded-sm border border-yellow-600 bg-white checked:border-yellow-600 checked:bg-yellow-600 checked:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%2016%2016%27%20fill=%27none%27%20stroke=%27%23ffffff%27%20stroke-width=%272.4%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M3.5%208.5l3%203L12.5%205.5%27/%3E%3C/svg%3E')] checked:bg-[length:0.9rem_0.9rem] checked:bg-center checked:bg-no-repeat dark:bg-slate-900"
                       />
                       受阻母票計為已完成
                     </label>
-                  </div>
+                  </fieldset>
+                  <label className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={showMidSprintIssues}
+                      onChange={(event) => setShowMidSprintIssues(event.target.checked)}
+                      className="h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    />
+                    中途加入的票
+                  </label>
                 </div>
               </div>
               <p className="mb-4 text-sm text-slate-600 dark:text-slate-400">

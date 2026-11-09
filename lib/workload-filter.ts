@@ -21,7 +21,7 @@ import { requireDateRange, type DateRange } from "@/lib/date-range"
  * the heatmap builders in `lib/jira-jql.ts` (Dev-Task completion, same as the Burndown chart);
  * this module only validates and serializes the conditions.
  */
-export type WorkloadFilter = Omit<Extract<DashboardFilter, { mode: "team-project" }>, "mode" | "days"> & DateRange
+export type WorkloadFilter = Omit<Extract<DashboardFilter, { mode: "team-project" }>, "mode" | "days" | "includeUnexpectedClosed"> & DateRange
 export type WorkloadFilterResult = { filter: WorkloadFilter | null; error: string | null }
 const keys = new Set(["group", "exclude", "project", "from", "to"])
 /** Dashboard serializer 只在日期等於 30 時才省略 `days`；區間模型不需寫入天數。 */
@@ -64,9 +64,9 @@ export function workloadFilterResult(params: URLSearchParams): WorkloadFilterRes
 }
 
 export function serializeWorkloadFilter(filter: WorkloadFilter): string {
-  const { from, to, ...scope } = filter
+  const { from, to, groups, exclusions, projects } = filter
   const range = requireRange(from, to)
-  const params = new URLSearchParams(serializeDashboardFilter({ ...scope, mode: "team-project", days: SERIALIZED_DAYS }))
+  const params = new URLSearchParams(serializeDashboardFilter({ groups, exclusions, projects, mode: "team-project", days: SERIALIZED_DAYS }))
   params.delete("mode")
   params.delete("days")
   params.set("from", range.from)

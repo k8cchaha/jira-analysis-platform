@@ -2,16 +2,18 @@ import "server-only"
 
 import { auth } from "@/auth"
 import { getJiraToken, JiraAuthorizationError, type JiraCredentials } from "@/lib/jira-token"
-import { JIRA_FIELDS, STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD, matchesJiraFieldSchema } from "@/lib/jira-fields"
+import { JIRA_FIELDS, STORY_POINTS_FIELD, ACTUAL_STORY_POINTS_FIELD, matchesJiraFieldSchema, jiraSelectMode } from "@/lib/jira-fields"
 import {
   MISSING_DATA_LIMIT,
   MISSING_DATA_PAGE_SIZE,
   isPointValue,
   missingPoints,
   jiraText,
+  parseMissingDataChanges,
   type MissingDataChange,
   type MissingDataError,
   type MissingDataKind,
+  type WritableMissingDataKind,
   type MissingDataPage,
   type MissingDataSummary,
   type MissingIssue,
@@ -35,6 +37,8 @@ interface JiraField {
   name: string
   schema: RecordValue
   projectId: string | null
+  invalidMetadata?: boolean
+  unknownScope?: boolean
 }
 interface FieldSet {
   points: JiraField[]
@@ -42,6 +46,7 @@ interface FieldSet {
   defectCause: JiraField[]
   rootCause: JiraField[]
   solution: JiraField[]
+  impactScope: JiraField[]
 }
 interface RawIssue {
   id: string
@@ -107,9 +112,25 @@ async function responseJson(response: Response): Promise<unknown> {
   }
 }
 
-async function getFields(credentials: JiraCredentials, kind: MissingDataKind): Promise<FieldSet> {
+async function getFields(credentials: JiraCredentials, kind: WritableMissingDataKind): Promise<FieldSet> {
   const data = await responseJson(await jiraFetch(credentials, "/rest/api/3/field"))
   if (!Array.isArray(data)) throw invalidResponse()
+  // Preserve even unsupported/malformed fixed-ID candidates before resolving project precedence.
+  // Filtering schema first could incorrectly fall back from a project field to a global one.
+  const impactScope: JiraField[] = data.flatMap((field): JiraField[] => {
+    if (!record(field) || field.id !== JIRA_FIELDS.impactScope.id) return []
+    let projectId: string | null = null
+    const invalidMetadata = !nonemptyString(field.name) || !field.name.trim() || !record(field.schema)
+    let unknownScope = false
+    if (Object.hasOwn(field, "scope")) {
+      if (!record(field.scope) || (field.scope.type !== "GLOBAL" && field.scope.type !== "PROJECT")) unknownScope = true
+      if (record(field.scope) && field.scope.type === "PROJECT") {
+        if (record(field.scope.project) && typeof field.scope.project.id === "string" && /^\d{1,30}$/.test(field.scope.project.id)) projectId = field.scope.project.id
+        else unknownScope = true
+      }
+    }
+    return [{ id: JIRA_FIELDS.impactScope.id, name: JIRA_FIELDS.impactScope.name, schema: record(field.schema) ? field.schema : {}, projectId, invalidMetadata, unknownScope }]
+  })
   const all: JiraField[] = []
   for (const field of data) {
     if (!record(field) || !nonemptyString(field.id) || !nonemptyString(field.name) || !record(field.schema)) continue
@@ -127,6 +148,7 @@ async function getFields(credentials: JiraCredentials, kind: MissingDataKind): P
     defectCause: named(JIRA_FIELDS.defectCause.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.defectCause.schema)),
     rootCause: named(JIRA_FIELDS.rootCause.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.rootCause.schema)),
     solution: named(JIRA_FIELDS.solution.name).filter((field) => matchesJiraFieldSchema(field.schema, JIRA_FIELDS.solution.schema)),
+    impactScope,
   }
   if (kind === "points" && (!fields.points.length || !fields.actualPoints.length)) {
     throw new JiraDashboardError("configuration", "找不到可用的 Story Points 或 Actual Story Points 數值欄位。")
@@ -152,11 +174,12 @@ function requireField(candidates: JiraField[], issue: RawIssue) {
   }
   return field
 }
-function fieldIds(fields: FieldSet, kind: MissingDataKind, detail: boolean) {
+function fieldIds(fields: FieldSet, kind: WritableMissingDataKind, detail: boolean) {
   const selected = kind === "points"
     ? [...fields.points, ...fields.actualPoints]
-    : [...fields.defectCause, ...(detail ? [...fields.rootCause, ...fields.solution] : [])]
-  return [...new Set(["project", ...(kind === "points" ? ["status"] : []), ...(detail ? ["summary", "assignee", "parent"] : []), ...selected.map((field) => field.id)])]
+    : kind === "defect-cause" ? [...fields.defectCause, ...(detail ? [...fields.rootCause, ...fields.solution] : [])]
+    : fields.impactScope
+  return [...new Set(["project", ...(kind === "points" || kind === "impact-scope" ? ["status"] : []), ...(detail ? ["summary", "assignee", "parent"] : []), ...selected.map((field) => field.id), ...(kind === "impact-scope" ? [JIRA_FIELDS.impactScope.id] : [])])]
 }
 function parseIssue(value: unknown): RawIssue {
   if (!record(value) || !nonemptyString(value.id) || !/^\d{1,30}$/.test(value.id) || !nonemptyString(value.key) || !record(value.fields) || !record(value.fields.project) || !nonemptyString(value.fields.project.id)) {
@@ -235,9 +258,13 @@ function causeValues(fields: FieldSet, issue: RawIssue): string[] {
 export async function getMissingDataSummary(kind: MissingDataKind, filter: DashboardFilter = SELF_FILTER): Promise<MissingDataSummary> {
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
-  const jql = missingDataListJql(kind, scope)
-  const fields = await getFields(credentials, kind)
+  const jql = missingDataListJql(kind, scope, filter)
   const summary: MissingDataSummary = { kind, total: 0, storyPointsMissing: 0, actualStoryPointsMissing: 0, jql, jiraBaseUrl: baseUrl() }
+  if (kind === "impact-scope") {
+    summary.total = await countJiraIssues(credentials, jql)
+    return summary
+  }
+  const fields = await getFields(credentials, kind)
   const seen = new Set<string>()
   const cursors = new Set<string>()
   let cursor: string | null = null
@@ -297,6 +324,34 @@ function causeOptions(editmeta: RecordValue, id: string) {
   if (meta.allowedValues.some((option) => !record(option) || !nonemptyString(option.id) || !/^\d{1,30}$/.test(option.id) || !nonemptyString(option.value))) throw invalidResponse("Defect Cause 選項格式無法識別。")
   return meta.allowedValues.filter((option) => option.disabled !== true).map((option) => ({ id: option.id as string, value: option.value as string }))
 }
+function requireImpactField(fields: FieldSet, issue: RawIssue) {
+  // A malformed scope with no project identity cannot safely be assumed inapplicable.
+  if (fields.impactScope.some((field) => field.unknownScope)) {
+    throw new JiraDashboardError("configuration", "Impact Scope 欄位 metadata 不完整，無法確認專案適用性。")
+  }
+  const field = requireField(fields.impactScope, issue)
+  const mode = jiraSelectMode(field.schema)
+  if (field.invalidMetadata || !mode) throw new JiraDashboardError("configuration", "Impact Scope 欄位不支援或 schema 無效，只能補填 Jira 標準單選／多選欄位。")
+  return { field, mode }
+}
+function impactOption(value: unknown): value is RecordValue & { id: string; value: string } {
+  return record(value) && typeof value.id === "string" && /^\d{1,30}$/.test(value.id) && nonemptyString(value.value) && value.value.trim().length > 0
+}
+function impactValue(value: unknown, mode: "single" | "multi"): MissingIssue["impactScope"]["value"] {
+  if (value === null) return []
+  const options = mode === "single" ? (impactOption(value) ? [value] : null) : (Array.isArray(value) ? value : null)
+  if (!options || options.some((option) => !impactOption(option)) || new Set(options.map((option) => option.id)).size !== options.length) return null
+  return options.map((option) => ({ id: option.id, value: option.value }))
+}
+function impactOptions(editmeta: RecordValue, id: string, mode: "single" | "multi") {
+  const meta = editmeta[id]
+  if (!record(meta) || jiraSelectMode(meta.schema) !== mode) throw new JiraDashboardError("configuration", "Impact Scope 編輯 schema 未回傳或與欄位設定不一致，無法補填。")
+  if (!Array.isArray(meta.operations) || !meta.operations.includes("set")) throw new JiraDashboardError("forbidden", "此 Issue 的 Impact Scope 欄位無法編輯，請確認 Jira 權限與編輯畫面設定。")
+  if (!Array.isArray(meta.allowedValues) || meta.allowedValues.some((option) => !impactOption(option) || (Object.hasOwn(option, "disabled") && typeof option.disabled !== "boolean")) || new Set(meta.allowedValues.map((option) => option.id)).size !== meta.allowedValues.length) throw invalidResponse("Impact Scope 選項格式無法識別，無法補填。")
+  const options = meta.allowedValues.filter((option) => option.disabled !== true).map((option) => ({ id: option.id as string, value: option.value as string }))
+  if (!options.length) throw new JiraDashboardError("forbidden", "Impact Scope 無可用編輯選項，請確認 Jira 權限與欄位設定。")
+  return options
+}
 function textField(candidates: JiraField[], issue: RawIssue, label: string, warnings: Set<string>) {
   let field: JiraField | null
   try {
@@ -317,16 +372,21 @@ function parentIssueType(value: unknown): MissingIssue["parentIssueType"] {
   const name = value.fields.issuetype.name
   return nonemptyString(name) && name.trim() ? { status: "known", name } : { status: "unknown" }
 }
-function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind, editmeta: RecordValue, warnings: Set<string>, readOnly = false): MissingIssue | null {
+function commonMissingIssue(issue: RawIssue): MissingIssue {
   const assignee = issue.fields.assignee
-  const row: MissingIssue = {
+  return {
     id: issue.id, key: issue.key, summary: typeof issue.fields.summary === "string" ? issue.fields.summary : "未命名議題",
+    statusName: null,
     assigneeDisplayName: record(assignee) && nonemptyString(assignee.displayName) && assignee.displayName.trim() ? assignee.displayName : null,
     parentIssueType: parentIssueType(issue.fields.parent),
     storyPoints: null, actualStoryPoints: null, storyPointsRequired: false, actualStoryPointsRequired: false,
     storyPointsEditable: false, actualStoryPointsEditable: false,
     rootCause: "—", solution: "—", defectCause: [], defectCauseOptions: [], defectCauseEditable: false,
+    impactScope: { mode: null, value: null, options: [], editable: false },
   }
+}
+function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: WritableMissingDataKind, editmeta: RecordValue, warnings: Set<string>, readOnly = false): MissingIssue | null {
+  const row = commonMissingIssue(issue)
   if (kind === "points") {
     const values = pointsValues(fields, issue)
     const { storyPointsMissing, actualStoryPointsMissing } = missingPoints(values)
@@ -338,7 +398,7 @@ function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind
     row.storyPointsEditable = !readOnly && numericEditable(editmeta, STORY_POINTS_FIELD)
     row.actualStoryPointsEditable = !readOnly && numericEditable(editmeta, ACTUAL_STORY_POINTS_FIELD)
     if (!readOnly && ((storyPointsMissing && !row.storyPointsEditable) || (actualStoryPointsMissing && !row.actualStoryPointsEditable))) row.unavailableReason = "部分缺失欄位無法編輯，請確認 Jira 權限與編輯畫面設定。"
-  } else {
+  } else if (kind === "defect-cause") {
     row.defectCause = causeValues(fields, issue)
     if (row.defectCause.length > 0) return null
     row.rootCause = textField(fields.rootCause, issue, JIRA_FIELDS.rootCause.name, warnings)
@@ -347,6 +407,22 @@ function toMissingIssue(fields: FieldSet, issue: RawIssue, kind: MissingDataKind
     row.defectCauseOptions = readOnly ? [] : causeOptions(editmeta, cause.id)
     row.defectCauseEditable = !readOnly && row.defectCauseOptions.length > 0
     if (!readOnly && !row.defectCauseEditable) row.unavailableReason = "Defect Cause 無可用編輯選項，請確認 Jira 權限與欄位設定。"
+  } else if (kind === "impact-scope") {
+    const status = issue.fields.status
+    row.statusName = record(status) && nonemptyString(status.name) && status.name.trim() ? status.name : null
+    try {
+      const { field, mode } = requireImpactField(fields, issue)
+      row.impactScope.mode = mode
+      row.impactScope.value = impactValue(issue.fields[field.id], mode)
+      if (row.impactScope.value === null) throw invalidResponse("Impact Scope 現值格式無法識別，無法補填；請確認 Jira 欄位設定。")
+      if (!readOnly && row.impactScope.value.length > 0) return null
+      if (!readOnly) {
+        row.impactScope.options = impactOptions(editmeta, field.id, mode)
+        row.impactScope.editable = true
+      }
+    } catch (error) {
+      row.unavailableReason = dashboardError(error).message
+    }
   }
   return row
 }
@@ -357,7 +433,7 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   const credentials = await getJiraToken()
   const scope = await resolveDashboardScope(filter, credentials)
   const readOnly = scope.mode !== "self"
-  const jql = missingDataListJql(kind, scope)
+  const jql = missingDataListJql(kind, scope, filter)
   const context = { userId: session.user.id, cloudId: credentials.cloudId, kind, jql, filterKey: serializeDashboardFilter(filter) }
   const secret = process.env.AUTH_SECRET
   if (!secret) throw new JiraDashboardError("configuration", "分頁加密設定不完整。")
@@ -374,17 +450,36 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   const selectedFields = fieldIds(fields, kind, true)
   const result = await search(credentials, jql, selectedFields, MISSING_DATA_PAGE_SIZE, cursor.path.at(-1))
   const warnings = new Set<string>()
-  const seen = new Set<string>()
+  const pageIds = result.issues.map((issue) => issue.id)
+  if (new Set(pageIds).size !== pageIds.length) throw invalidResponse()
+  // Expanded reads must not grant editing through editmeta alone. Ask Jira to intersect
+  // this page with the unchanged original self/write query; never copy its predicate here.
+  let originalEligibleIds: Set<string> | null = null
+  if (kind === "points" && !readOnly && filter.includeUnexpectedClosed === true) {
+    originalEligibleIds = new Set<string>()
+    if (pageIds.length) {
+      const eligible = await search(credentials, missingDataUpdateJql("points", pageIds), selectedFields, MISSING_DATA_PAGE_SIZE)
+      if (eligible.nextPageToken) throw invalidResponse()
+      for (const issue of eligible.issues) {
+        if (!pageIds.includes(issue.id) || originalEligibleIds.has(issue.id)) throw invalidResponse()
+        originalEligibleIds.add(issue.id)
+      }
+    }
+  }
   const issues = await mapConcurrent(result.issues, async (original) => {
-    if (seen.has(original.id)) throw invalidResponse()
-    seen.add(original.id)
+    const outsideOriginalScope = originalEligibleIds !== null && !originalEligibleIds.has(original.id)
+    const rowReadOnly = readOnly || outsideOriginalScope
+    const scopeReason = outsideOriginalScope ? "此票不符合原本的本人補填範圍，僅供查看。" : undefined
+    if (kind === "impact-scope" && readOnly) return toMissingIssue(fields, original, kind, {}, warnings, true)
     try {
-      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, readOnly)
-      return toMissingIssue(fields, issue, kind, editmeta, warnings, readOnly)
+      const { issue, editmeta } = await liveIssue(credentials, original.id, selectedFields, rowReadOnly)
+      const row = toMissingIssue(fields, issue, kind, editmeta, warnings, rowReadOnly)
+      if (row && scopeReason) row.unavailableReason = scopeReason
+      return row
     } catch (error) {
-      if (!(error instanceof JiraDashboardError) || error.code === "configuration" || error.code === "reauthorize") throw error
-      const row = toMissingIssue(fields, original, kind, {}, warnings, readOnly)
-      if (row) row.unavailableReason = error.message
+      if (!(error instanceof JiraDashboardError) || error.code === "reauthorize" || (error.code === "configuration" && kind !== "impact-scope")) throw error
+      const row = toMissingIssue(fields, original, kind, {}, warnings, kind === "impact-scope" || rowReadOnly)
+      if (row) row.unavailableReason = scopeReason ? `${scopeReason} ${error.message}` : error.message
       return row
     }
   })
@@ -401,7 +496,16 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
   }
 }
 
-export async function updateMissingData(kind: MissingDataKind, changes: MissingDataChange[]) {
+export async function updateMissingData(kind: WritableMissingDataKind, changes: MissingDataChange[]) {
+  if (kind !== "points" && kind !== "defect-cause" && kind !== "impact-scope") throw new JiraDashboardError("configuration", "不支援此更新類型。")
+  // Guard direct Impact service calls as well as the action; preserve legacy write branches.
+  if (kind === "impact-scope") {
+    try {
+      changes = parseMissingDataChanges(kind, JSON.stringify(changes))
+    } catch (error) {
+      throw new JiraDashboardError("configuration", error instanceof Error ? error.message : "變更資料格式錯誤。")
+    }
+  }
   const credentials = await getJiraToken(true)
   const fields = await getFields(credentials, kind)
   const ids = changes.map((change) => change.issueId)
@@ -428,12 +532,22 @@ export async function updateMissingData(kind: MissingDataKind, changes: MissingD
           if (!numericEditable(editmeta, id)) throw new JiraDashboardError("forbidden", "此 Issue 的 Points 欄位無法編輯。")
           updates[id] = desired
         }
-      } else {
+      } else if (kind === "defect-cause") {
         const cause = requireField(fields.defectCause, issue)
         if (causeValues(fields, issue).length > 0) throw new JiraDashboardError("retry", "Defect Cause 已被補填，未覆寫；請重新載入。")
         const options = new Set(causeOptions(editmeta, cause.id).map((option) => option.id))
         if (!change.defectCause?.length || change.defectCause.some((id) => !options.has(id))) throw new JiraDashboardError("forbidden", "Defect Cause 選項已變更或無法編輯，請重新載入。")
         updates[cause.id] = change.defectCause.map((id) => ({ id }))
+      } else if (kind === "impact-scope") {
+        const { field, mode } = requireImpactField(fields, issue)
+        const current = impactValue(issue.fields[field.id], mode)
+        if (current === null) throw invalidResponse("Impact Scope 現值格式無法識別，未更新；請重新載入。")
+        if (current.length > 0) throw new JiraDashboardError("retry", "Impact Scope 已被補填，未覆寫；請重新載入。")
+        const options = new Set(impactOptions(editmeta, field.id, mode).map((option) => option.id))
+        const desired = change.impactScope!
+        if (desired.some((id) => !options.has(id))) throw new JiraDashboardError("forbidden", "Impact Scope 選項已變更或不屬於此 Issue，請重新載入。")
+        if (mode === "single" && desired.length !== 1) throw new JiraDashboardError("configuration", "Impact Scope 單選欄位只能選擇一個選項。")
+        updates[field.id] = mode === "single" ? { id: desired[0] } : desired.map((id) => ({ id }))
       }
       if (Object.keys(updates).length === 0) throw invalidResponse()
       const response = await jiraFetch(credentials, `/rest/api/3/issue/${encodeURIComponent(issue.id)}`, {

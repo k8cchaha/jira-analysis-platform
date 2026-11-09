@@ -1,4 +1,4 @@
-import { MISSING_DATA_LIMIT, MISSING_DATA_PAGE_SIZE, type MissingDataError, type MissingDataPage, type MissingDataPageResult, type MissingIssue } from "./jira-missing-data.ts"
+import { MISSING_DATA_LIMIT, MISSING_DATA_PAGE_SIZE, type MissingDataError, type MissingDataPage, type MissingDataPageResult, type MissingDataKind, type MissingIssue } from "./jira-missing-data.ts"
 
 export type MissingDataList = Pick<MissingDataPage, "readOnly" | "issues" | "jiraBaseUrl" | "warnings">
 
@@ -16,10 +16,35 @@ function incompleteList(): never {
   throw new MissingDataListError({ code: "retry", message: "明細資料不完整，請重新載入。" })
 }
 
+function validOptions(value: unknown): value is Array<{ id: string; value: string }> {
+  if (!Array.isArray(value)) return false
+  const ids = new Set<string>()
+  return value.every((option) => {
+    if (!option || typeof option !== "object" || Array.isArray(option) ||
+      typeof option.id !== "string" || !/^\d{1,30}$/.test(option.id) || ids.has(option.id) ||
+      typeof option.value !== "string" || !option.value.trim()) return false
+    ids.add(option.id)
+    return true
+  })
+}
+
+function validImpactScope(issue: MissingIssue, readOnly: boolean): boolean {
+  const field = issue.impactScope
+  if (!field || typeof field !== "object" || Array.isArray(field) ||
+    !["single", "multi", null].includes(field.mode) || typeof field.editable !== "boolean" ||
+    !validOptions(field.options) || !(field.value === null || validOptions(field.value))) return false
+  if (field.mode === "single" && field.value && field.value.length > 1) return false
+  if (field.mode === null && (field.editable || field.options.length > 0)) return false
+  if (readOnly && (field.editable || field.options.length > 0)) return false
+  if (field.editable && (field.mode === null || field.value === null || field.value.length > 0 || field.options.length === 0)) return false
+  return true
+}
+
 /** Jira stays paginated internally; only a complete list is accepted by the dialog. */
 export async function loadMissingDataList(
   readPage: (token: string | null) => Promise<MissingDataPageResult>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  kind?: MissingDataKind
 ): Promise<MissingDataList> {
   const issues: MissingIssue[] = []
   const ids = new Set<string>()
@@ -45,7 +70,8 @@ export async function loadMissingDataList(
     first ??= data
     for (const issue of data.issues) {
       if (!issue || typeof issue.id !== "string" || !/^\d{1,30}$/.test(issue.id) || ids.has(issue.id) ||
-        typeof issue.storyPointsRequired !== "boolean" || typeof issue.actualStoryPointsRequired !== "boolean") incompleteList()
+        typeof issue.storyPointsRequired !== "boolean" || typeof issue.actualStoryPointsRequired !== "boolean" ||
+        (kind === "impact-scope" && !validImpactScope(issue, data.readOnly))) incompleteList()
       ids.add(issue.id)
       issues.push(issue)
     }

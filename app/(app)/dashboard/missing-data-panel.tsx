@@ -6,23 +6,24 @@ import { useNavigationBlocker } from "@/components/navigation-blocker"
 import { DashboardFilter as DashboardFilterControls } from "./dashboard-filter"
 import { SELF_FILTER, dashboardHref, serializeDashboardFilter, type DashboardFilter, type DashboardFilterResult } from "@/lib/jira-dashboard-filter"
 import { MissingDataDialog } from "./missing-data-dialog"
+import { ImpactScopeDialog } from "./impact-scope-dialog"
 import { DashboardAlertCards } from "./dashboard-alert-cards"
 import { BugAlertDialog } from "./bug-alert-dialog"
 import { DueReminderDialog } from "./due-reminder-dialog"
 import { PendingIssueDialog } from "./pending-issue-dialog"
 import { reauthorizeDashboardAction } from "./actions"
 import { JiraOpenLink } from "./jira-open-link"
-import type { MissingDataKind, MissingDataSummaryResult } from "@/lib/jira-missing-data"
+import { MISSING_DATA_LIMIT, type MissingDataKind, type MissingDataSummaryResult } from "@/lib/jira-missing-data"
 
 type CardState = { status: "loading" } | MissingDataSummaryResult
-const kinds: MissingDataKind[] = ["points", "defect-cause"]
+const kinds: MissingDataKind[] = ["points", "defect-cause", "impact-scope"]
 
 export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null }, viewerId = "" }: { applied?: DashboardFilterResult; viewerId?: string }) {
   const router = useRouter()
   const cardId = useId()
   const { isBlocked } = useNavigationBlocker()
   const [cards, setCards] = useState<Record<MissingDataKind, CardState>>({
-    points: { status: "loading" }, "defect-cause": { status: "loading" },
+    points: { status: "loading" }, "defect-cause": { status: "loading" }, "impact-scope": { status: "loading" },
   })
   const [activeDialog, setActiveDialog] = useState<{ kind: MissingDataKind; filter: DashboardFilter } | null>(null)
   const [bugDialogFilter, setBugDialogFilter] = useState<DashboardFilter | null>(null)
@@ -35,7 +36,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
   const [cardsQuery, setCardsQuery] = useState<string | null>(query)
   const scopeChanged = Boolean((activeDialog || bugDialogFilter || dueDialogFilter || pendingDialogFilter) && (applied.filter ? serializeDashboardFilter(applied.filter) : null) !== query)
   const [reauthorizing, setReauthorizing] = useState(false)
-  const requestSequence = useRef<Record<MissingDataKind, number>>({ points: 0, "defect-cause": 0 })
+  const requestSequence = useRef<Record<MissingDataKind, number>>({ points: 0, "defect-cause": 0, "impact-scope": 0 })
   const mounted = useRef(false)
 
   const loadSummary = useCallback(async (kind: MissingDataKind) => {
@@ -49,6 +50,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
       const result: MissingDataSummaryResult = await response.json()
       if (!mounted.current || sequence !== requestSequence.current[kind]) return
       if (result.status !== "success" && result.status !== "error") throw new Error("Invalid response")
+      if (result.status === "success" && (!response.ok || result.summary?.kind !== kind || !Number.isSafeInteger(result.summary.total) || result.summary.total < 0 || result.summary.total > MISSING_DATA_LIMIT)) throw new Error("Invalid response")
       setCards((current) => ({ ...current, [kind]: result }))
     } catch {
       if (mounted.current && sequence === requestSequence.current[kind]) {
@@ -65,7 +67,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
     queueMicrotask(() => {
       if (!active) return
       setCardsQuery(query)
-      setCards({ points: { status: "loading" }, "defect-cause": { status: "loading" } })
+      setCards({ points: { status: "loading" }, "defect-cause": { status: "loading" }, "impact-scope": { status: "loading" } })
       if (query !== null) for (const kind of kinds) void loadSummary(kind)
     })
     return () => {
@@ -93,7 +95,7 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
 
   function applyFilter(next: DashboardFilter) {
     if (activeDialog || bugDialogFilter || dueDialogFilter || pendingDialogFilter || isBlocked) return
-    if (next.mode === "self" && filter?.mode === "self") return
+    if (next.mode === "self" && filter?.mode === "self" && serializeDashboardFilter(next) === query) return
     router.push(dashboardHref(next))
   }
 
@@ -108,10 +110,10 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
           onOpenPending={() => { if (filter && !activeDialog && !bugDialogFilter && !dueDialogFilter && !pendingDialogFilter && !isBlocked) setPendingDialogFilter(filter) }}
         />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3">
         {kinds.map((kind) => {
           const card: CardState = cardsQuery === query ? cards[kind] : { status: "loading" }
-          const title = kind === "points" ? "(Actual) Story Points 缺失" : "Defect Cause 缺失"
+          const title = kind === "points" ? "(Actual) Story Points 缺失" : kind === "defect-cause" ? "Defect Cause 缺失" : "Impact Scope 缺失"
           return (
             <article key={kind} aria-busy={card.status === "loading"} className="group relative flex min-w-0 flex-col rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm sm:p-6 dark:border-slate-800 dark:bg-slate-900">
               <div className="flex items-center justify-between gap-2">
@@ -148,7 +150,9 @@ export function MissingDataPanel({ applied = { filter: SELF_FILTER, error: null 
       {pendingDialogFilter && <PendingIssueDialog filter={pendingDialogFilter} scopeChanged={scopeChanged} onClose={() => setPendingDialogFilter(null)} />}
       {dueDialogFilter && <DueReminderDialog filter={dueDialogFilter} scopeChanged={scopeChanged} onClose={() => setDueDialogFilter(null)} />}
       {bugDialogFilter && <BugAlertDialog filter={bugDialogFilter} scopeChanged={scopeChanged} onClose={() => setBugDialogFilter(null)} />}
-      {activeDialog && <MissingDataDialog key={activeDialog.kind} kind={activeDialog.kind} filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary(activeDialog.kind)} />}
+      {activeDialog && (activeDialog.kind === "impact-scope"
+        ? <ImpactScopeDialog filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary("impact-scope")} />
+        : <MissingDataDialog key={activeDialog.kind} kind={activeDialog.kind} filter={activeDialog.filter} scopeChanged={scopeChanged} onClose={() => setActiveDialog(null)} onSaved={() => reloadSummary(activeDialog.kind)} />)}
     </section>}
     </>
   )

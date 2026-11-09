@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url)
     const kind = url.searchParams.get("kind")
     const view = url.searchParams.get("view")
-    if ((kind !== "points" && kind !== "defect-cause") || (view !== "summary" && view !== "page")) {
+    if ((kind !== "points" && kind !== "defect-cause" && kind !== "impact-scope") || (view !== "summary" && view !== "page")) {
       return Response.json({ status: "error", error: { code: "configuration", message: "查詢參數無效。" } }, { status: 400, headers })
     }
     if (["kind", "view", "pageToken"].some((key) => url.searchParams.getAll(key).length > 1)) {

@@ -5,11 +5,57 @@ import {
   parseDashboardFilter, serializeDashboardFilter, dashboardHref, dashboardReturnPath,
   dashboardFilterResult, dashboardSearchParams, includedDashboardMembers,
 } from "../lib/jira-dashboard-filter.ts"
-import { missingDataJql, missingDataReadJql } from "../lib/jira-missing-data.ts"
+import { missingDataJql, missingDataReadJql, missingDataListJql, missingDataUpdateJql, MISSING_POINTS_JQL } from "../lib/jira-jql.ts"
 
 const person = { mode: "person", accountId: "712020:fixture-user", name: "Fixture User", days: 30 }
 const team = { mode: "team-project", groups: ["ent-web", "ent-be1"], projects: ["tkk", "sun"], days: 7, exclusions: { "ent-web": ["user-b", "user-a", "user-a"] } }
 const user = (accountId) => ({ accountId, displayName: accountId })
+
+describe("unexpected closed Points read option", () => {
+  const expanded = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser()'
+  for (const filter of [{ mode: "self" }, person, team]) it(`round trips the shared checkbox in ${filter.mode}`, () => {
+    const checked = { ...filter, includeUnexpectedClosed: true }
+    const query = serializeDashboardFilter(checked)
+    assert.equal(new URLSearchParams(query).get("includeUnexpectedClosed"), "1")
+    assert.equal(serializeDashboardFilter(parseDashboardFilter(new URLSearchParams(query))), query)
+    assert.equal(serializeDashboardFilter({ ...filter, includeUnexpectedClosed: false }), serializeDashboardFilter(filter))
+    assert.equal(parseDashboardFilter(new URLSearchParams(query)).includeUnexpectedClosed, true)
+    assert.equal(dashboardReturnPath(dashboardHref(checked)), dashboardHref(checked))
+  })
+  it("preserves checked self before the inactive-scope early return", () => {
+    assert.deepEqual(parseDashboardFilter(new URLSearchParams("mode=self&days=broken&group=unknown&includeUnexpectedClosed=1")), { mode: "self", includeUnexpectedClosed: true })
+    assert.equal(dashboardHref({ mode: "self", includeUnexpectedClosed: true }), "/dashboard?includeUnexpectedClosed=1")
+  })
+  for (const value of ["", "0", "true", "false", "2", " 1", "01", "1&includeUnexpectedClosed=1"]) {
+    for (const filter of [{ mode: "self" }, person, team]) it(`rejects ${JSON.stringify(value)} for ${filter.mode}`, () => {
+      const query = serializeDashboardFilter(filter)
+      assert.throws(() => parseDashboardFilter(new URLSearchParams(`${query}${query ? "&" : ""}includeUnexpectedClosed=${value}`)), DashboardFilterError)
+    })
+  }
+  for (const value of ["1", "true", 1, 0, null, [], {}]) it(`rejects nonboolean direct options ${JSON.stringify(value)}`, () => {
+    assert.throws(() => serializeDashboardFilter({ mode: "self", includeUnexpectedClosed: value }), DashboardFilterError)
+    assert.throws(() => missingDataReadJql("points", { mode: "self" }, { includeUnexpectedClosed: value }), DashboardFilterError)
+  })
+  it("changes only the Points read population and never the original update query", () => {
+    const option = { includeUnexpectedClosed: true }
+    assert.equal(missingDataReadJql("points", { mode: "self" }, option), expanded)
+    assert.equal(missingDataListJql("points", { mode: "self" }, option), `${expanded} ORDER BY key ASC`)
+    assert.equal(missingDataReadJql("points", { mode: "self" }, { includeUnexpectedClosed: false }), MISSING_POINTS_JQL)
+    assert.equal(missingDataUpdateJql("points", ["1", "2"]), `(${MISSING_POINTS_JQL}) AND id in (1,2)`)
+    for (const kind of ["defect-cause", "impact-scope"]) assert.equal(missingDataReadJql(kind, { mode: "self" }, option), missingDataJql(kind))
+  })
+  for (const mode of ["person", "team-project"]) it(`retains validated assignees, projects and created window in ${mode}`, () => {
+    const scope = { mode, accountIds: ["b", "a", "a"], projects: ["tkk", "sun"], days: 7 }
+    const actual = missingDataReadJql("points", scope, { includeUnexpectedClosed: true })
+    assert.equal(actual, expanded.replace("assignee = currentUser()", 'assignee in ("a", "b")') + " AND created >= -7d AND project in (sun, tkk)")
+    for (const kind of ["defect-cause", "impact-scope"]) assert.equal(missingDataReadJql(kind, scope, { includeUnexpectedClosed: true }), missingDataReadJql(kind, scope))
+  })
+  it("still fails closed on invalid expanded scopes", () => {
+    for (const extra of [{ accountIds: [] }, { accountIds: ['a" OR 1=1'] }, { projects: ["invalid"] }, { days: 0 }]) {
+      assert.throws(() => missingDataReadJql("points", { mode: "person", accountIds: ["a"], projects: [], days: 30, ...extra }, { includeUnexpectedClosed: true }), DashboardFilterError)
+    }
+  })
+})
 
 describe("dashboard filter model", () => {
   it("uses self and omits default parameters", () => {
@@ -83,6 +129,31 @@ describe("dashboard filter model", () => {
 })
 
 describe("scoped missing-data JQL", () => {
+  it("retains SUN Impact Scope base and intersects all selected project scopes", () => {
+    const releaseWindow = 'and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY'
+    const self = missingDataReadJql("impact-scope", { mode: "self" })
+    assert.equal(self, missingDataJql("impact-scope"))
+    assert.ok(self.includes(releaseWindow))
+    assert.doesNotMatch(self, /status|created >= -/)
+    assert.ok(self.endsWith(') and cf[13476] is not EMPTY and assignee = currentUser()'))
+    const person = missingDataReadJql("impact-scope", { mode: "person", accountIds: ["a"], projects: [], days: 30 })
+    assert.match(person, /^project = sun and issuetype in \(story, task, bug\) and cf\[14848\] is EMPTY/)
+    assert.ok(person.includes(releaseWindow))
+    assert.doesNotMatch(person, /status/i)
+    assert.match(person, /\) and cf\[13476\] is not EMPTY and assignee in \("a"\) AND created >= -30d$/)
+    for (const projects of [["sun"], ["tkk"], ["sun", "tkk"], []]) {
+      const jql = missingDataReadJql("impact-scope", { mode: "team-project", accountIds: ["b", "a", "b"], projects, days: 7 })
+      assert.ok(jql.startsWith("project = sun"))
+      assert.ok(jql.includes(releaseWindow))
+      assert.doesNotMatch(jql, /status/i)
+      assert.ok(jql.includes('assignee in ("a", "b") AND created >= -7d'))
+      assert.ok(jql.endsWith(projects.length ? `AND project in (${projects.join(", ")})` : "AND created >= -7d"))
+    }
+    for (const accountIds of [[], ['evil" OR 1=1'], Array.from({ length: 1001 }, (_, i) => `a${i}`)]) {
+      assert.throws(() => missingDataReadJql("impact-scope", { mode: "team-project", accountIds, projects: ["sun"], days: 30 }), DashboardFilterError)
+    }
+    assert.throws(() => missingDataReadJql("impact-scope", { mode: "team-project", accountIds: ["a"], projects: ["unknown"], days: 30 }), DashboardFilterError)
+  })
   it("leaves both self queries byte-for-byte unchanged", () => {
     for (const kind of ["points", "defect-cause"]) assert.equal(missingDataReadJql(kind, { mode: "self" }), missingDataJql(kind))
     assert.equal(missingDataReadJql("points", { mode: "self" }).includes("30d"), false)

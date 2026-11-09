@@ -48,6 +48,16 @@ describe("encrypted Jira page tokens", () => {
     assert.throws(() => openPageToken(token, { ...context, jql: `${context.jql} ` }, secret, now))
   })
 
+  it("binds checkbox population independently through the complete filter key", () => {
+    const unchecked = { ...context, filterKey: "" }
+    const checked = { ...context, filterKey: "includeUnexpectedClosed=1" }
+    for (const [source, other] of [[unchecked, checked], [checked, unchecked]]) {
+      const token = sealPageToken(cursor, source, secret)
+      assert.deepEqual(openPageToken(token, source, secret, now), cursor)
+      assert.throws(() => openPageToken(token, other, secret, now), /Invalid or expired page token/)
+    }
+  })
+
   it("rejects a wrong or empty encryption secret", () => {
     const token = sealPageToken(cursor, context, secret)
     assert.throws(() => openPageToken(token, context, `${secret}-different`, now))
