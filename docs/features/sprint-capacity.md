@@ -18,7 +18,7 @@
 
 ## 使用方式
 - 選 Project／Sprint，一選即導航；Sprint 與 Planning 同樣使用本機尚未結束的候選清單。未指定時當前優先，其次最早未來。
-- 沒有 Team filter；點團隊按鈕開成員明細。mock filled=true顯示綠色與容量，未填顯示紅色「—」。
+- 沒有 Team filter；點團隊按鈕開彈窗。mock filled=true顯示綠色與容量，未填顯示紅色「—」。已填團隊與可測試編輯的團隊可顯示成員表；未填且不可編輯的團隊只顯示尚未填寫提示，不顯示成員明細，沒有成員資料時另顯示空狀態。
 - 有登入 viewer ID 且 mock Web／QA 可測試編輯；**不是 Jira 真實團隊權限判定**。
 - 編輯請假時數、提交／更新只改 React state；取消不保存。**提交不更新 filled**，不表示已完成真實提交。
 - 同專案切 Sprint 保留本機編輯；換專案、離頁或重載會失去。本機資料以 Project 為單位，**不是 Sprint-specific 紀錄**。

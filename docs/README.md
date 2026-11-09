@@ -1,6 +1,6 @@
 # 功能說明文件
 
-這份文件以 **2026-11-10 目前 repository 本機工作目錄**為基準，包含尚未提交的 Burn Down 完整載入後依 Resolved 分析與「專案回顧與趨勢」整合。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署版本證明、真實 Jira 資料報告或未來功能承諾**。
+這份文件依 **2026-11-10 目前 repository 的實際頁面與程式行為**整理；程式核對基準為 `867fa97`，已包含 Burn Down 完整載入後依 Resolved 分析、「中途加入的票」控制項暫時隱藏，以及「專案回顧與趨勢」入口整合。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署版本證明、真實 Jira 資料報告或未來功能承諾**。
 
 ## 建議閱讀方式
 - **第一次認識產品**：先看下方功能總覽，再讀對應頁面的「目的／Insight／使用方式」。
@@ -19,20 +19,22 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | 舊服務、無頁面 | 保留 library／query，但目前無對應產品路由 |
 
 ## 功能總覽
-| 分類／功能頁 | 目的 | 解決的問題 | 主要 Insight／用途 | 狀態 |
-| --- | --- | --- | --- | --- |
-| [儀表板](features/dashboard.md) | 集中個人／指定人／團隊的注意事項與缺值 | 分散查詢、難追補填 | 優先 Bug、期限、待 Review／資訊、資料品質與指派看板 | 已實作；僅本人合格缺值可補填 |
-| [Planning](features/sprint-planning.md) | 確認 Sprint 規劃與分派 | 未估、未拆、未分派與組合不清 | 分派集中、Bug／維運占比、規劃完整性 | 已實作；Dev＋QA，容量固定假設 |
-| [開發狀況／Burn Down](features/sprint-burndown.md) | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
-| [Capacity](features/sprint-capacity.md) | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
-| [工作量分析](features/analytics-workload.md) | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
-| [專案回顧與趨勢](features/analytics-projects.md) | 整合專案回顧、跨期趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；目前僅可選專案與Sprint／日期條件 | 部分實作；沿用Projects篩選介面，無分析引擎 |
-| [團隊分析](features/analytics-team.md) | 規劃團隊工作摘要 | 團隊彙整負擔 | 尚無結果，規劃團隊視角 | 規劃中 |
-| [成員分析](features/analytics-members.md) | 規劃個人工作摘要 | 個人資料分散 | 尚無結果，規劃成員視角 | 規劃中 |
-| [儲存的報表](features/reports-saved.md) | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中 |
-| [匯出紀錄](features/reports-exports.md) | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中 |
-| [系統設定](features/settings-system.md) | 規劃工作區設定入口 | 配置分散 | 管理用途，尚無操作 | 規劃中 |
-| [專案設定](features/settings-project.md) | 規劃容量、成員與延伸天數 | 缺可維護的規劃參數 | ToDo說明，尚未接入計算 | 規劃中 |
+依目前主導覽分類列出；路徑對應實際 `page.tsx`，不是預定路由或舊網址別名。
+
+| 分類／功能頁 | 現有路徑 | 目的 | 解決的問題 | 主要 Insight／用途 | 狀態 |
+| --- | --- | --- | --- | --- | --- |
+| [儀表板](features/dashboard.md) | `/dashboard` | 集中個人／指定人／團隊的注意事項與缺值 | 分散查詢、難追補填 | 優先 Bug、期限、待 Review／資訊、資料品質與指派看板 | 已實作；僅本人合格缺值可補填 |
+| Sprint／[Planning](features/sprint-planning.md) | `/sprint/planning` | 確認 Sprint 規劃與分派 | 未估、未拆、未分派與組合不清 | 分派集中、Bug／維運占比、規劃完整性 | 已實作；Dev＋QA，容量固定假設 |
+| Sprint／[開發狀況／Burn Down](features/sprint-burndown.md) | `/sprint/burndown` | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
+| Sprint／[Capacity](features/sprint-capacity.md) | `/sprint/capacity` | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
+| 分析／[工作量分析](features/analytics-workload.md) | `/analytics/workload` | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
+| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 整合專案回顧、跨期趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；目前僅可選專案與Sprint／日期條件 | 部分實作；篩選介面可用，無分析引擎 |
+| 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃團隊工作摘要 | 團隊彙整負擔 | 尚無結果，規劃團隊視角 | 規劃中；ComingSoon |
+| 分析／[成員分析](features/analytics-members.md) | `/analytics/members` | 規劃個人工作摘要 | 個人資料分散 | 尚無結果，規劃成員視角 | 規劃中；ComingSoon |
+| 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
+| 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
+| 設定／[系統設定](features/settings-system.md) | `/settings/system` | 規劃工作區設定入口 | 配置分散 | 管理用途，尚無操作 | 規劃中；ComingSoon |
+| 設定／[專案設定](features/settings-project.md) | `/settings/project` | 規劃容量、成員與延伸天數 | 缺可維護的規劃參數 | ToDo說明，尚未接入計算 | 規劃中；ComingSoon＋ToDo |
 
 ### 補充路徑與舊功能
 - [Jira 連線資訊](features/settings-jira.md)：`/settings/jira` 路由存在，但不在目前主導覽分類；ComingSoon，無連線管理操作。
@@ -54,4 +56,4 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 - 完整production JQL只定義在 [jira-jql.ts](../lib/jira-jql.ts)，custom field mapping只在 [jira-fields.ts](../lib/jira-fields.ts)；文件範例不是第二份production定義。
 - 尚未接入的builders、介面或ToDo，不宣稱已實作；合成範例明確標示，不使用真實票資料、accountId或憑證。
 - 發版前以當時程式再確認「已實作／部分／規劃」與來源；本文件日期表示整理基準，不代表每次查詢的資料時間。
-- 本次整合的查核採靜態／離線驗證及本機文件連結檢查，並非live Jira驗證；未呼叫live Jira或執行真實PUT，也不代表已部署。
+- 本次文件更新採頁面／程式靜態對照、離線路由與篩選回歸及本機文件連結檢查，未呼叫 live Jira、執行真實 PUT 或驗證部署。

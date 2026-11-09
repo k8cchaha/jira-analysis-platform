@@ -1,6 +1,6 @@
 # Jira 技術參考
 
-[回功能總覽](README.md) · 基準：2026-11-10目前本機工作目錄（含尚未提交的Burn Down固定Resolved與專案回顧與趨勢整合），不是live Jira驗證或部署紀錄。
+[回功能總覽](README.md) · 基準：2026-11-10 的實際頁面與程式（`867fa97`）。下列為已接入功能的 JQL、REST 與投影規則，不是 live Jira 驗證或部署紀錄；未接入的分析／管理頁明確另列。
 
 ## 1. 「Jira指令」分三層閱讀
 | 層次 | 回答的問題 | 權威來源 |
@@ -191,10 +191,11 @@ SSE不是Jira變更推播，而是本次完整讀取結果。Burn Down不再發d
 - Dashboard補填保留原始self eligibility AND提交IDs；person／team讀取得到本人票也仍不可寫。非預期關閉只擴read。
 - SP更新要expected original及正值、schema／set檢查；Defect／Impact只補empty並驗allowed option IDs。GET與PUT非原子，一位小數投影也不是raw全精度CAS。
 - 共用完整search每頁最多100、每query最多5,000issues／100頁；重複issue、循環cursor、缺末頁訊息或超限不能當完整成功count。
-- 缺失明細application batch50，token加密、15分鐘、綁viewer／cloud／kind／JQL／完整filter；scope或membership改變需要重新從首頁載入。每次補填最多50 changed issues。
+- 缺失明細application batch50，token加密、15分鐘、綁viewer／cloud／kind／JQL／完整filter；scope或membership改變需要重新從首頁載入。每次補填最多50 changed issues；client 的 changes JSON／草稿 JSON 任一超過10,000字元即停用儲存，server 也檢查提交 JSON 大小。
 - Dashboard filter URL最多16,384字元／1,100 entries，member上限1,000、JQL32,000字元；群組完整分頁與原始群規模也有限制，不能靠排除人數繞過。
 - **已知顯示限制**：alerts／board client只接受8,000字元JQL，低於server上限；server-valid大query也可能client拒收。
 - Browser成功成員名單存session記憶體供跨頁重用，至reload／logout／viewer change；不存token。server member cache hard TTL30分鐘只供group preload lookup與workload opt-in，Dashboard數量／明細／警示／看板仍重新解析scope。
+- Dashboard 的團隊／逐團隊排除／專案草稿另以 viewer ID 分開記在 localStorage，不保存指定人、近 N 天或模式，也不自動查詢。已套用的團隊／專案 URL 優先；草稿與已解析成員名單是不同資料，記住草稿不表示可省略 server scope 驗證。
 - 多個query／卡片與read-then-write不是原子快照；錯誤、partialstream、缺metadata不能當0或完成。
 
 ## 7. 維護與查核來源

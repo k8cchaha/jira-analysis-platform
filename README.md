@@ -60,7 +60,7 @@ npm run dev
 
 Open the origin configured in `AUTH_URL`. The Jira login button performs one Atlassian authorization flow that creates an encrypted JWT session and grants Jira API access.
 
-After login, `/dashboard` is the personal summary landing page. The application shell exposes the complete planned navigation; unfinished destinations are explicit development-in-progress pages rather than simulated features.
+After login, `/dashboard` is the personal summary landing page. The application shell's visible navigation depends on the signed-in user's configuration; hiding a destination is not server-side API authorization. The current application has 13 product page routes (12 main-navigation destinations plus the supplemental `/settings/jira` page), documented in the [feature and route overview](docs/README.md#功能總覽). Dashboard, Planning, Burn Down and workload analysis have active Jira data flows; Capacity is a mock demonstration, and the remaining analysis, report and settings capabilities are partial or ComingSoon. Project review, trends and comparison share `/analytics/projects`; the former trends/comparison URLs redirect there and are not separate pages.
 
 The former `/issues/assigned/list` route is not present in the current application. Its Story Points service and fixed recent-assignee query remain in the library, but are not a working editor:
 

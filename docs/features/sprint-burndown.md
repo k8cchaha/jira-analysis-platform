@@ -81,7 +81,7 @@
 - 開流錯誤對EventSource可能是HTTP200＋error frame，看到200不等於載入成功；須確認完整base及done，而非只看HTTP狀態。
 
 ## 實作狀態與程式來源
-完整載入後依 Resolved 分析已在目前工作目錄接通；By Resolved checkbox、舊 Burn Down Done-transition 與逐日 Resolved 查詢已移除。本文件不表示已提交／部署或經真實 Jira 時區驗證。
+目前程式已接通完整載入後依 Resolved 分析；By Resolved checkbox、舊 Burn Down Done-transition 與逐日 Resolved 查詢已移除。「中途加入的票」控制項暫時隱藏，現有三個顯示／覆寫控制項仍可操作。程式核對基準見 [功能總覽](../README.md)；不代表已部署或經真實 Jira 時區驗證。
 - [頁面](../../app/(app)/sprint/burndown/page.tsx)、[client／篩選](../../app/(app)/sprint/burndown/burndown-client.tsx)、[參數](../../lib/burndown-params.ts)
 - [Jira service](../../lib/jira-burndown.ts)、[日期投影](../../lib/burndown-completion.ts)、[曲線聚合](../../lib/burndown-series.ts)、[成員聚合](../../lib/burndown-status.ts)
 - [SSE API](../../app/api/sprint/burndown/stream/route.ts)、[每日明細](../../app/(app)/sprint/burndown/day-tasks-dialog.tsx)、[成員 UI](../../app/(app)/sprint/burndown/development-status.tsx)、[JQL](../../lib/jira-jql.ts)
