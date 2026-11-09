@@ -70,7 +70,7 @@ function harness(today = "2026-10-21") {
     PAGE, FILTER, SELECTOR,
     ...["story-points", "members", "trends", "comparison"].map((feature) => `app/(app)/analytics/${feature}/page.tsx`),
     "components/coming-soon.tsx", "components/page-header.tsx",
-    "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx",
+    "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx", "components/search-button.tsx",
     "lib/projects-filter.ts", "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
     "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-missing-data.ts",
   ])
@@ -130,6 +130,7 @@ function teamOf(tree) { return nodes(tree).find((node) => node.type?.name === "T
 function sprintDropdown(tree) { return nodes(tree).find((node) => node.props.id === "projects-sprints") }
 function dateField(tree) { return nodes(tree).find((node) => node.type?.name === "DateRangeField") }
 function modeRadio(tree, mode) { return nodes(tree).find((node) => node.type === "input" && node.props.type === "radio" && node.props.value === mode) }
+function queryButton(tree) { return nodes(tree).find((node) => node.type?.name === "SearchButton") }
 const sprintSelection = (project, selectedSprintIds = []) => ({ project, mode: "sprints", selectedSprintIds, error: null })
 function checkbox(tree, name) {
   const label = nodes(sprintDropdown(tree)).find((node) => node.type === "label" && nodes(node).some((child) => child.type === "span" && child.props.children === name))
@@ -247,6 +248,131 @@ describe("project exclusive interval parameters", () => {
 })
 
 describe("project exclusive interval UI", () => {
+  for (const [params, enabled] of [
+    [{}, false], [{ project: "SUN" }, false],
+    [{ project: "SUN", sprint: "6823" }, true],
+    [{ project: "SUN", sprint: ["6823", "7518"] }, true],
+    [{ project: "SUN", sprint: "7401" }, false],
+    [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, true],
+    [{ project: "SUN", mode: "dates", from: "2026-10-21", to: "2026-10-21" }, true],
+    [{ project: "SUN", mode: "dates", from: "invalid", to: "2026-10-21" }, false],
+    [{ project: "SUN", mode: "dates", from: "2026-10-22", to: "2026-10-21" }, false],
+    [{ project: "SUN", mode: "dates", from: "2000-01-01", to: "2026-10-21" }, false],
+  ]) it(`places the shared Query action at the right with enabled=${enabled} for ${JSON.stringify(params)}`, async () => {
+    const h = harness()
+    const props = await selectionProps(h, params)
+    const { SearchButton } = h.load("components/search-button.tsx")
+    const tree = h.invoke(h.load(FILTER).ProjectsFilter, props)
+    assert.equal(tree.type, "form")
+    const interval = tree.props.children[1]
+    assert.equal(interval.type, "fieldset")
+    assert.equal(interval.props.disabled, props.project === null)
+    const row = interval.props.children[1]
+    assert.match(row.props.className, /\bflex\b/)
+    assert.match(row.props.className, /\bflex-wrap\b/)
+    assert.match(row.props.className, /\bmin-w-0\b/)
+    assert.ok(nodes(row.props.children[0]).includes(sprintDropdown(tree)))
+    assert.ok(nodes(row.props.children[1]).includes(modeRadio(tree, "dates")))
+    const action = row.props.children[2]
+    assert.match(action.props.className, /\bml-auto\b/)
+    assert.match(action.props.className, /\bmax-w-full\b/)
+    assert.match(action.props.className, /\bmin-w-0\b/)
+    assert.match(action.props.className, /\bpt-5\b/, "align with controls below their headings")
+    assert.equal(action.props.children.type, SearchButton)
+    assert.equal(nodes(tree).filter((node) => node.type === SearchButton).length, 1)
+    assert.equal(action.props.children.props.disabled, !enabled)
+    assert.equal(action.props.children.props.className, undefined)
+    assert.equal(action.props.children.props.style, undefined)
+    for (const panel of nodes(interval).filter((node) => "inert" in node.props)) {
+      assert.equal(nodes(panel).some((node) => node.type === SearchButton), false)
+    }
+    const helpId = action.props.children.props["aria-describedby"]
+    assert.match(nodes(tree).find((node) => node.props.id === helpId).props.children, /尚未開放/)
+    const button = h.invoke(SearchButton, action.props.children.props)
+    assert.equal(button.props.type, "submit")
+    assert.equal(button.props.disabled, !enabled)
+    assert.equal(button.props.children, "查詢")
+    assert.match(button.props.className, /\bw-24\b/)
+    assert.match(button.props.className, /\bmax-w-full\b/)
+    assert.match(button.props.className, /\bmin-w-0\b/)
+    let prevented = false
+    tree.props.onSubmit({ preventDefault() { prevented = true } })
+    assert.equal(prevented, true, "prevent Enter/native submission from navigating the placeholder form")
+    assert.deepEqual(h.pushes, [])
+    assert.equal(h.transitionCount, 0)
+    const markup = renderToStaticMarkup(createElement("div", null, tree))
+    assert.equal((markup.match(/>查詢<\/button>/g) ?? []).length, 1)
+    const submitMarkup = markup.match(/<button[^>]*type="submit"[^>]*>查詢<\/button>/)?.[0]
+    assert.ok(submitMarkup)
+    assert.equal(submitMarkup.includes('disabled=""'), !enabled)
+    assert.match(markup, /id="projects-query-help"/)
+    const submitted = h.invoke(h.load(FILTER).ProjectsFilter, props)
+    assert.equal(nodes(submitted).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children)), enabled)
+  })
+  it("recomputes Query readiness from the active mode across checkbox, project and history changes", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    let props = await selectionProps(h, { project: "SUN" })
+    let tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, true, "valid inactive dates do not satisfy Sprints mode")
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, false)
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: false } })
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, true)
+    modeRadio(tree, "dates").props.onChange()
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, false, "default month range enables dates without Sprint selection")
+    modeRadio(tree, "sprints").props.onChange()
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, true)
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, props)
+    const staleSubmit = tree.props.onSubmit
+    selectorOf(tree).props.onProjectChange("TKK")
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, true, "project changes clear checked Sprints")
+    staleSubmit({ preventDefault() {} })
+    assert.equal(nodes(h.invoke(ProjectsFilter, props)).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children)), false)
+    h.setPending(false)
+    for (const [params, disabled] of [
+      [{ project: "SUN", sprint: "6823" }, false],
+      [{ project: "SUN" }, true],
+      [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, false],
+      [{}, true],
+    ]) {
+      props = await selectionProps(h, params)
+      tree = h.invoke(ProjectsFilter, props)
+      assert.equal(queryButton(tree).props.disabled, disabled)
+    }
+  })
+  it("validates date drafts and clears submitted placeholder feedback when the interval changes", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" })
+    let tree = h.invoke(ProjectsFilter, props)
+    const notice = (tree) => nodes(tree).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children))
+    const submit = tree.props.onSubmit
+    dateField(tree).props.onChange({ from: "2026-09-01", to: "2026-09-30" })
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(queryButton(tree).props.disabled, false)
+    submit({ preventDefault() {} })
+    tree = h.invoke(ProjectsFilter, props)
+    assert.equal(notice(tree), true)
+    dateField(tree).props.onChange({ from: "2026-09-02", to: "2026-09-30" })
+    assert.equal(notice(h.invoke(ProjectsFilter, props)), false)
+    assert.deepEqual(h.pushes, [], "readiness and placeholder submit do not query or navigate")
+    for (const dateRange of [null, { from: "", to: "" }, { from: "2026-02-30", to: "2026-10-21" }, { from: "2026-10-22", to: "2026-10-21" }]) {
+      const fresh = harness()
+      const invalid = { ...props, dateRange }
+      const rendered = fresh.invoke(fresh.load(FILTER).ProjectsFilter, invalid)
+      assert.equal(queryButton(rendered).props.disabled, true)
+      rendered.props.onSubmit({ preventDefault() {} })
+      assert.equal(notice(fresh.invoke(fresh.load(FILTER).ProjectsFilter, invalid)), false)
+      assert.deepEqual(fresh.pushes, [])
+    }
+  })
   it("places named radios directly beside their controls without duplicate visible headings or nested interactive labels", async () => {
     for (const mode of ["sprints", "dates"]) {
       const h = harness()
@@ -295,13 +421,15 @@ describe("project exclusive interval UI", () => {
     assert.equal(panels[1].props.inert, true)
     assert.equal(panels[1].props["aria-disabled"], true)
     assert.equal(panels.flatMap(nodes).some((node) => node.props.type === "radio"), false)
-    assert.deepEqual(plain(dateField(tree).props.value), { from: "2026-10-15", to: "2026-10-21" })
+    assert.deepEqual(plain(dateField(tree).props.value), { from: "2026-09-22", to: "2026-10-21" })
     const field = dateField(tree)
     const fieldTree = h.invoke(field.type, field.props)
     h.flushEffects()
     assert.deepEqual(h.pushes, [])
     const shortcutGroup = nodes(fieldTree).find((node) => node.props["aria-label"] === "時間區間快捷鍵")
-    assert.deepEqual(nodes(shortcutGroup).filter((node) => node.type === "button").map((node) => node.props.children), ["近1月", "近2月", "近3月", "近6月"])
+    const shortcutButtons = nodes(shortcutGroup).filter((node) => node.type === "button")
+    assert.deepEqual(shortcutButtons.map((node) => node.props.children), ["近1月", "近2月", "近3月", "近6月"])
+    assert.deepEqual(shortcutButtons.map((node) => node.props["aria-pressed"]), [true, false, false, false])
     dateField(tree).props.onCommit({ from: "2026-09-01", to: "2026-10-01" })
     dateField(tree).props.onChange({ from: "2026-09-01", to: "2026-10-01" })
     assert.deepEqual(h.pushes, [])
@@ -338,7 +466,7 @@ describe("project exclusive interval UI", () => {
     checkbox(oldTree, "Sprint 71").props.onChange({ target: { checked: true } })
     sprintDropdown(oldTree).props.onOpenChange(true)
     assert.equal(h.pushes.length, 1)
-    assert.equal(h.pushes[0], "/analytics/projects?project=SUN&mode=dates&from=2026-10-15&to=2026-10-21")
+    assert.equal(h.pushes[0], "/analytics/projects?project=SUN&mode=dates&from=2026-09-22&to=2026-10-21")
     tree = h.invoke(ProjectsFilter, props)
     assert.equal(sprintDropdown(tree).props.open, false)
     assert.equal(modeRadio(tree, "sprints").props.checked, false)
@@ -605,7 +733,9 @@ describe("project Sprints multi-selection and navigation", () => {
     const projectLabel = markup.match(/<span id="projects-project-label"[\s\S]*?<\/span><\/span>/)?.[0]
     assert.match(projectLabel, /aria-hidden="true"[^>]*>\*<\/span>/)
     assert.match(projectLabel, /sr-only[^>]*>（必選）/)
-    assert.doesNotMatch(markup, /aria-required|type="submit"|展開 Web 成員|Fixture member/)
+    assert.doesNotMatch(markup, /aria-required|展開 Web 成員|Fixture member/)
+    assert.equal((markup.match(/type="submit"/g) ?? []).length, 1)
+    assert.match(markup, /<button[^>]*type="submit"[^>]*disabled=""[^>]*>查詢<\/button>/)
     assert.equal((markup.match(/type="checkbox"/g) ?? []).length, props.sprints.length + h.load("lib/jira-dashboard-filter.ts").DASHBOARD_TEAMS.length)
     const tree = h.invoke(ProjectsFilter, props)
     const labels = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")

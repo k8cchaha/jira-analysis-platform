@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { DateRangeField, useBrowserToday } from "@/components/date-range-field"
 import { FilterDropdown, FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
 import { ProjectSelector } from "@/components/project-selector"
+import { SearchButton } from "@/components/search-button"
 import { TeamSelect } from "@/components/team-select"
 import { DATE_RANGE_PRESET_LABEL, dateRangeForPreset, requireDateRange, sameDateRange, type DateRange, type DateRangeShortcut } from "@/lib/date-range"
 import { projectsFilterHref, type ProjectsSelection } from "@/lib/projects-filter"
@@ -24,6 +25,7 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   const today = useBrowserToday()
   const [isPending, startTransition] = useTransition()
   const [groups, setGroups] = useState<string[]>([])
+  const [queryNotice, setQueryNotice] = useState<{ selection: ProjectsSelection; range: DateRange | null } | null>(null)
   const [sprintsOpen, setSprintsOpen] = useState(false)
   const [dateActivation, setDateActivation] = useState(0)
   const latestDateActivation = useRef(dateActivation)
@@ -33,7 +35,7 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   const latestDateDraft = useRef<DateRange | null>(null)
   const dateRange = selection.mode === "dates" && selection.dateRange
     ? dateDraft?.source === selection ? dateDraft.range : selection.dateRange
-    : dateDraft?.range ?? (today ? dateRangeForPreset("last7", today) : null)
+    : dateDraft?.range ?? (today ? dateRangeForPreset("last1Month", today) : null)
   const sprintDraft = useRef<{ project: SprintProjectKey | null; ids: readonly number[] }>({ project: selection.project, ids: [] })
   useLayoutEffect(() => {
     latestSelection.current = selection
@@ -50,6 +52,16 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   const selectedNames = orderedSprints.filter((sprint) => ids.includes(sprint.id)).map((sprint) => sprint.name)
   const projectSelected = selection.project !== null
   const value = !projectSelected ? "請先選擇專案" : selection.error && selection.mode === "sprints" ? "請重新選擇 Sprints" : selectedNames.join(" · ") || "選擇 Sprints"
+  const queryEnabled = canQuery(selection, dateRange)
+
+  function canQuery(current: ProjectsSelection, range: DateRange | null): boolean {
+    if (current.mode === "sprints" && current.selectedSprintIds.length === 0) return false
+    if (current.mode === "dates" && current.dateRange === null) return false
+    try {
+      projectsFilterHref(current.mode === "dates" ? { ...current, dateRange: range } : current)
+      return true
+    } catch { return false }
+  }
 
   function navigate(next: ProjectsSelection) {
     if (!next.project) return
@@ -128,7 +140,14 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   }
 
   return (
-    <div aria-busy={isPending}>
+    <form aria-busy={isPending} onSubmit={(event) => {
+      event.preventDefault()
+      const current = latestSelection.current
+      const range = latestDateDraft.current
+      if (!canQuery(current, range)) return
+      // 分析引擎尚未開放；僅確認條件，不發出 Jira 分析請求。
+      setQueryNotice({ selection: current, range })
+    }}>
       <div className="flex min-w-0 flex-wrap items-end gap-4">
         <div className={FILTER_SELECT_WIDTH_CLASS.project}>
           <ProjectSelector project={selection.project} required onProjectChange={changeProject} idPrefix="projects-project" />
@@ -154,7 +173,7 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
                     </label>
                   ))}
               </FilterDropdown>
-              <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；未勾選表示不限制 Sprint。專案分析功能尚未開放。</p>
+              <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；至少勾選一個 Sprint 才能啟用查詢。專案分析功能尚未開放。</p>
             </div>
           </div>
           <div className="flex min-w-0 max-w-full flex-1 basis-80 items-start gap-2">
@@ -164,10 +183,17 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
                 : <p className="py-2 text-sm text-slate-500 dark:text-slate-400">正在準備分析區間…</p>}
             </div>
           </div>
+          <div className="ml-auto min-w-0 max-w-full shrink-0 pt-5">
+            <SearchButton disabled={!queryEnabled} aria-describedby="projects-query-help" />
+          </div>
         </div>
       </fieldset>
       {selection.error ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">{selection.error}</p> : null}
       {isPending ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在更新篩選條件…</p> : null}
-    </div>
+      <p id="projects-query-help" className="sr-only">請先選擇專案；Sprints 模式需至少勾選一個 Sprint，分析區間模式需有效日期區間。專案分析功能尚未開放。</p>
+      {queryNotice?.selection === selection && (selection.mode === "sprints" || queryNotice.range === dateRange)
+        ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">篩選條件已就緒；專案分析功能尚未開放，目前不會查詢分析資料。</p>
+        : null}
+    </form>
   )
 }
