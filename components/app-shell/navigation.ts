@@ -6,7 +6,6 @@ export type AppRoute =
   | "/analytics/workload"
   | "/analytics/story-points"
   | "/analytics/projects"
-  | "/analytics/members"
   | "/reports/saved/list"
   | "/reports/exports/list"
   | "/settings/jira"
@@ -117,12 +116,6 @@ export const navigationCategories = [
         label: "團隊分析",
         icon: "members",
         routes: [{ href: "/analytics/story-points", label: "團隊分析" }],
-      },
-      {
-        id: "members",
-        label: "成員分析",
-        icon: "person",
-        routes: [{ href: "/analytics/members", label: "成員分析" }],
       },
     ],
   },

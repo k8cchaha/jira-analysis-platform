@@ -1,6 +1,6 @@
 # Jira 技術參考
 
-[回功能總覽](README.md) · 基準：2026-11-10 的實際頁面與程式（`867fa97`）。下列為已接入功能的 JQL、REST 與投影規則，不是 live Jira 驗證或部署紀錄；未接入的分析／管理頁明確另列。
+[回功能總覽](README.md) · 基準：2026-11-10 的實際頁面與程式，含分析篩選搬移。下列為已接入功能的 JQL、REST 與投影規則，不是 live Jira 驗證或部署紀錄；未接入的分析／管理頁明確另列。
 
 ## 1. 「Jira指令」分三層閱讀
 | 層次 | 回答的問題 | 權威來源 |
@@ -48,7 +48,7 @@ JQL是查詢語言，不是工時或Insight計算引擎。`POST /search/jql`是�
 | Burn Down完成 | 同份 Dev-Task REST `resolutiondate`＋`createBurndownCompletionResolver()` | 完整分頁後依驗證帳號時區分組，無額外開局／逐日JQL、不fallback；舊completion builders已移除 |
 | 工作量 | `workloadDoneDuringJql()`／`workloadDevTasksJql()` | 期間曾Done的Dev，再按當前欄位投影 |
 | 舊Assigned service | `RECENT_ASSIGNED_ISSUES_JQL`／`recentAssignedIssuesUpdateJql()` | 固定本人created近30天；目前無頁面 |
-| Capacity、專案回顧與趨勢、其餘ComingSoon頁 | 無功能資料query | Capacity mock；專案回顧與趨勢沿用Projects篩選，無分析引擎／圖表／計算；其餘未接入 |
+| Capacity、專案回顧與趨勢、團隊分析、其餘ComingSoon頁 | 無功能資料query | Capacity mock；Projects為Sprint-only，團隊分析承接日期篩選，兩者均部分實作且無分析引擎／結果／計算；其餘未接入 |
 
 保留的Dev-only `sprintUnestimatedJql()`／`sprintUnassignedJql()`不是目前Planning Dev＋QA清單來源。共用analysis builders存在不代表ComingSoon頁已接入。
 
@@ -151,7 +151,9 @@ Jira請求由server透過OAuth cloud transport：`https://api.atlassian.com/ex/j
 | GET `/rest/api/3/myself` | 同search credentials的accountId／timeZone；需`read:jira-user` | Burn Down帳號時區分桶 |
 | GET `/rest/api/3/group/member?groupname=…` | startAt分頁、完整會員 | team scope、共用預載、Planning群組輔助 |
 
-**沒有接入Jira Agile Sprint API**：Project與Sprint records目前是本機配置。Capacity沒有容量REST／PUT；專案回顧與趨勢沒有分析JQL／REST或功能資料I/O，共用Team可能讀成員metadata但不查分析數據；其餘ComingSoon頁也未接入功能資料I/O。專案回顧、跨期趨勢與同條件比較集中於 `/analytics/projects`，舊趨勢／比較根路徑及已知子頁別名以307直接跳轉至該入口並保留所有query值（含無效／重複值），不新增Jira查詢或寫入。
+**沒有接入Jira Agile Sprint API**：Project與Sprint records目前是本機配置。Capacity沒有容量REST／PUT；專案回顧與趨勢、團隊分析沒有分析JQL／REST或功能資料I/O，共用Team可能讀成員metadata但不查分析數據；其餘ComingSoon頁也未接入功能資料I/O。專案回顧、跨Sprint趨勢與同條件比較集中於 `/analytics/projects`，只保留Sprint篩選；日曆日期篩選搬至 `/analytics/story-points`。舊趨勢／比較根路徑及已知子頁別名307直達Projects，舊members根路徑及summary／comparison／detail四個精確網址307直達Team；合計17個literal、單跳規則，保留所有query值（含無效／重複值），未知路徑與API不變。不新增Jira查詢或寫入。
+
+Projects舊日期網址仍報錯而不自動跳頁；手動移至團隊分析連結只有完整合法舊 `mode=dates`＋Project／from／to 才保留Project與日期，其他不合法條件只連乾淨Team入口。Team嚴格接受固定 `project`／`from`／`to`（不接受mode／sprint／group／member／未知或重複單值），日期為含首末日且最多3,660天的真實有序日曆日期。瀏覽器初始化近1個local日曆月，支援近1／2／3／6月與自訂日期，有效URL優先；初始化、還原與導航不自動分析。兩頁Team都是local整個群組選擇、不帶個別排除或序列化到URL；不能當server授權。篩選／查詢提示可用只表示部分實作，分析結果仍ComingSoon。
 
 | 站內入口 | 資料流 |
 | --- | --- |
@@ -203,5 +205,6 @@ SSE不是Jira變更推播，而是本次完整讀取結果。Burn Down不再發d
 - [Dashboard service](../lib/jira-dashboard.ts)、[寫入輸入驗證](../lib/jira-missing-data.ts)、[pageToken](../lib/jira-page-token.ts)
 - [Planning service](../lib/planning-data.ts)、[Burn Down service](../lib/jira-burndown.ts)、[Workload service](../lib/jira-workload.ts)
 - [本機Sprint](../lib/jira-sprint-data.ts)、[日期快捷鍵](../lib/date-range.ts)、[工作量投影](../lib/workload-heatmap.ts)
+- [Projects Sprint條件／手動日期搬移](../lib/projects-filter.ts)、[Team日期條件／URL](../lib/team-analysis-filter.ts)、[17個精確舊路徑跳轉](../next.config.ts)
 
 修改query／field只改權威module，service保留授權／I/O，文件與測試expected同步。未接入的library、保留舊service與ToDo不列為已完成能力。本次只靜態對照及本機文件驗證，沒有liveJira搜尋／PUT。

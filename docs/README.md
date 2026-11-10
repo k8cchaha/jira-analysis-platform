@@ -1,6 +1,6 @@
 # 功能說明文件
 
-這份文件依 **2026-11-10 目前 repository 的實際頁面與程式行為**整理；程式核對基準為 `867fa97`，已包含 Burn Down 完整載入後依 Resolved 分析、「中途加入的票」控制項暫時隱藏，以及「專案回顧與趨勢」入口整合。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署版本證明、真實 Jira 資料報告或未來功能承諾**。
+這份文件依 **2026-11-10 的實際頁面與程式行為**整理；在既有 Burn Down Resolved 分析與專案入口整合基礎上，核對本次 Projects Sprint-only、日期篩選搬至團隊分析與成員舊入口搬移。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署證明、真實 Jira 資料報告或未來功能承諾**。
 
 ## 建議閱讀方式
 - **第一次認識產品**：先看下方功能總覽，再讀對應頁面的「目的／Insight／使用方式」。
@@ -28,9 +28,8 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | Sprint／[開發狀況／Burn Down](features/sprint-burndown.md) | `/sprint/burndown` | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
 | Sprint／[Capacity](features/sprint-capacity.md) | `/sprint/capacity` | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
 | 分析／[工作量分析](features/analytics-workload.md) | `/analytics/workload` | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
-| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 整合專案回顧、跨期趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；目前僅可選專案與Sprint／日期條件 | 部分實作；篩選介面可用，無分析引擎 |
-| 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃團隊工作摘要 | 團隊彙整負擔 | 尚無結果，規劃團隊視角 | 規劃中；ComingSoon |
-| 分析／[成員分析](features/analytics-members.md) | `/analytics/members` | 規劃個人工作摘要 | 個人資料分散 | 尚無結果，規劃成員視角 | 規劃中；ComingSoon |
+| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 整合專案回顧、跨Sprint趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；可選專案、整個Team與複選Sprint，不再有日期模式 | 部分實作；Sprint篩選可用，無分析引擎 |
+| 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
 | 設定／[系統設定](features/settings-system.md) | `/settings/system` | 規劃工作區設定入口 | 配置分散 | 管理用途，尚無操作 | 規劃中；ComingSoon |
@@ -40,9 +39,11 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 - [Jira 連線資訊](features/settings-jira.md)：`/settings/jira` 路由存在，但不在目前主導覽分類；ComingSoon，無連線管理操作。
 - [指派給我的 Issues（舊服務）](features/legacy-assigned-issues.md)：舊 `/issues/assigned/list` **目前不存在**；只保留 service／JQL／測試，不能當可用頁面。
 - 原趨勢分析與比較分析已整合至 **專案回顧與趨勢**（唯一入口 `/analytics/projects`）；舊 `/analytics/trends`、`/analytics/comparison` 根路徑及其已知子頁別名，以 **307直接跳轉**至該入口，保留所有 query 值（含無效值與重複值），不先驗證或修正條件。舊文件保留為搬移提示，見 [趨勢分析搬移說明](features/analytics-trends.md)／[比較分析搬移說明](features/analytics-comparison.md)。
+- 原成員分析的實體頁面、`AppRoute` 與導覽項目已移除；`/analytics/members` 根路徑及 `/summary`、`/comparison`、`/detail` 以307直接跳轉至 `/analytics/story-points`，保留所有 query 值，不代表成員統計已完成。舊文件僅保留 [成員分析搬移說明](features/analytics-members.md)，不再列為功能頁。
+- 合計17個精確、單跳307別名；無wildcard、未知子路徑與API不變。舊 Projects 日期網址不自動跳頁，而是錯誤＋手動移至團隊分析連結：合法舊 `mode=dates`＋Project／from／to 保留該條件，不合法則連乾淨團隊入口。日期篩選預設近1個瀏覽器本地日曆月，支援近1／2／3／6月及自訂日期；兩頁的Team僅local整個群組，URL還原不自動分析。
 - 登入、OAuth callback、根路徑跳轉及舊 analysis URL redirect 是支援流程，不另列分析功能頁。安全與授權見 [Jira 技術參考](jira-reference.md)。
 
-以上覆蓋目前 `app/(app)` 的13個功能頁路由，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
+以上覆蓋目前 `app/(app)` 的12個實體功能頁路由（11個主導覽目的地＋補充 `/settings/jira`），分析只有工作量／專案回顧與趨勢／團隊分析三個 canonical 頁，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
 
 ## 五個閱讀前提醒
 1. **同名點數不一定有相同母體**：Planning Dev＋QA、Burn Down 已估Dev-only、工作量是期間曾Done的Dev、Dashboard缺值是狀態依賴的Dev＋QA。
