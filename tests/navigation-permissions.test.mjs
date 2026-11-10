@@ -38,6 +38,19 @@ function harness() {
   return load("components/app-shell/navigation.ts")
 }
 
+describe("shared admin email policy", () => {
+  it("normalizes trusted email identically to navigation and rejects non-string values", () => {
+    const nav = harness()
+    for (const email of nav.ADMIN_EMAILS) {
+      assert.equal(nav.isAdminEmail(`  ${email.toUpperCase()}  `), true)
+      assert.equal(nav.visibleNavigationCategories(nav.navigationCategories, email), nav.navigationCategories)
+    }
+    for (const value of [undefined, null, false, 1, {}, [], "", "someone@example.com"]) {
+      assert.equal(nav.isAdminEmail(value), false)
+    }
+  })
+})
+
 describe("Sprint Capacity navigation", () => {
   it("adds one final Capacity item while preserving existing Sprint entries", () => {
     const nav = harness()

@@ -32,7 +32,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
-| 設定／[系統設定](features/settings-system.md) | `/settings/system` | 規劃工作區設定入口 | 配置分散 | 管理用途，尚無操作 | 規劃中；ComingSoon |
+| 設定／[系統設定](features/settings-system.md) | `/settings/system` | 暫時確認六項執行環境設定與用途 | 部署值難確認、避免憑證貼入日誌 | 管理員唯讀診斷；敏感值須逐項確認顯示，非健康檢查 | 部分實作；暫時診斷，無設定修改 |
 | 設定／[專案設定](features/settings-project.md) | `/settings/project` | 規劃容量、成員與延伸天數 | 缺可維護的規劃參數 | ToDo說明，尚未接入計算 | 規劃中；ComingSoon＋ToDo |
 
 ### 補充路徑與舊功能

@@ -296,6 +296,14 @@ Focused offline tests (Node.js 24, no live Jira writes):
 node --experimental-strip-types --test tests/*.test.mjs
 ```
 
+## Temporary system environment diagnostics
+
+`/settings/system` temporarily provides read-only diagnostics for six runtime variables and their purposes: `ATLASSIAN_PAT`, `AUTH_ATLASSIAN_SECRET`, `AUTH_SECRET`, `AUTH_ATLASSIAN_ID`, `AUTH_URL`, and `ATLASSIAN_JIRA_CLOUD_URL`. The page and every reveal verify the server session against the existing admin email policy; navigation visibility alone does not grant access. Missing identity, Jira authorization errors, or auth failures deny diagnostic access.
+
+The PAT and both secrets are entirely absent from initial HTML/RSC/client props except for configured/empty/unset status. Each secret requires a warning and explicit confirmation before a no-store Server Action reads and returns that one value. Only one secret is shown at a time; hiding, switching tabs or leaving the page clears UI state and ignores late responses, **but cannot retract a response already received by the browser or DevTools**. The other three values are displayed directly. Current production Jira requests use OAuth, not `ATLASSIAN_PAT`.
+
+This feature reads request-time `process.env` only after authorization; it does not open credential files, store values, edit configuration, or test live Jira connectivity. It is temporary and should be removed after diagnosis, including its reveal action. See [System Settings](docs/features/settings-system.md) for the exact purposes, limitations and removal checklist. The implementation and offline synthetic tests are not proof of deployment or validation of real credentials.
+
 ## Session storage
 
 Auth.js encrypts the JWT session with `AUTH_SECRET` and stores it in its default HttpOnly cookie. The encrypted session contains the minimum Jira credentials needed by server-side requests; `/api/auth/session`, React client props, and local storage never receive the OAuth tokens.
