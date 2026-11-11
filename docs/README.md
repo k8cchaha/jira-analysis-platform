@@ -1,6 +1,6 @@
 # 功能說明文件
 
-這份文件依 **2026-11-10 的實際頁面與程式行為**整理；在既有 Burn Down Resolved 分析與專案入口整合基礎上，核對本次 Projects Sprint-only、日期篩選搬至團隊分析與成員舊入口搬移。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署證明、真實 Jira 資料報告或未來功能承諾**。
+這份文件依 **2026-11-10 的實際頁面與程式行為**整理；在既有 Burn Down Resolved 分析與專案入口整合基礎上，核對本次 Projects Sprint-only、日期篩選搬至團隊分析與成員舊入口搬移。2026-11-11 另同步設定頁清空與暫時環境診斷移除。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署證明、真實 Jira 資料報告或未來功能承諾**。
 
 ## 建議閱讀方式
 - **第一次認識產品**：先看下方功能總覽，再讀對應頁面的「目的／Insight／使用方式」。
@@ -32,8 +32,8 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
-| 設定／[系統設定](features/settings-system.md) | `/settings/system` | 暫時確認六項執行環境設定與用途 | 部署值難確認、避免憑證貼入日誌 | 管理員唯讀診斷；敏感值須逐項確認顯示，非健康檢查 | 部分實作；暫時診斷，無設定修改 |
-| 設定／[專案設定](features/settings-project.md) | `/settings/project` | 規劃容量、成員與延伸天數 | 缺可維護的規劃參數 | ToDo說明，尚未接入計算 | 規劃中；ComingSoon＋ToDo |
+| 設定／[系統設定](features/settings-system.md) | `/settings/system` | 保留系統設定入口 | 設定管理尚未實作 | 僅頁面標題；環境診斷與讀值入口已移除 | 規劃中；內容已清空 |
+| 設定／[專案設定](features/settings-project.md) | `/settings/project` | 保留專案設定入口 | 可維護的規劃參數尚未實作 | 僅頁面標題，無設定或ToDo內容 | 規劃中；內容已清空 |
 
 ### 補充路徑與舊功能
 - [Jira 連線資訊](features/settings-jira.md)：`/settings/jira` 路由存在，但不在目前主導覽分類；ComingSoon，無連線管理操作。

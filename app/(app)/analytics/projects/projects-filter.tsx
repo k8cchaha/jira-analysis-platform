@@ -65,10 +65,8 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
             if (latestSelection.current.project) { setGroups(nextGroups); setQueryNotice(null) }
           }} perMember={false} helpText="團隊選取僅保留於本頁；專案回顧與趨勢功能尚未開放，目前不會查詢分析資料。" />
         </div>
-      </div>
-      <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className="mt-4 min-w-0">
-        <legend className="sr-only">Sprints</legend>
-        <div className="flex min-w-0 flex-wrap items-start gap-6">
+        <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className={FILTER_SELECT_WIDTH_CLASS.sprint}>
+          <legend className="sr-only">Sprints</legend>
           <div inert={!projectSelected} aria-disabled={!projectSelected} className={`min-w-0 max-w-full ${!projectSelected ? "opacity-50" : ""}`}>
             <FilterDropdown id="projects-sprints" kind="sprint" label="Sprints" value={value} open={projectSelected && selection.project === props.project && sprintsOpen} onOpenChange={(open) => {
               if (latestSelection.current.project && latestSelection.current.project === selection.project) setSprintsOpen(open)
@@ -85,11 +83,11 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
             </FilterDropdown>
             <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；至少勾選一個 Sprint 才能啟用查詢。專案回顧與趨勢功能尚未開放。</p>
           </div>
-          <div className="ml-auto min-w-0 max-w-full shrink-0 pt-5">
-            <SearchButton disabled={!canQuery(selection)} aria-describedby="projects-query-help" />
-          </div>
+        </fieldset>
+        <div className="ml-auto min-w-0 max-w-full shrink-0">
+          <SearchButton disabled={!projectSelected || !canQuery(selection)} aria-describedby="projects-query-help" />
         </div>
-      </fieldset>
+      </div>
       {selection.error ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">{selection.error}</p> : null}
       {isPending ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在更新篩選條件…</p> : null}
       {selection.error && props.dateMigrationHref ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">分析區間已移至團隊分析。<GuardedLink href={props.dateMigrationHref} className="ml-2 text-blue-600 underline dark:text-blue-400">前往團隊分析</GuardedLink></p> : null}
