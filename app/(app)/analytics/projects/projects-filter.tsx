@@ -60,11 +60,6 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
         <div className={FILTER_SELECT_WIDTH_CLASS.project}>
           <ProjectSelector project={selection.project} required onProjectChange={changeProject} idPrefix="projects-project" />
         </div>
-        <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
-          <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => {
-            if (latestSelection.current.project) { setGroups(nextGroups); setQueryNotice(null) }
-          }} perMember={false} helpText="團隊選取僅保留於本頁；專案回顧與趨勢功能尚未開放，目前不會查詢分析資料。" />
-        </div>
         <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className={FILTER_SELECT_WIDTH_CLASS.sprint}>
           <legend className="sr-only">Sprints</legend>
           <div inert={!projectSelected} aria-disabled={!projectSelected} className={`min-w-0 max-w-full ${!projectSelected ? "opacity-50" : ""}`}>
@@ -84,6 +79,11 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
             <p id="projects-sprints-help" className="sr-only">可複選該專案的 Sprints；至少勾選一個 Sprint 才能啟用查詢。專案回顧與趨勢功能尚未開放。</p>
           </div>
         </fieldset>
+        <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
+          <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => {
+            if (latestSelection.current.project) { setGroups(nextGroups); setQueryNotice(null) }
+          }} perMember={false} helpText="團隊選取僅保留於本頁；專案回顧與趨勢功能尚未開放，目前不會查詢分析資料。" />
+        </div>
         <div className="ml-auto min-w-0 max-w-full shrink-0">
           <SearchButton disabled={!projectSelected || !canQuery(selection)} aria-describedby="projects-query-help" />
         </div>

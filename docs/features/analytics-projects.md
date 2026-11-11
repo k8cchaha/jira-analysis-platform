@@ -23,7 +23,7 @@
 
 ## 使用方式
 - **Sprint-only**：只提供 Project、Team、複選 Sprints 與查詢，沒有區間模式 radio、日期欄位或日期快捷鍵。
-- Project、Team、Sprints 與查詢按鈕排列在同一列，查詢靠右；窄容器可換行並夾至可用寬度。專案單選且必選；未選之前 Team、Sprints 與查詢不可操作。三種選擇器與查詢按鈕均重用既有元件及中央寬度。
+- Project、Sprints、Team 與查詢按鈕依序排列在同一列，查詢靠右；窄容器可換行並夾至可用寬度。專案單選且必選；未選之前 Team、Sprints 與查詢不可操作。三種選擇器與查詢按鈕均重用既有元件及中央寬度。
 - Sprints 可複選該專案的完整本機設定清單（含歷史與未來，最新在前），沒有自動預選，至少一個有效 Sprint 才能查詢。
 - Team 僅選整個團隊、不提供逐成員排除；留在本頁本次 local state，不寫入分析 URL、不是 server 授權邊界，也不是比較對象選取器。重新整理不保存 Team。
 - Project、Sprints 選擇即時更新 URL；新網址只含 `project` 與重複 `sprint`，例如 `/analytics/projects?project=SUN&sprint=6823&sprint=7518`。更換專案清除舊專案 Sprint，保留本頁 Team 選擇；上一頁／下一頁從有效 URL 還原專案與 Sprint。

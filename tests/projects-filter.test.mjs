@@ -108,7 +108,7 @@ describe("project Sprint-only UI and navigation", () => {
     let props = await selectionProps(h, {})
     let tree = h.invoke(ProjectsFilter, props)
     assert.equal(nodes(tree).find((node) => node.type === "fieldset").props.disabled, true)
-    assert.equal(tree.props.children[0].props.children[1].props.inert, true)
+    assert.equal(nodes(tree).find((node) => node.props.children === teamOf(tree)).props.inert, true)
     sprintDropdown(tree).props.onOpenChange(true)
     teamOf(tree).props.onGroupsChange(["ent-web"])
     assert.deepEqual(h.pushes, [])
@@ -199,14 +199,14 @@ describe("project Sprint-only UI and navigation", () => {
     checkbox(next, "S128").props.onChange({ target: { checked: true } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&sprint=6619")
   })
-  it("keeps Project, Team, Sprints and Query in one wrapping row with central widths", async () => {
+  it("keeps Project, Sprints, Team and Query in one wrapping row with central widths", async () => {
     const h = harness()
     const { ProjectsFilter } = h.load(FILTER)
     const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
     for (const params of [{}, { project: "SUN", sprint: ["6823", "7518"] }]) {
       const tree = h.invoke(ProjectsFilter, await selectionProps(h, params))
       const row = tree.props.children[0]
-      const [project, team, sprints, query] = row.props.children
+      const [project, sprints, team, query] = row.props.children
       assert.equal(row.props.children.length, 4)
       assert.match(row.props.className, /flex-wrap/)
       assert.match(row.props.className, /items-end/)
@@ -222,7 +222,7 @@ describe("project Sprint-only UI and navigation", () => {
       assert.ok(team.props.className.startsWith(FILTER_SELECT_WIDTH_CLASS.team))
       assert.equal(sprints.props.className, FILTER_SELECT_WIDTH_CLASS.sprint)
       assert.match(query.props.className, /ml-auto/)
-      for (const control of [project, team, sprints, query]) {
+      for (const control of [project, sprints, team, query]) {
         assert.match(control.props.className, /max-w-full/)
         assert.match(control.props.className, /min-w-0/)
         assert.doesNotMatch(control.props.className, /mt-4|pt-5/)
