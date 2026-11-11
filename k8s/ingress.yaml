@@ -1,0 +1,43 @@
+# Exposed on the shared internet-facing "apps-restricted" ALB, locked to the
+# office/VPN egress IPs by the platform-managed security group. The company
+# network reaches AWS over the public internet (no private route into the VPC),
+# so this is the working path today. See the ci-runner-service tenant docs.
+#
+# __APP__ / __NAMESPACE__ / __HOST__ / __HEALTHCHECK_PATH__ are filled in by
+# deploy.sh from its CONFIG block. Everything under annotations that is NOT a
+# placeholder is a cluster-wide fixed value (cert, subnets, allowlist SG) shared
+# by every tenant — copy it verbatim, do not change it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: __NAMESPACE__
+  name: __APP__
+  labels:
+    app: __APP__
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/group.name: apps-restricted
+    # Attach the platform-managed allowlist SG by its Name tag. This is the sole
+    # allowlist; do NOT add inbound-cidrs (it is ignored when security-groups is set).
+    alb.ingress.kubernetes.io/security-groups: apps-restricted-alb
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-northeast-1:190446795153:certificate/669eed5f-6ecc-4798-8af2-e1884a15c15e
+    alb.ingress.kubernetes.io/subnets: subnet-0871d9e1348728a35,subnet-0c0cea75b2ef44f4f,subnet-0cbbea20710faabb3
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-path: __HEALTHCHECK_PATH__
+spec:
+  ingressClassName: aws-alb
+  rules:
+    - host: __HOST__ # external-dns creates this record
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: __APP__
+                port:
+                  number: 80

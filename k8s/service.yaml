@@ -1,0 +1,15 @@
+# Values filled in by deploy.sh from its CONFIG block. targetPort must match the
+# Dockerfile EXPOSE / containerPort; the Ingress talks to this Service on port 80.
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: __NAMESPACE__
+  name: __APP__
+  labels:
+    app: __APP__
+spec:
+  selector:
+    app: __APP__
+  ports:
+    - port: 80
+      targetPort: 8080

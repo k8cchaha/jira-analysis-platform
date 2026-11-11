@@ -302,6 +302,15 @@ ATLASSIAN_JIRA_CLOUD_URL
 
 Set `AUTH_URL` to the stable production origin and register its exact callback URL in the Atlassian Developer Console. Preview deployments require their own registered callback strategy.
 
+## KKS devops container deployment
+
+Pushing to `main` runs the shared `deploy-container-app` CI template: `deploy.sh` builds the `Dockerfile` (Next.js `output: "standalone"`, port 8080), pushes it to ECR, and applies `k8s/` to the `sb-apps` namespace. The app is served at `https://jira-analysis.devops.kk.stream` (reachable only from office/VPN egress IPs). `/api/healthz` is the unauthenticated probe and ALB health check.
+
+- `AUTH_URL` (derived from the host) and `ATLASSIAN_JIRA_CLOUD_URL` are set in `k8s/deployment.yaml`.
+- Secrets are GitLab CI/CD variables (Masked): `AUTH_SECRET`, `AUTH_ATLASSIAN_ID`, `AUTH_ATLASSIAN_SECRET`, plus an unmasked `APP_SECRET_VARS=AUTH_SECRET AUTH_ATLASSIAN_ID AUTH_ATLASSIAN_SECRET`. `deploy.sh` syncs them into the `jira-analysis-secrets` Secret.
+- Register `https://jira-analysis.devops.kk.stream/api/auth/callback/atlassian` in the Atlassian Developer Console.
+- Keep `replicas: 1`: token-refresh deduplication in `auth.ts` is in-process memory.
+
 ## Validation
 
 ```bash

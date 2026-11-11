@@ -1,0 +1,15 @@
+# Deploy this container app via the shared deploy-container-app CI template.
+# All the pipeline machinery (DinD, awscli/kubectl install, IRSA, runner tags,
+# "only on default branch") lives in the template and is maintained in one place.
+#
+# This file is the whole CI config — copy it verbatim into any container app.
+# App-specific values live in deploy.sh (CONFIG block) and k8s/*.yaml, not here.
+#
+# One-time, group-wide prereq: a masked GROUP-level CI/CD variable KUBECONFIG_B64
+# (base64 of your namespace's deployer-token kubeconfig). Set once for the group;
+# every app inherits it, so a new app needs no CI variables of its own.
+
+include:
+  - project: 'multimedia-solutions-business/sbworkspace/skills'
+    ref: main
+    file: '/skills/deploy-container-app/ci-template.yml'
