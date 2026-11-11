@@ -1,0 +1,64 @@
+# App-specific values (__APP__ / __NAMESPACE__ / __HOST__ / __HEALTHCHECK_PATH__ /
+# __IMAGE__ / __SECRET_HASH__) are filled in by deploy.sh — don't edit them here.
+#
+# Stateless: sessions live in the encrypted Auth.js cookie and there is no app
+# database, so there is no PVC and a RollingUpdate can overlap old/new pods.
+# replicas: 1 is intentional — auth.ts deduplicates concurrent Atlassian token
+# refreshes in process memory; multiple replicas could race on refresh-token
+# rotation. Scale out only after moving that dedup to shared state.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: __NAMESPACE__
+  name: __APP__
+  labels:
+    app: __APP__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: __APP__
+  template:
+    metadata:
+      labels:
+        app: __APP__
+      annotations:
+        # Hash of the synced Secret. envFrom is read only at pod start, so without
+        # this a secret-only change would leave the old value in a running pod.
+        sbworkspace.kk.stream/secret-hash: "__SECRET_HASH__"
+    spec:
+      containers:
+        - name: __APP__
+          image: __IMAGE__
+          ports:
+            - containerPort: 8080 # must match Dockerfile EXPOSE and service targetPort.
+          env:
+            # Non-secret config. AUTH_URL also makes Auth.js trust the host behind the ALB.
+            - name: AUTH_URL
+              value: https://__HOST__
+            - name: ATLASSIAN_JIRA_CLOUD_URL
+              value: https://kkvideo.atlassian.net
+          envFrom:
+            # AUTH_SECRET / AUTH_ATLASSIAN_ID / AUTH_ATLASSIAN_SECRET via APP_SECRET_VARS.
+            - secretRef:
+                name: __APP__-secrets
+                optional: true # pod starts even if no secrets are configured
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: __HEALTHCHECK_PATH__
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: __HEALTHCHECK_PATH__
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20

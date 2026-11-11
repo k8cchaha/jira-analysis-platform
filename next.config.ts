@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // 容器部署（deploy.sh / Dockerfile）只帶 .next/standalone，不在 image 內安裝 node_modules。
+  output: "standalone",
   redirects() {
     // 精確相容既有分析子頁；新入口不含 view segment，query values 由 Next 原樣傳遞。
     return [

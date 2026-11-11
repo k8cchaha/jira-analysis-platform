@@ -1,0 +1,17 @@
+.git
+.gitlab-ci.yml
+k8s
+deploy.sh
+Dockerfile
+node_modules
+.next
+coverage
+tests
+.env*
+!.env.example
+*.pem
+.DS_Store
+.agents
+.claude
+.cursor
+.devin
