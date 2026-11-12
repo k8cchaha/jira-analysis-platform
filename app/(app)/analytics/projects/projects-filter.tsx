@@ -1,6 +1,6 @@
 "use client"
 
-import { useLayoutEffect, useOptimistic, useRef, useState, useTransition } from "react"
+import { useEffect, useLayoutEffect, useOptimistic, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { FilterDropdown, FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
 import { GuardedLink } from "@/components/navigation-blocker"
@@ -9,7 +9,8 @@ import { SearchButton } from "@/components/search-button"
 import { TeamSelect } from "@/components/team-select"
 import { projectsFilterHref, type ProjectsSelection } from "@/lib/projects-filter"
 import type { SprintProjectKey } from "@/lib/jira-jql"
-import type { SprintRecord } from "@/lib/jira-sprint-data"
+import { closestSprint, type SprintRecord } from "@/lib/jira-sprint-data"
+import { localDateFromOffset } from "@/lib/date-range"
 
 /** 專案必選、Sprint 複選；目前只保存條件，不查詢分析資料。 */
 export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly SprintRecord[]; dateMigrationHref: string | null }) {
@@ -18,6 +19,8 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   const [groups, setGroups] = useState<string[]>([])
   const [queryNotice, setQueryNotice] = useState<ProjectsSelection | null>(null)
   const [sprintsOpen, setSprintsOpen] = useState(false)
+  const sprintsFieldset = useRef<HTMLFieldSetElement>(null)
+  const scrolledProject = useRef<SprintProjectKey | null>(null)
   const [selection, setSelection] = useOptimistic<ProjectsSelection>(props)
   const latestSelection = useRef(selection)
   useLayoutEffect(() => { latestSelection.current = selection }, [selection])
@@ -26,7 +29,24 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
   const ids = selection.selectedSprintIds
   const selectedNames = orderedSprints.filter((sprint) => ids.includes(sprint.id)).map((sprint) => sprint.name)
   const projectSelected = selection.project !== null
+  const sprintsVisible = projectSelected && selection.project === props.project && sprintsOpen
   const value = !projectSelected ? "請先選擇專案" : selection.error ? "請重新選擇 Sprints" : selectedNames.join(" · ") || "選擇 Sprints"
+
+  // 每次真正開啟且選項就緒時定位；勾選／URL 更新不重置手動捲動。
+  useEffect(() => {
+    if (!sprintsVisible) { scrolledProject.current = null; return }
+    if (scrolledProject.current === props.project) return
+    const now = new Date()
+    const sprint = closestSprint(props.sprints, localDateFromOffset(now, now.getTimezoneOffset()))
+    if (!sprint) return
+    const option = sprintsFieldset.current?.querySelector<HTMLElement>(`[data-sprint-id="${sprint.id}"]`)
+    const panel = option?.parentElement
+    if (!option || !panel || panel.hidden) return
+    // 優先將目標置於面板頂端；置中會讓前幾項算出負值，被瀏覽器夾成 0。
+    // 只捲動下拉面板，不使用會連帶捲動整頁的 scrollIntoView。
+    panel.scrollTop += option.getBoundingClientRect().top - panel.getBoundingClientRect().top - panel.clientTop
+    scrolledProject.current = props.project
+  }, [sprintsVisible, props.project, props.sprints])
 
   function canQuery(current: ProjectsSelection) {
     if (!current.selectedSprintIds.length) return false
@@ -60,19 +80,23 @@ export function ProjectsFilter(props: ProjectsSelection & { sprints: readonly Sp
         <div className={FILTER_SELECT_WIDTH_CLASS.project}>
           <ProjectSelector project={selection.project} required onProjectChange={changeProject} idPrefix="projects-project" />
         </div>
-        <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className={FILTER_SELECT_WIDTH_CLASS.sprint}>
+        <fieldset ref={sprintsFieldset} disabled={!projectSelected} aria-disabled={!projectSelected} className={FILTER_SELECT_WIDTH_CLASS.sprint}>
           <legend className="sr-only">Sprints</legend>
           <div inert={!projectSelected} aria-disabled={!projectSelected} className={`min-w-0 max-w-full ${!projectSelected ? "opacity-50" : ""}`}>
-            <FilterDropdown id="projects-sprints" kind="sprint" label="Sprints" value={value} open={projectSelected && selection.project === props.project && sprintsOpen} onOpenChange={(open) => {
-              if (latestSelection.current.project && latestSelection.current.project === selection.project) setSprintsOpen(open)
+            <FilterDropdown id="projects-sprints" kind="sprint" label="Sprints" required value={value} open={sprintsVisible} onOpenChange={(open) => {
+              if (!latestSelection.current.project || latestSelection.current.project !== selection.project) return
+              setSprintsOpen(open)
             }} describedBy="projects-sprints-help">
               {!selection.project ? <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">請先選擇專案</p>
                 : selection.project !== props.project ? <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">正在載入 Sprints…</p>
                 : orderedSprints.length === 0 ? <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">此專案暫無可檢視的 Sprints</p>
                 : orderedSprints.map((sprint) => (
-                  <label key={sprint.id} className="flex min-h-10 w-full cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
+                  <label key={sprint.id} data-sprint-id={sprint.id} className="flex min-h-10 w-full cursor-pointer items-center gap-2 px-3 py-0 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                     <input type="checkbox" checked={ids.includes(sprint.id)} onChange={(event) => toggleSprint(sprint.id, event.target.checked)} className="h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" />
-                    <span className="min-w-0 break-words">{sprint.name}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-words leading-5">{sprint.name}</span>
+                      <span className="block truncate text-xs leading-4 tabular-nums text-slate-500 dark:text-slate-400" title={`${sprint.startDate} - ${sprint.endDate}`}>{sprint.startDate} - {sprint.endDate}</span>
+                    </span>
                   </label>
                 ))}
             </FilterDropdown>

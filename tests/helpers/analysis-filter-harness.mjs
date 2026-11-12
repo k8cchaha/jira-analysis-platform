@@ -50,7 +50,14 @@ export function harness(today = "2026-10-21") {
     },
     useTransition: () => [pending, (callback) => { transitionCount++; pending = true; callback() }],
     useLayoutEffect: (effect) => { if (activeHooks) layoutEffects.push(effect) },
-    useEffect: (effect) => { if (activeHooks) effects.push(effect) },
+    useEffect(effect, dependencies) {
+      if (!activeHooks) return
+      const hooks = activeHooks
+      const index = hooks.cursor++
+      const previous = hooks.values[index]
+      hooks.values[index] = dependencies
+      if (!dependencies || !previous || dependencies.some((value, i) => !Object.is(value, previous[i]))) effects.push(effect)
+    },
     useRef(current) {
       if (!activeHooks) return { current }
       const hooks = activeHooks

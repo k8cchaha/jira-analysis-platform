@@ -53,6 +53,40 @@ describe("project analysis all-Sprints parameters", () => {
   })
 })
 
+describe("closest Sprint for dropdown scrolling", () => {
+  const { closestSprint, getProjectSprints } = harness().load("lib/jira-sprint-data.ts")
+  for (const [project, today, id] of [
+    ["SUN", "2026-10-21", 7517], ["SUN", "2026-10-13", 7517], ["SUN", "2026-10-25", 7517],
+    ["SUN", "2026-10-26", 7518], ["TKK", "2026-10-21", 7401],
+    ["SUN", "2025-01-01", 6823], ["SUN", "2027-02-01", 7522],
+    ["PRIDE", "2026-08-10", 7565], ["PRIDE", "2026-08-12", 7598],
+    ["PRIDE", "2026-11-02", 7750], ["PRIDE", "2026-11-12", 7750],
+  ]) it(`${project} on ${today} locates ${id} without mutating options`, () => {
+    const sprints = getProjectSprints(project)
+    const before = plain(sprints)
+    assert.equal(closestSprint(sprints, today)?.id, id)
+    assert.deepEqual(plain(sprints), before)
+  })
+  it("uses interval distance, not just start dates, with deterministic ties", () => {
+    const sprint = (id, startDate, endDate) => ({ id, name: `Sprint ${id}`, startDate, endDate })
+    const past = sprint(1, "2026-01-01", "2026-02-10")
+    const future = sprint(2, "2026-02-14", "2026-02-28")
+    assert.equal(closestSprint([future, past], "2026-02-11")?.id, 1)
+    assert.equal(closestSprint([future, past], "2026-02-12")?.id, 1)
+    assert.equal(closestSprint([future, past], "2026-02-13")?.id, 2)
+    const overlapping = sprint(3, "2026-02-01", "2026-02-20")
+    assert.equal(closestSprint([overlapping, past], "2026-02-10")?.id, 1)
+    assert.equal(closestSprint([sprint(4, past.startDate, past.endDate), past], "2026-02-10")?.id, 1)
+  })
+  it("handles empty and invalid ranges without picking an unrelated Sprint", () => {
+    assert.equal(closestSprint([], "2026-10-21"), null)
+    assert.equal(closestSprint(getProjectSprints("SUN"), "not-a-date"), null)
+    for (const [startDate, endDate] of [["bad", "2026-10-31"], ["2026-10-01", "bad"], ["2026-02-30", "2026-03-01"], ["2026-10-31", "2026-10-01"]]) {
+      assert.equal(closestSprint([{ id: 1, name: "Invalid", startDate, endDate }], "2026-10-21"), null)
+    }
+  })
+})
+
 describe("moved project date URLs", () => {
   for (const [params, href] of [
     [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, "/analytics/story-points?project=SUN&from=2026-10-01&to=2026-10-21"],
@@ -128,6 +162,45 @@ describe("project Sprint-only UI and navigation", () => {
     assert.equal(nodes(tree).find((node) => node.type === "fieldset").props.disabled, true)
     assert.deepEqual(plain(teamOf(h.invoke(ProjectsFilter, props)).props.groups), ["ent-web"])
     assert.equal(h.pushes.length, 1)
+  })
+  it("enables Sprints and Team only after Project selection, and Query only with a Sprint", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, props)
+    const assertControls = (tree, projectSelected, queryEnabled) => {
+      const [, sprints, team] = tree.props.children[0].props.children
+      assert.equal(sprints.props.disabled, !projectSelected)
+      assert.equal(sprints.props["aria-disabled"], !projectSelected)
+      assert.equal(team.props.inert, !projectSelected)
+      assert.equal(team.props["aria-disabled"], !projectSelected)
+      assert.equal(queryButton(tree).props.disabled, !queryEnabled)
+    }
+    assertControls(tree, false, false)
+    selectorOf(tree).props.onProjectChange("SUN")
+    tree = h.invoke(ProjectsFilter, props)
+    assertControls(tree, true, false)
+    h.setPending(false)
+    const projectProps = await selectionProps(h, { project: "SUN" })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    assert.deepEqual(plain(teamOf(tree).props.groups), [])
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, true)
+    assert.deepEqual(plain(teamOf(tree).props.groups), [])
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: false } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    checkbox(tree, "Sprint 71").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, true)
+    selectorOf(tree).props.onProjectChange("TKK")
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, props)
+    assertControls(tree, false, false)
   })
   it("preserves whole-Team state across page props and clears readiness on Team changes", async () => {
     const h = harness()
@@ -239,18 +312,185 @@ describe("project Sprint-only UI and navigation", () => {
       assert.match(h.invoke(search.type, search.props).props.className, /w-24 max-w-full/)
     }
   })
-  it("retains required Project, native labels, full options and bounded central widths", async () => {
+  it("marks Project and Sprints required but leaves Team optional, retaining labels and central widths", async () => {
     const h = harness()
     const props = await selectionProps(h, { project: "SUN" })
     const markup = render(h.load(FILTER).ProjectsFilter, props)
-    assert.match(markup, /sr-only[^>]*>（必選）/)
+    for (const params of [{}, { project: "SUN" }, { project: "SUN", sprint: "6823" }]) {
+      const tree = h.invoke(h.load(FILTER).ProjectsFilter, await selectionProps(h, params))
+      assert.equal(selectorOf(tree).props.required, true)
+      assert.equal(sprintDropdown(tree).props.required, true)
+      const html = renderToStaticMarkup(tree)
+      assert.equal((html.match(/sr-only[^>]*>（必選）/g) ?? []).length, 2)
+      for (const label of ["專案", "Sprints"]) assert.ok(html.includes(`${label}<span aria-hidden="true" class="ml-1 text-rose-600 dark:text-rose-400">*</span><span class="sr-only">（必選）</span>`))
+      assert.doesNotMatch(renderToStaticMarkup(teamOf(tree)), /（必選）/)
+    }
     assert.doesNotMatch(markup, /aria-required|展開 Web 成員|Fixture member/)
     const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
     for (const kind of ["project", "sprint", "team"]) assert.ok(markup.includes(`class="relative ${FILTER_SELECT_WIDTH_CLASS[kind]}"`))
     assert.match(markup, /class="truncate"/)
     const labels = nodes(sprintDropdown(h.invoke(h.load(FILTER).ProjectsFilter, props))).filter((node) => node.type === "label")
     assert.equal(labels.length, props.sprints.length)
-    assert.equal(labels[0].props.children[1].props.children, props.sprints.at(-1).name)
+    assert.equal(labels[0].props.children[1].props.children[0].props.children, props.sprints.at(-1).name)
+  })
+  it("shows grey start/end dates below each Sprint name without increasing row spacing", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    for (const project of ["SUN", "TKK", "PRIDE"]) {
+      const props = await selectionProps(h, { project })
+      const tree = h.invoke(ProjectsFilter, props)
+      const labels = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")
+      const ordered = [...props.sprints].sort((a, b) => b.startDate.localeCompare(a.startDate))
+      assert.equal(labels.length, ordered.length)
+      labels.forEach((label, index) => {
+        const sprint = ordered[index]
+        assert.equal(label.props["data-sprint-id"], sprint.id)
+        const [name, dates] = label.props.children[1].props.children
+        assert.equal(name.props.children, sprint.name)
+        assert.match(name.props.className, /block.*leading-5/)
+        assert.equal(dates.props.children.join(""), `${sprint.startDate} - ${sprint.endDate}`)
+        assert.equal(dates.props.title, `${sprint.startDate} - ${sprint.endDate}`)
+        assert.match(dates.props.className, /block truncate text-xs leading-4/)
+        assert.match(dates.props.className, /text-slate-500 dark:text-slate-400/)
+        assert.match(label.props.className, /min-h-10/)
+        assert.match(label.props.className, /py-0/)
+        assert.doesNotMatch(label.props.className, /\b(?:my-|space-y-|gap-y-)/)
+      })
+      assert.equal(sprintDropdown(tree).props.value, "選擇 Sprints")
+    }
+  })
+  it("aligns the closest Sprint toward the top on each open without selecting it or resetting manual scrolling", async () => {
+    const h = harness("2026-10-21")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, { project: "SUN", sprint: "6823" })
+    let tree = h.invoke(ProjectsFilter, props)
+    const targets = []
+    const panel = { hidden: false, scrollTop: 0, clientTop: 1, clientHeight: 300, getBoundingClientRect: () => ({ top: 100 }) }
+    const fieldset = nodes(tree).find((node) => node.type === "fieldset")
+    fieldset.props.ref.current = { querySelector: (selector) => {
+      targets.push(selector)
+      return { parentElement: panel, offsetHeight: 40, getBoundingClientRect: () => ({ top: 501 - panel.scrollTop }) }
+    } }
+    h.flushEffects()
+    assert.deepEqual(targets, [])
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.deepEqual(targets, ['[data-sprint-id="7517"]'])
+    assert.equal(panel.scrollTop, 400)
+    assert.equal(checkbox(tree, "Sprint 58").props.checked, true)
+    assert.equal(checkbox(tree, "Sprint 70").props.checked, false)
+    assert.deepEqual(h.pushes, [])
+    panel.scrollTop = 120
+    checkbox(tree, "Sprint 71").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, await selectionProps(h, { project: "SUN", sprint: ["6823", "7518"] }))
+    h.flushEffects()
+    assert.equal(panel.scrollTop, 120)
+    assert.equal(targets.length, 1)
+    sprintDropdown(tree).props.onOpenChange(false)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(targets.length, 1)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(targets.length, 2)
+    assert.equal(panel.scrollTop, 400)
+    assert.equal(sprintDropdown(tree).props.open, true)
+  })
+  it("scrolls a near-top current Sprint even when the old centered target would clamp to zero", async () => {
+    for (const [project, expectedId] of [["SUN", 7519], ["TKK", 7402], ["PRIDE", 7750]]) {
+      const h = harness("2026-11-12")
+      const { ProjectsFilter } = h.load(FILTER)
+      const props = await selectionProps(h, { project })
+      let tree = h.invoke(ProjectsFilter, props)
+      const rows = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")
+      const index = rows.findIndex((row) => row.props["data-sprint-id"] === expectedId)
+      const rowHeight = 40
+      const padding = 4
+      const contentHeight = rows.length * rowHeight + padding * 2
+      const viewportHeight = Math.min(300, contentHeight)
+      const maxScroll = contentHeight - viewportHeight
+      const optionTop = padding + index * rowHeight
+      assert.ok(optionTop - (viewportHeight - rowHeight) / 2 < 0)
+      let scrollTop = 0
+      const panel = {
+        hidden: false, clientTop: 1, clientHeight: viewportHeight,
+        get scrollTop() { return scrollTop },
+        set scrollTop(value) { scrollTop = Math.max(0, Math.min(maxScroll, value)) },
+        getBoundingClientRect: () => ({ top: 100 }),
+      }
+      nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+        assert.equal(selector, `[data-sprint-id="${expectedId}"]`)
+        return { parentElement: panel, offsetHeight: rowHeight, getBoundingClientRect: () => ({ top: 100 + panel.clientTop + optionTop - panel.scrollTop }) }
+      } }
+      h.flushEffects()
+      sprintDropdown(tree).props.onOpenChange(true)
+      tree = h.invoke(ProjectsFilter, props)
+      h.flushEffects()
+      assert.equal(panel.scrollTop, Math.min(optionTop, maxScroll))
+      assert.ok(panel.scrollTop > 0)
+      assert.deepEqual(h.pushes, [])
+    }
+  })
+  it("waits for new Project options before locating a pending open panel", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, props)
+    const targets = []
+    const panel = { hidden: false, scrollTop: 0, clientTop: 0, clientHeight: 300, getBoundingClientRect: () => ({ top: 100 }) }
+    nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+      targets.push(selector)
+      return { parentElement: panel, offsetHeight: 40, getBoundingClientRect: () => ({ top: 500 }) }
+    } }
+    h.flushEffects()
+    selectorOf(tree).props.onProjectChange("TKK")
+    tree = h.invoke(ProjectsFilter, props)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(sprintDropdown(tree).props.open, false)
+    assert.deepEqual(targets, [])
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, await selectionProps(h, { project: "TKK" }))
+    h.flushEffects()
+    assert.equal(sprintDropdown(tree).props.open, true)
+    assert.deepEqual(targets, ['[data-sprint-id="7401"]'])
+    assert.equal(panel.scrollTop, 400)
+  })
+  it("does not scroll a disabled, empty or hidden Sprint panel", async () => {
+    const h = harness()
+    const { ProjectsFilter } = h.load(FILTER)
+    const empty = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, empty)
+    const queries = []
+    nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+      queries.push(selector)
+      return { parentElement: { hidden: true, getBoundingClientRect() { assert.fail("Hidden panel must not scroll") } } }
+    } }
+    sprintDropdown(tree).props.onOpenChange(true)
+    h.invoke(ProjectsFilter, empty)
+    h.flushEffects()
+    assert.deepEqual(queries, [])
+    const props = { ...empty, project: "SUN" }
+    tree = h.invoke(ProjectsFilter, props)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.deepEqual(queries, [])
+    sprintDropdown(tree).props.onOpenChange(false)
+    h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    const full = await selectionProps(h, { project: "SUN" })
+    tree = h.invoke(ProjectsFilter, full)
+    sprintDropdown(tree).props.onOpenChange(true)
+    h.invoke(ProjectsFilter, full)
+    h.flushEffects()
+    assert.deepEqual(queries, ['[data-sprint-id="7517"]'])
   })
   it("distinguishes pending, empty options and invalid scope", async () => {
     const h = harness()

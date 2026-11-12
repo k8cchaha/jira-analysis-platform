@@ -23,8 +23,9 @@
 
 ## 使用方式
 - **Sprint-only**：只提供 Project、Team、複選 Sprints 與查詢，沒有區間模式 radio、日期欄位或日期快捷鍵。
-- Project、Sprints、Team 與查詢按鈕依序排列在同一列，查詢靠右；窄容器可換行並夾至可用寬度。專案單選且必選；未選之前 Team、Sprints 與查詢不可操作。三種選擇器與查詢按鈕均重用既有元件及中央寬度。
-- Sprints 可複選該專案的完整本機設定清單（含歷史與未來，最新在前），沒有自動預選，至少一個有效 Sprint 才能查詢。
+- Project、Sprints、Team 與查詢按鈕依序排列在同一列，查詢靠右；窄容器可換行並夾至可用寬度。專案單選且必選，Project 與 Sprints 標籤均顯示必填 `*`；未選專案之前 Team、Sprints 與查詢不可操作，選定專案後 Sprints 與 Team 才可操作。三種選擇器與查詢按鈕均重用既有元件及中央寬度。
+- Sprints 可複選該專案的完整本機設定清單（含歷史與未來，最新在前），每個選項在名稱下方以灰色顯示 `startDate - endDate`，縮減上下 padding 以維持原本緊湊的選項間距；窄容器的日期單行截斷，滑鼠停留可查看完整日期。沒有自動預選；專案與至少一個有效 Sprint 皆有值才啟用查詢，Team 為選填。取消所有 Sprint 或更換專案清除 Sprint 時，查詢重新停用。
+- 每次開啟 Sprints 下拉，以瀏覽器本機日期定位到包含今天的 Sprint；若沒有，取日期區間最近的一個，同距離取較早開始、再取較小 ID。目標優先靠近面板頂端，若接近清單末端則捲至可用的最大位置，不額外加大項目間距。只捲動下拉面板、不捲整頁、不自動勾選；選取 Sprint 與 URL 更新不會重置手動捲動位置。沒有可用 Sprint 時不捲動。
 - Team 僅選整個團隊、不提供逐成員排除；留在本頁本次 local state，不寫入分析 URL、不是 server 授權邊界，也不是比較對象選取器。重新整理不保存 Team。
 - Project、Sprints 選擇即時更新 URL；新網址只含 `project` 與重複 `sprint`，例如 `/analytics/projects?project=SUN&sprint=6823&sprint=7518`。更換專案清除舊專案 Sprint，保留本頁 Team 選擇；上一頁／下一頁從有效 URL 還原專案與 Sprint。
 - 單一舊 `mode=sprints` 仍可還原 Sprint 條件，但新 URL 不帶 `mode`；其他模式不能在本頁啟用日期分析。
