@@ -14,6 +14,7 @@ import { UnestimatedButton } from "@/app/(app)/sprint/burndown/unestimated-butto
 import { DayTasksDialog } from "@/app/(app)/sprint/burndown/day-tasks-dialog"
 import { DevelopmentStatus } from "@/app/(app)/sprint/burndown/development-status"
 import { TeamSelect } from "@/components/team-select"
+import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
 
 type StreamPhase =
   | { status: "idle" }
@@ -64,7 +65,7 @@ export function BurndownClient({
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [groups, setGroups] = useState<string[]>([])
+  const [groups, setGroups] = useDefaultTeamGroups(!filterError)
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
   /** accountId → 團隊 label 映射（由團隊選單載入，供下方開發狀況分組）。 */
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})

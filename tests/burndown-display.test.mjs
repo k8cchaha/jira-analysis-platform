@@ -48,6 +48,7 @@ function harness() {
     "react": react,
     "react/jsx-runtime": require("react/jsx-runtime"),
     "next/navigation": { useRouter: () => ({ push: (href) => pushes.push(href) }) },
+    "@/components/filter-defaults-provider": { useDefaultTeamGroups: () => react.useState([]) },
     "@/lib/burndown-series": { computeBurndownSeries: (input) => {
       queries.push(input)
       return { totalPoints: 5, days: [], tasks: input.tasks, unestimated: [] }

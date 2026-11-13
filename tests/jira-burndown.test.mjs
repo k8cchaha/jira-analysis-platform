@@ -117,7 +117,7 @@ function harness(t, options = {}) {
   const sandbox = vm.createContext(globals)
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
-    if (!["lib/jira-http.ts", "lib/jira-burndown.ts", "lib/burndown-series.ts", "lib/burndown-completion.ts", "lib/burndown-status.ts", "lib/jira-dashboard.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-group-members-cache.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
+    if (!["lib/jira-account-timezone.ts", "lib/jira-http.ts", "lib/jira-burndown.ts", "lib/burndown-series.ts", "lib/burndown-completion.ts", "lib/burndown-status.ts", "lib/jira-dashboard.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-dashboard-lookups.ts", "lib/jira-group-members-cache.ts", "lib/jira-fields.ts", "lib/jira-jql.ts", "lib/jira-missing-data.ts", "lib/jira-page-token.ts", "lib/jira-story-points.ts"].includes(path)) return fail(`Unexpected module: ${path}`)
     const loadedModule = { exports: {} }
     modules.set(path, loadedModule)
     if (!compiled.has(path)) {
@@ -138,6 +138,7 @@ function harness(t, options = {}) {
           return { ...credentials, cloudId: options.cloudId ?? credentials.cloudId }
         },
       }
+      if (specifier === "@/lib/jira-account-timezone") return load("lib/jira-account-timezone.ts")
       if (specifier === "./jira-jql.ts") return load("lib/jira-jql.ts")
       if (specifier === "./jira-fields.ts") return load("lib/jira-fields.ts")
       if (specifier === "./burndown-series.ts") return load("lib/burndown-series.ts")

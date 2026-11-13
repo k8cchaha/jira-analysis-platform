@@ -116,6 +116,26 @@ export function currentSprint(
   return match
 }
 
+// 既有人工資料可能省略月／日的前導零，僅在計算時正規化。
+export function normalizeSprintCalendarDate(date: string): string | null {
+  const normalized = date.replace(/^(\d{4})-(\d{1,2})-(\d{1,2})$/, (_, year, month, day) => `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`)
+  return dateRangeValue(normalized) === null ? null : normalized
+}
+function sprintCalendarValue(date: string): number | null {
+  const normalized = normalizeSprintCalendarDate(date)
+  return normalized === null ? null : dateRangeValue(normalized)
+}
+
+/** 專案回顧下拉只顯示已結束的 Sprint：endDate < 瀏覽器本地 today，不含今天結束者。 */
+export function filterEndedSprints(sprints: readonly SprintRecord[], today: string): readonly SprintRecord[] {
+  const day = dateRangeValue(today)
+  if (day === null) return []
+  return sprints.filter((sprint) => {
+    const end = sprintCalendarValue(sprint.endDate)
+    return end !== null && end < day
+  })
+}
+
 /**
  * 下拉捲動定位：含 today 的區間優先，否則取距離區間最近的 Sprint。
  * 同距離取較早開始、再取較小 id；不更改選取或既有預設 Sprint 規則。
@@ -123,14 +143,12 @@ export function currentSprint(
 export function closestSprint(sprints: readonly SprintRecord[], today: string): SprintRecord | null {
   const day = dateRangeValue(today)
   if (day === null) return null
-  // 既有人工資料可能省略月／日的前導零，僅在計算時正規化。
-  const calendarValue = (date: string) => dateRangeValue(date.replace(/^(\d{4})-(\d{1,2})-(\d{1,2})$/, (_, year, month, day) => `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`))
   let closest: SprintRecord | null = null
   let closestDistance = Infinity
   let closestStart = Infinity
   for (const sprint of sprints) {
-    const start = calendarValue(sprint.startDate)
-    const end = calendarValue(sprint.endDate)
+    const start = sprintCalendarValue(sprint.startDate)
+    const end = sprintCalendarValue(sprint.endDate)
     if (start === null || end === null || end < start) continue
     const distance = Math.max(start - day, day - end, 0)
     if (!closest || distance < closestDistance || (distance === closestDistance && (start < closestStart || (start === closestStart && sprint.id < closest.id)))) {

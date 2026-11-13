@@ -1,6 +1,6 @@
 # 功能說明文件
 
-這份文件依 **2026-11-10 的實際頁面與程式行為**整理；在既有 Burn Down Resolved 分析與專案入口整合基礎上，核對本次 Projects Sprint-only、日期篩選搬至團隊分析與成員舊入口搬移。2026-11-11 另同步設定頁清空與暫時環境診斷移除。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署證明、真實 Jira 資料報告或未來功能承諾**。
+這份文件依 **2026-11-10 的實際頁面與程式行為**整理；在既有 Burn Down Resolved 分析與專案入口整合基礎上，核對本次 Projects Sprint-only、日期篩選搬至團隊分析與成員舊入口搬移。2026-11-11 另同步設定頁清空與暫時環境診斷移除；2026-11-12 同步帳號選單、預設值設定、相容頁面的初始化規則，以及 Projects 唯讀 Sprint 回顧與六項比較指標。它說明產品頁面的目的、解決的問題、可找的 Insight 與 Jira 資料依據；**不是部署證明、真實 Jira 資料報告或未來功能承諾**。
 
 ## 建議閱讀方式
 - **第一次認識產品**：先看下方功能總覽，再讀對應頁面的「目的／Insight／使用方式」。
@@ -28,7 +28,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | Sprint／[開發狀況／Burn Down](features/sprint-burndown.md) | `/sprint/burndown` | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
 | Sprint／[Capacity](features/sprint-capacity.md) | `/sprint/capacity` | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
 | 分析／[工作量分析](features/analytics-workload.md) | `/analytics/workload` | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
-| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 整合專案回顧、跨Sprint趨勢與同條件比較的規劃入口 | 範圍選擇與回顧／比較口徑不一致 | 尚無分析結果；可選專案、整個Team與複選Sprint，不再有日期模式 | 部分實作；Sprint篩選可用，無分析引擎 |
+| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 比較已結束 Sprint 的唯讀工作摘要 | 輸出、工作構成與承諾／品質口徑不清 | SP／Actual輸出、六類Dev Type、Commitment、Bug／Dev、TKK／SUN壓力、目前未完成及本地明細 | 已實作；手動查詢，現值非歷史快照，無Capacity比較 |
 | 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
@@ -36,6 +36,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | 設定／[專案設定](features/settings-project.md) | `/settings/project` | 保留專案設定入口 | 可維護的規劃參數尚未實作 | 僅頁面標題，無設定或ToDo內容 | 規劃中；內容已清空 |
 
 ### 補充路徑與舊功能
+- [預設值設定](filter-defaults.md)：右上角帳號選單中的彈窗，可依登入帳號在同一瀏覽器保存專案／整組團隊預設值；只初始化之後進入相容頁面時的未指定條件，不新增路由、不覆蓋 URL 或現在的篩選。
 - [Jira 連線資訊](features/settings-jira.md)：`/settings/jira` 路由存在，但不在目前主導覽分類；ComingSoon，無連線管理操作。
 - [指派給我的 Issues（舊服務）](features/legacy-assigned-issues.md)：舊 `/issues/assigned/list` **目前不存在**；只保留 service／JQL／測試，不能當可用頁面。
 - 原趨勢分析與比較分析已整合至 **專案回顧與趨勢**（唯一入口 `/analytics/projects`）；舊 `/analytics/trends`、`/analytics/comparison` 根路徑及其已知子頁別名，以 **307直接跳轉**至該入口，保留所有 query 值（含無效值與重複值），不先驗證或修正條件。舊文件保留為搬移提示，見 [趨勢分析搬移說明](features/analytics-trends.md)／[比較分析搬移說明](features/analytics-comparison.md)。
@@ -46,9 +47,9 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 以上覆蓋目前 `app/(app)` 的12個實體功能頁路由（11個主導覽目的地＋補充 `/settings/jira`），分析只有工作量／專案回顧與趨勢／團隊分析三個 canonical 頁，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
 
 ## 五個閱讀前提醒
-1. **同名點數不一定有相同母體**：Planning Dev＋QA、Burn Down 已估Dev-only、工作量是期間曾Done的Dev、Dashboard缺值是狀態依賴的Dev＋QA。
-2. **完成日期不同**：Burn Down固定Resolved，受阻母票可獨立覆寫；工作量取transition母體後以Resolved→Updated→末日投影，不能互套。
-3. **容量不同**：Planning固定點數、Capacity mock試算、工作量Output%的每週10點基準互不相通。
+1. **同名點數不一定有相同母體**：Planning與Projects為Sprint母票下Dev＋QA、Burn Down已估Dev-only、工作量是期間曾Done的Dev、Dashboard缺值是狀態依賴的Dev＋QA。
+2. **完成日期不同**：Projects依驗證Jira帳號時區的Resolved完整日及含首末日Sprint區間；Burn Down固定Resolved但有顯示截點及獨立受阻覆寫；工作量取transition母體後以Resolved→Updated→末日投影，不能互套。
+3. **容量不同**：Planning固定點數、Capacity mock試算、工作量Output%的每週10點基準互不相通；Projects暫無Capacity比較。
 4. **現值不是歷史快照**：assignee、SP、父子關係與Resolved可被修改；重查歷史可能得到不同結果。
 5. **Insight是追查線索**：票數、SP或百分比不是自動產生的因果、工時、效率或績效結論。
 
@@ -57,4 +58,4 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 - 完整production JQL只定義在 [jira-jql.ts](../lib/jira-jql.ts)，custom field mapping只在 [jira-fields.ts](../lib/jira-fields.ts)；文件範例不是第二份production定義。
 - 尚未接入的builders、介面或ToDo，不宣稱已實作；合成範例明確標示，不使用真實票資料、accountId或憑證。
 - 發版前以當時程式再確認「已實作／部分／規劃」與來源；本文件日期表示整理基準，不代表每次查詢的資料時間。
-- 本次文件更新採頁面／程式靜態對照、離線路由與篩選回歸及本機文件連結檢查，未呼叫 live Jira、執行真實 PUT 或驗證部署。
+- 本次文件更新採頁面／程式對照、離線模型／路由／篩選與mock Jira回歸，以及本機合成元件明暗／手機／桌面操作與截圖檢查；未呼叫live Jira、執行真實PUT或驗證部署。

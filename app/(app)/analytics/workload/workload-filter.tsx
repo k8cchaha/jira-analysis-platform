@@ -5,6 +5,8 @@ import { TeamSelect } from "@/components/team-select"
 import { useTeamMembers } from "@/components/team-members-provider"
 import { FilterDropdown } from "@/components/filter-dropdown"
 import { SearchButton } from "@/components/search-button"
+import { currentFilterParams, useInitialFilterDefaults } from "@/components/filter-defaults-provider"
+import { absentDefaultCondition, defaultDashboardProjects } from "@/lib/filter-defaults"
 import { DateRangeField } from "@/components/date-range-field"
 import { DASHBOARD_PROJECTS, includedDashboardMembers } from "@/lib/jira-dashboard-filter"
 import type { DashboardUser } from "@/lib/jira-dashboard-filter"
@@ -43,6 +45,12 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
   const [projectOpen, setProjectOpen] = useState(false)
   const [error, setError] = useState(initialError)
   const { groupStates } = useTeamMembers()
+  const markDefaultsEdited = useInitialFilterDefaults((defaults) => {
+    const params = currentFilterParams()
+    if (!params || initialFilter || initialError) return
+    if (absentDefaultCondition(params, "project")) setProjects(defaultDashboardProjects(defaults))
+    if (absentDefaultCondition(params, "team")) { setGroups([...defaults.groups]); setExclusions({}) }
+  })
 
   // Read current snapshots, not a stale callback's readiness, before allowing Apply.
   const allGroupsLoaded = groups.length > 0 && groups.every((group) => groupStates[group]?.status === "success")
@@ -111,7 +119,7 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
             <TeamSelect
               groups={groups}
               initialExclusions={initialFilter?.exclusions}
-              onGroupsChange={(nextGroups) => { setGroups(nextGroups); setError(null) }}
+              onGroupsChange={(nextGroups) => { markDefaultsEdited(); setGroups(nextGroups); setError(null) }}
               onExclusionsChange={setExclusions}
               helpText="團隊與成員變更只更新草稿，按「查詢」套用篩選條件。"
             />
@@ -121,6 +129,7 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
                 {DASHBOARD_PROJECTS.map((project) => (
                   <label key={project.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
                     <input type="checkbox" checked={projects.includes(project.key)} onChange={(event) => {
+                      markDefaultsEdited()
                       setError(null)
                       setProjects(event.target.checked ? [...new Set([...projects, project.key])] : projects.filter((key) => key !== project.key))
                     }} className={choiceClass} />

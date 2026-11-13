@@ -18,7 +18,7 @@ import {
   type BurndownTask,
   type BurndownUnestimated,
 } from "@/lib/burndown-series"
-import { jiraFetch, JiraTransportError } from "@/lib/jira-http"
+import { getVerifiedJiraAccountTimeZone, JiraAccountTimeZoneError } from "@/lib/jira-account-timezone"
 import { createBurndownCompletionResolver } from "@/lib/burndown-completion"
 import type { MissingIssue } from "@/lib/jira-missing-data"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
@@ -246,34 +246,15 @@ export async function getBurndownData(
   }
 }
 
-/** 與 search 共用同一 OAuth 身分；Jira 會回 profile 時區或 instance default。 */
+/** Compatibility boundary: preserve the existing Burndown error codes and messages. */
 async function jiraAccountTimeZone(credentials: JiraCredentials): Promise<string> {
-  if (typeof credentials.viewerId !== "string" || !credentials.viewerId.trim()) {
-    throw new JiraBurndownError("invalid_response", "Jira 帳號身分不完整，無法判定完成日期。")
-  }
-  let response: Response
-  try {
-    response = await jiraFetch(credentials, "/rest/api/3/myself", {
-      method: "GET", redirect: "error", signal: AbortSignal.timeout(20_000),
-    })
-  } catch (error) {
-    if (error instanceof JiraTransportError) throw new JiraBurndownError("retry", "暫時無法讀取 Jira 帳號時區，請稍後重試。")
+  try { return await getVerifiedJiraAccountTimeZone(credentials) }
+  catch (error) {
+    if (error instanceof JiraAccountTimeZoneError) {
+      throw new JiraBurndownError(error.code === "forbidden" ? "request_failed" : error.code, error.message)
+    }
     throw error
   }
-  if (!response.ok) {
-    if (response.status === 401) throw new JiraBurndownError("reauthorize", "Jira 授權已失效，請重新授權。")
-    if (response.status === 403) throw new JiraBurndownError("request_failed", "無法讀取 Jira 帳號時區，請確認 read:jira-user 授權。")
-    throw new JiraBurndownError("retry", "暫時無法讀取 Jira 帳號時區，請稍後重試。")
-  }
-  let profile: unknown
-  try { profile = await response.json() }
-  catch { throw new JiraBurndownError("invalid_response", "Jira 帳號時區資料無法識別。") }
-  if (typeof profile !== "object" || profile === null || Array.isArray(profile) ||
-      !("accountId" in profile) || profile.accountId !== credentials.viewerId ||
-      !("timeZone" in profile) || typeof profile.timeZone !== "string") {
-    throw new JiraBurndownError("invalid_response", "Jira 帳號身分或時區資料不完整，無法判定完成日期。")
-  }
-  return profile.timeZone
 }
 
 /** 從 Jira assignee 物件取出顯示名稱（可能為 null）。 */

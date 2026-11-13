@@ -1,10 +1,8 @@
 "use client"
 
-/** 建構 Jira issue search 深連結（UI 導覽 href，非資料查詢）；JQL 由 `jira-jql.ts` 提供。 */
-export function jiraSearchHref(jiraBaseUrl: string, jql: string): string {
-  const base = jiraBaseUrl.replace(/\/$/, "")
-  return `${base}/issues/?jql=${encodeURIComponent(jql)}`
-}
+import { jiraSearchHref } from "@/lib/jira-url"
+
+export { jiraSearchHref } from "@/lib/jira-url"
 
 /** 圓形 Jira 開啟按鈕：hover 卡片區塊時於右側（垂直置中）顯現，點擊用 Jira 開啟該區塊的查詢。 */
 export function JiraOpenLink({ jiraBaseUrl, jql, label }: { jiraBaseUrl: string | null; jql: string; label: string }) {

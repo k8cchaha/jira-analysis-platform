@@ -22,6 +22,8 @@
 | 為何沒有實際線？ | 尚未完整載入／無可信完成紀錄／Sprint 尚未開始／載入錯誤 | 看載入與錯誤狀態，必要時重新載入；不要當剩餘0 |
 
 ## 使用方式
+帳號選單的 [預設值設定](../filter-defaults.md) 可在乾淨入口帶入 Project／整組 Team。Project 帶入後沿用下述 Sprint 解析及 SSE，原有逐人排除保留；不套用到日期明細彈窗，也不重設目前篩選或修補非法 URL。
+
 1. 選 Project、Sprint，一選即導航並開 SSE。Sprint 來自本機人工資料；頁面列所有已開始 Sprint，可指定歷史，未指定時只優先當前，**沒有當前不自動退回最近歷史**。
 2. Team 可多選並排除成員；完整載入後依目前子票 Assignee 在 client 重算，不重查工作單 JQL。未選／名單未完成／0成員時目前維持全體。
 3. **完成日期固定使用現行 Resolved**，不再有 By Resolved checkbox 或模式切換。新 URL／SSE endpoint 不產生 `byResolved`；舊連結缺省或單一 `byResolved=1` 均使用同一規則，非法／重複旗標拒絕。換 Project／Sprint 或重試會丟棄舊完成 markers、關閉舊完成明細，保留 Team／顯示偏好。

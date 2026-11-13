@@ -55,6 +55,7 @@ function harness() {
     "@/app/(app)/sprint/planning/assignment-status": inertComponent("AssignmentStatus"),
     "@/app/(app)/dashboard/parent-issue-type-icon": inertComponent("ParentIssueTypeIcon"),
     "@/components/team-select": inertComponent("TeamSelect"),
+    "@/components/filter-defaults-provider": { useDefaultTeamGroups: () => react.useState([]) },
     "@/components/edit-dialog": inertComponent("EditDialog"),
     "@/components/ticket-link": inertComponent("TicketLink"),
     "@/components/team-members-provider": { useTeamMembers: () => { throw new Error("No membership request in this wiring test") } },

@@ -196,6 +196,40 @@ async function fetchCompleteGroupMembers(group: string, credentials: JiraCredent
   throw new JiraDashboardLookupError("limit", "團隊成員分頁過多，無法完整載入，請縮小團隊範圍。")
 }
 
+/** Complete per-group rosters only: union/exclusion eligibility belongs to the scope caller.
+ * Checks are caller-local and never abort transports shared by another request.
+ */
+export async function loadDashboardGroupMembers(
+  groups: readonly string[],
+  credentials: JiraCredentials,
+  options: { useSharedCache?: boolean; check?: () => void } = {}
+): Promise<Record<string, DashboardUser[]>> {
+  if (!Array.isArray(groups) || groups.length > DASHBOARD_TEAMS.length || new Set(groups).size !== groups.length) throw new DashboardFilterError("請選擇有效的團隊。")
+  for (const group of groups) validateGroup(group, allowedGroups)
+  options.check?.()
+  const members: Record<string, DashboardUser[]> = {}
+  let cursor = 0
+  let failed = false
+  const results = await Promise.allSettled(Array.from({ length: Math.min(GROUP_CONCURRENCY, groups.length) }, async () => {
+    while (!failed && cursor < groups.length) {
+      try {
+        options.check?.()
+        const group = groups[cursor++]
+        members[group] = await getDashboardGroupMembers(group, credentials, options)
+        options.check?.()
+      } catch (error) { failed = true; options.check?.(); throw error }
+    }
+  }))
+  options.check?.()
+  // Wait for already shared/in-flight work so an auth failure cannot be hidden by
+  // a faster membership-only failure. Never schedule another group after failure.
+  const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected").map((result) => result.reason)
+  const protectedError = errors.find((error) => error instanceof JiraAuthorizationError || (error instanceof Error && "code" in error && ["reauthorize", "configuration", "cancelled", "reauthorization_required", "invalid_configuration"].includes(String(error.code))))
+  if (protectedError !== undefined) throw protectedError
+  if (errors.length) throw errors[0]
+  return members
+}
+
 export async function resolveDashboardScope(
   filter: DashboardFilter,
   credentials: JiraCredentials,
@@ -210,16 +244,7 @@ export async function resolveDashboardScope(
     if (!user || user.accountId !== validated.accountId) throw new DashboardFilterError("所選使用者無效，請重新選擇。")
     return { mode: "person", accountIds: [user.accountId], projects: [], days: validated.days }
   }
-  const members: Record<string, DashboardUser[]> = {}
-  let cursor = 0
-  let failed = false
-  await Promise.all(Array.from({ length: Math.min(GROUP_CONCURRENCY, validated.groups.length) }, async () => {
-    while (!failed && cursor < validated.groups.length) {
-      const group = validated.groups[cursor++]
-      try { members[group] = await getDashboardGroupMembers(group, credentials, options) }
-      catch (error) { failed = true; throw error }
-    }
-  }))
+  const members = await loadDashboardGroupMembers(validated.groups, credentials, options)
   return {
     mode: "team-project",
     accountIds: includedDashboardMembers(validated.groups, validated.exclusions, members),

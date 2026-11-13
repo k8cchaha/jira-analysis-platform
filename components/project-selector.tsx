@@ -5,10 +5,11 @@ import { FilterDropdown } from "@/components/filter-dropdown"
 import { SPRINT_PROJECTS, type SprintProjectKey } from "@/lib/jira-jql"
 
 /** 共用專案單選器；尺寸由 FilterDropdown 的 project kind 決定。 */
-export function ProjectSelector({ project, required = false, onProjectChange, idPrefix }: {
+export function ProjectSelector({ project, required = false, onProjectChange, onClear, idPrefix }: {
   project: SprintProjectKey | null
   required?: boolean
   onProjectChange: (project: SprintProjectKey) => void
+  onClear?: () => void
   idPrefix?: string
 }) {
   const generated = useId()
@@ -20,6 +21,20 @@ export function ProjectSelector({ project, required = false, onProjectChange, id
     <>
       <FilterDropdown kind="project" id={id} label="專案" required={required} value={value} open={open} onOpenChange={setOpen} describedBy={`${id}-help`}>
         <div role="radiogroup" aria-label="選擇專案" className="py-1">
+          {onClear && (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={project === null}
+              onClick={() => { setOpen(false); onClear() }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <span aria-hidden="true" className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${project === null ? "border-blue-600" : "border-slate-300 dark:border-slate-600"}`}>
+                {project === null ? <span className="h-2 w-2 rounded-full bg-blue-600" /> : null}
+              </span>
+              <span className="truncate">不設定預設專案</span>
+            </button>
+          )}
           {SPRINT_PROJECTS.map((option) => {
             const active = project === option.key
             return (

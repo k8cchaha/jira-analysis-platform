@@ -11,6 +11,7 @@ import { SprintSelector } from "@/app/(app)/sprint/burndown/sprint-selector"
 import { AssignmentStatus } from "@/app/(app)/sprint/planning/assignment-status"
 import { PlanningOverview } from "@/app/(app)/sprint/planning/planning-overview"
 import { TeamSelect } from "@/components/team-select"
+import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
 import { useTeamMembers } from "@/components/team-members-provider"
 import { DASHBOARD_TEAMS } from "@/lib/jira-dashboard-filter"
 import { ParentIssueTypeIcon } from "@/app/(app)/dashboard/parent-issue-type-icon"
@@ -55,7 +56,7 @@ export function PlanningClient({
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [groups, setGroups] = useState<string[]>([])
+  const [groups, setGroups] = useDefaultTeamGroups()
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
   /** accountId → 團隊 label 映射（由團隊選單載入，供「任務分派狀況」分組）。 */
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})

@@ -7,6 +7,7 @@ import { FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
 import { ProjectSelector } from "@/components/project-selector"
 import { SearchButton } from "@/components/search-button"
 import { TeamSelect } from "@/components/team-select"
+import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
 import { DATE_RANGE_PRESET_LABEL, dateRangeForPreset, requireDateRange, sameDateRange, type DateRange, type DateRangeShortcut } from "@/lib/date-range"
 import { teamAnalysisFilterHref, type TeamAnalysisSelection } from "@/lib/team-analysis-filter"
 import type { SprintProjectKey } from "@/lib/jira-jql"
@@ -20,7 +21,7 @@ export function TeamAnalysisFilter(props: TeamAnalysisSelection) {
   const router = useRouter()
   const today = useBrowserToday()
   const [isPending, startTransition] = useTransition()
-  const [groups, setGroups] = useState<string[]>([])
+  const [groups, setGroups] = useDefaultTeamGroups(!props.error)
   const [selection, setSelection] = useOptimistic<TeamAnalysisSelection>(props)
   const [draft, setDraft] = useState<{ source: TeamAnalysisSelection; range: DateRange } | null>(null)
   const [notice, setNotice] = useState<{ selection: TeamAnalysisSelection; range: DateRange } | null>(null)

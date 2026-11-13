@@ -10,6 +10,51 @@ export const SPRINT_PROJECTS = [
 ] as const
 export type SprintProjectKey = (typeof SPRINT_PROJECTS)[number]["key"]
 
+/** Sprint review parents, explicitly intersected with the selected project. */
+export function projectsAnalysisParentIssuesJql(project: SprintProjectKey, sprintId: number): string {
+  if (!SPRINT_PROJECTS.some((option) => option.key === project) || !Number.isSafeInteger(sprintId) || sprintId < 1) throw new DashboardFilterError()
+  return `project = ${project} AND sprint = ${sprintId} AND issuetype in (story, task, bug) ORDER BY key ASC`
+}
+
+/** Exact locally selected issue set for Jira navigation; no extra scope or population predicates. */
+export function projectsAnalysisIssueIdsJql(ids: readonly string[]): string | null {
+  if (!Array.isArray(ids)) throw new DashboardFilterError("Issue ID 無效。")
+  for (const id of ids) {
+    if (typeof id !== "string" || !/^[1-9]\d{0,29}$/.test(id)) throw new DashboardFilterError("Issue ID 無效。")
+  }
+  if (!ids.length) return null
+  const jql = `id in (${[...new Set(ids)].sort().join(", ")}) ORDER BY key ASC`
+  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("分析查詢過大，請縮小範圍。")
+  return jql
+}
+
+/** All Dev+QA children; no completion/created window and no implicit self scope. */
+export function projectsAnalysisChildQueries(
+  parentIds: readonly string[],
+  issueTypeIds: readonly string[],
+  accountIdsOrNull: readonly string[] | null,
+): string[] {
+  const numericIds = (ids: readonly string[]) => Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && /^[1-9]\d{0,29}$/.test(id))
+  if (!numericIds(parentIds) || parentIds.length > 2_000 || !numericIds(issueTypeIds) || issueTypeIds.length !== 2 || new Set(issueTypeIds).size !== 2) throw new DashboardFilterError()
+  if (accountIdsOrNull !== null && (!Array.isArray(accountIdsOrNull) || !accountIdsOrNull.length || accountIdsOrNull.length > DASHBOARD_MEMBER_LIMIT || accountIdsOrNull.some((id) => !isDashboardAccountId(id)))) throw new DashboardFilterError()
+  const types = [...issueTypeIds].sort().join(", ")
+  const assignee = accountIdsOrNull === null ? "" : ` AND assignee in (${[...new Set(accountIdsOrNull)].sort().map((id) => `"${id}"`).join(", ")})`
+  const suffix = `) AND issuetype in (${types})${assignee} ORDER BY key ASC`
+  const prefix = "parent in ("
+  const queries: string[] = []
+  let batch: string[] = []
+  for (const id of [...new Set(parentIds)].sort()) {
+    if (prefix.length + id.length + suffix.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
+    if (batch.length >= 100 || prefix.length + [...batch, id].join(", ").length + suffix.length > DASHBOARD_JQL_LIMIT) {
+      queries.push(`${prefix}${batch.join(", ")}${suffix}`)
+      batch = []
+    }
+    batch.push(id)
+  }
+  if (batch.length) queries.push(`${prefix}${batch.join(", ")}${suffix}`)
+  return queries
+}
+
 /**
  * 燃盡圖的查詢（Dev-Task Story Points、以母票的 Sprint 為準）。
  *

@@ -1,18 +1,13 @@
-import { ComingSoon } from "@/components/coming-soon"
+import { PageHeader } from "@/components/page-header"
 import { projectsFilterResult } from "@/lib/projects-filter"
-import { ProjectsFilter } from "./projects-filter"
+import { ProjectsQueryClient } from "./projects-query-client"
 
 export default async function Page({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
   const filter = projectsFilterResult(await searchParams)
-
-  return (
-    <ComingSoon
-      title="專案回顧與趨勢"
-      showDescription={false}
-      description="回顧專案的 Jira 工作，觀察跨期趨勢並在相同條件下比較結果。"
-      filters={<ProjectsFilter {...filter} />}
-    />
-  )
+  return <div className="min-w-0 space-y-6">
+    <PageHeader title="專案回顧與趨勢" />
+    <ProjectsQueryClient {...filter} />
+  </div>
 }

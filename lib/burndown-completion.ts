@@ -27,12 +27,8 @@ function resolvedInstant(value: unknown): Date | null {
   return new Date(local.getTime() - offset * 60_000)
 }
 
-/** 建立一次 formatter，供同份完整資料集共用；時區必須來自 server-verified Jira profile。 */
-export function createBurndownCompletionResolver(
-  timeZone: string,
-  startDate: string,
-  lastDate: string | null
-): (value: unknown) => BurndownCompletion {
+/** 完整 Resolved 日曆日，不裁切 Sprint 範圍；null 僅代表未填。 */
+export function createResolvedCalendarDateResolver(timeZone: string): (value: unknown) => string | null {
   if (typeof timeZone !== "string" || !timeZone.trim() || timeZone !== timeZone.trim() || /^[+-]/.test(timeZone)) {
     throw new Error("Invalid Jira timeZone")
   }
@@ -42,12 +38,21 @@ export function createBurndownCompletionResolver(
   })
   return (value) => {
     const instant = resolvedInstant(value)
-    if (instant === null) return { doneBeforeStart: false, doneDate: null }
+    if (instant === null) return null
     const parts = formatter.formatToParts(instant)
     const part = (name: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === name)?.value
     const year = part("year")
     if (part("era") !== "AD" || !year || Number(year) > 9999) throw new Error("Invalid resolutiondate calendar")
-    const date = `${year.padStart(4, "0")}-${part("month")}-${part("day")}`
+    return `${year.padStart(4, "0")}-${part("month")}-${part("day")}`
+  }
+}
+
+/** 原 Burn Down 的範圍投影保持不變。 */
+export function createBurndownCompletionResolver(timeZone: string, startDate: string, lastDate: string | null): (value: unknown) => BurndownCompletion {
+  const resolve = createResolvedCalendarDateResolver(timeZone)
+  return (value) => {
+    const date = resolve(value)
+    if (date === null) return { doneBeforeStart: false, doneDate: null }
     if (date < startDate) return { doneBeforeStart: true, doneDate: null }
     return { doneBeforeStart: false, doneDate: lastDate !== null && date <= lastDate ? date : null }
   }

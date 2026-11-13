@@ -18,6 +18,7 @@ export type NavigationIcon =
   | "workload"
   | "points"
   | "trends"
+  | "history"
   | "members"
   | "person"
   | "projects"
@@ -109,7 +110,7 @@ export const navigationCategories = [
       {
         id: "projects",
         label: "專案回顧與趨勢",
-        icon: "projects",
+        icon: "history",
         routes: [{ href: "/analytics/projects", label: "專案回顧與趨勢" }],
       },
       {

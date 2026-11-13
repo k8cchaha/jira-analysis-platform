@@ -15,7 +15,7 @@ export const TEAM_PAGE = "app/(app)/analytics/story-points/page.tsx"
 export const TEAM_FILTER = "app/(app)/analytics/story-points/team-analysis-filter.tsx"
 export const SELECTOR = "app/(app)/sprint/burndown/sprint-selector.tsx"
 
-export function harness(today = "2026-10-21") {
+export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) {
   const modules = new Map()
   const pushes = []
   let transitionCount = 0
@@ -24,10 +24,12 @@ export function harness(today = "2026-10-21") {
   const hooksByComponent = new Map()
   const layoutEffects = []
   const effects = []
+  let controlledGroups = []
   const snapshot = { "ent-web": { status: "success", members: [{ accountId: "a", displayName: "Fixture member" }] } }
   const fail = (message) => { throw new Error(message) }
   class FixedDate extends Date {
-    constructor(...args) { super(...(args.length ? args : [`${today}T12:00:00Z`])) }
+    constructor(...args) { super(...(args.length ? args : [instant ?? `${today}T12:00:00Z`])) }
+    getTimezoneOffset() { return timezoneOffset ?? super.getTimezoneOffset() }
   }
   const react = {
     ...require("react"),
@@ -77,7 +79,7 @@ export function harness(today = "2026-10-21") {
     "components/coming-soon.tsx", "components/page-header.tsx",
     "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx", "components/search-button.tsx",
     "lib/projects-filter.ts", "lib/team-analysis-filter.ts", "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
-    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-missing-data.ts",
+    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-missing-data.ts", "lib/projects-analysis.ts", "lib/planning-overview.ts",
   ])
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
@@ -89,9 +91,12 @@ export function harness(today = "2026-10-21") {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
     }).outputText)
     const fixtureRequire = (name) => {
+      if (name === "./projects-query-client") return { ProjectsQueryClient: function ProjectsQueryClient(props) { return createElement(load(PROJECT_FILTER).ProjectsFilter, { ...props, groups: [], onGroupsChange() {}, onDraftChange() {}, onQuery() {} }) } }
       if (name === "react") return react
       if (name === "react/jsx-runtime") return require(name)
       if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
+      // No saved defaults: preserve the original controlled group state and SSR behavior.
+      if (name === "@/components/filter-defaults-provider") return { useDefaultTeamGroups: () => react.useState([]) }
       if (name === "@/components/navigation-blocker") return { GuardedLink: ({ children, ...props }) => createElement("a", props, children) }
       if (name === "@/components/team-members-provider") return {
         useTeamMembers: () => ({ groupStates: snapshot, loadGroup: () => fail("Unexpected group load"), retryGroup: () => fail("Unexpected group retry") }),
@@ -108,7 +113,7 @@ export function harness(today = "2026-10-21") {
     hooksByComponent.set(Component, hooks)
     hooks.cursor = 0
     activeHooks = hooks
-    try { return Component(props) } finally {
+    try { return Component(Component.name === "ProjectsFilter" ? { groups: controlledGroups, onGroupsChange(next) { controlledGroups = next }, onDraftChange() {}, onQuery() {}, ...props } : props) } finally {
       activeHooks = null
       while (layoutEffects.length) layoutEffects.shift()()
     }

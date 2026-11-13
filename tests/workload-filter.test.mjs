@@ -59,6 +59,15 @@ function harness(initialSnapshot = {}) {
       if (name === "react") return { ...require(name), ...hooks }
       if (name === "react/jsx-runtime") return require(name)
       if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
+      // Saved-default initialization is covered separately; keep existing no-default drafts.
+      if (name === "@/components/filter-defaults-provider") return {
+        currentFilterParams: () => null,
+        useInitialFilterDefaults: () => () => {},
+      }
+      if (name === "@/lib/filter-defaults") return {
+        absentDefaultCondition: (params, kind) => (kind === "project" ? ["project", "sprint"] : ["group", "exclude"]).every((key) => !params.has(key)),
+        defaultDashboardProjects: (defaults) => defaults.project ? [defaults.project.toLowerCase()] : [],
+      }
       if (name === "@/components/team-members-provider") return {
         useTeamMembers: () => ({ groupStates: snapshot, loadGroup: async () => {}, retryGroup: async () => {} }),
       }

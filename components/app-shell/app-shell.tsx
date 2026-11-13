@@ -19,7 +19,7 @@ import {
   type NavigationCategory,
   type NavigationFeature,
 } from "@/components/app-shell/navigation"
-import { logout } from "@/components/app-shell/logout-action"
+import { AccountMenu } from "@/components/app-shell/account-menu"
 import { GuardedLink } from "@/components/navigation-blocker"
 
 const SIDEBAR_KEY = "jira-analysis:sidebar-collapsed"
@@ -137,14 +137,6 @@ export function AppShell({ children, user }: AppShellProps) {
     writeExpandedGroupsPreference(next)
   }
 
-  const initials =
-    user.name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("") || "U"
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100">
       <aside
@@ -225,36 +217,7 @@ export function AppShell({ children, user }: AppShellProps) {
                 </p>
               ) : null}
             </div>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-blue-100 text-xs font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-200">
-              {user.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={user.image} alt="" className="h-full w-full object-cover" />
-              ) : (
-                initials
-              )}
-            </div>
-            <form action={logout}>
-              <button
-                type="submit"
-                className="app-icon-button"
-                aria-label="登出"
-                title="登出"
-              >
-                <svg
-                  aria-hidden="true"
-                  className="h-5 w-5"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M10 17l5-5-5-5M15 12H3" />
-                  <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
-                </svg>
-              </button>
-            </form>
+            <AccountMenu key={pathname} user={user} />
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">

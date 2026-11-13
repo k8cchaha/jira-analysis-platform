@@ -111,7 +111,7 @@ function harness(t, options = {}) {
   }
   const sandbox = vm.createContext(globals)
   const allowed = [
-    "lib/jira-burndown.ts",
+    "lib/jira-burndown.ts", "lib/jira-account-timezone.ts",
     "lib/burndown-series.ts",
     "lib/burndown-completion.ts",
     "lib/burndown-params.ts",

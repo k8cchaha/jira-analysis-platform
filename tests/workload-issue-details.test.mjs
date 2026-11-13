@@ -20,6 +20,7 @@ function load(path) {
     if (["react", "react/jsx-runtime"].includes(name)) return require(name)
     if (name === "@/lib/workload-heatmap") return heatmap
     if (name === "@/components/ticket-link") return load("components/ticket-link.tsx")
+    if (name === "@/lib/jira-url") return load("lib/jira-url.ts")
     if (name === "@/app/(app)/dashboard/parent-issue-type-icon") return load("app/(app)/dashboard/parent-issue-type-icon.tsx")
     throw new Error(`Unexpected details dependency: ${name}`)
   }

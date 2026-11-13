@@ -100,7 +100,8 @@ describe("Analysis navigation", () => {
     assert.equal(team.icon, "members")
     assert.equal(team.routes[0].href, "/analytics/story-points")
     const project = analytics.features[1]
-    assert.equal(project.icon, "projects")
+    assert.equal(project.icon, "history")
+    assert.notEqual(project.icon, analytics.features[0].icon)
     assert.deepEqual(JSON.parse(JSON.stringify(project.routes)), [{ href: "/analytics/projects", label: "專案回顧與趨勢" }])
     const adminCategories = nav.visibleNavigationCategories(nav.navigationCategories, nav.ADMIN_EMAILS[0])
     assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "projects"))
@@ -119,7 +120,7 @@ describe("Analysis navigation", () => {
     assert.equal(routes.includes("/settings/jira"), false)
   })
 
-  it("keeps the consolidated async project page and team page honest ComingSoon destinations", async () => {
+  it("keeps the implemented Projects page and Team ComingSoon page on their async filter contracts", async () => {
     for (const [path, title] of [
       ["app/(app)/analytics/story-points/page.tsx", "團隊分析"],
       ["app/(app)/analytics/projects/page.tsx", "專案回顧與趨勢"],
@@ -129,6 +130,7 @@ describe("Analysis navigation", () => {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
       }).outputText
       const ComingSoon = () => null
+      const PageHeader = () => null
       const Filter = () => null
       const isProjects = path.includes("/projects/")
       const params = isProjects
@@ -143,8 +145,9 @@ describe("Analysis navigation", () => {
       const fixtureRequire = (name) => {
         if (name === "react/jsx-runtime") return require(name)
         if (name === "@/components/coming-soon") return { ComingSoon }
-        if (name === (isProjects ? "./projects-filter" : "./team-analysis-filter")) {
-          return isProjects ? { ProjectsFilter: Filter } : { TeamAnalysisFilter: Filter }
+        if (isProjects && name === "@/components/page-header") return { PageHeader }
+        if (name === (isProjects ? "./projects-query-client" : "./team-analysis-filter")) {
+          return isProjects ? { ProjectsQueryClient: Filter } : { TeamAnalysisFilter: Filter }
         }
         if (name === (isProjects ? "@/lib/projects-filter" : "@/lib/team-analysis-filter")) {
           const parse = (input) => {
@@ -165,19 +168,27 @@ describe("Analysis navigation", () => {
         filter = result
         parserCalls = 0
         const page = await mod.exports.default({ searchParams: Promise.resolve(params) })
-        assert.equal(page.type, ComingSoon)
-        assert.equal(page.props.title, title)
-        assert.equal(page.props.showDescription, false)
+        let controls
+        if (isProjects) {
+          assert.equal(page.type, "div")
+          const header = page.props.children.find((child) => child.type === PageHeader)
+          assert.equal(header.props.title, title)
+          controls = page.props.children.find((child) => child.type === Filter)
+        } else {
+          assert.equal(page.type, ComingSoon)
+          assert.equal(page.props.title, title)
+          assert.equal(page.props.showDescription, false)
+          controls = page.props.filters
+        }
         assert.equal(parserCalls, 1)
-        assert.equal(page.props.filters.type, Filter)
-        assert.equal(page.props.filters.key, null)
-        assert.deepEqual(JSON.parse(JSON.stringify(page.props.filters.props)), result)
-        if (isProjects) assert.match(page.props.description, /回顧.*趨勢.*比較/)
+        assert.equal(controls.type, Filter)
+        assert.equal(controls.key, null)
+        assert.deepEqual(JSON.parse(JSON.stringify(controls.props)), result)
       }
     }
   })
 
-  it("renders people and project folder icons instead of the former points star", () => {
+  it("renders people and the project History icon with shared navigation styling", () => {
     const path = "components/app-shell/icons.tsx"
     const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
       fileName: path,
@@ -190,12 +201,21 @@ describe("Analysis navigation", () => {
     }
     vm.runInNewContext(`(function(require,module,exports){${code}\n})`, {}, { filename: path })(fixtureRequire, mod, mod.exports)
     const people = mod.exports.NavigationIconGlyph({ name: "members" })
-    const project = mod.exports.NavigationIconGlyph({ name: "projects" })
+    const projectFeature = harness().navigationCategories.find((category) => category.id === "analytics").features.find((feature) => feature.id === "projects")
+    const project = mod.exports.NavigationIconGlyph({ name: projectFeature.icon })
     assert.equal(people.type, "svg")
     assert.equal(people.props.children[0].type, "circle")
     assert.equal(project.type, "svg")
     assert.equal(project.props["aria-hidden"], true)
+    assert.equal(project.props.className, "h-5 w-5")
+    assert.equal(project.props.stroke, "currentColor")
+    assert.equal(project.props.strokeWidth, 1.8)
     assert.equal(project.props.children[0].type, "path")
+    assert.equal(project.props.children.length, 3)
+    assert.equal(project.props.children[0].props.d, "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8")
+    assert.equal(project.props.children[1].props.d, "M3 3v5h5")
+    assert.equal(project.props.children[2].props.d, "M12 7v5l4 2")
+    assert.equal(mod.exports.NavigationIconGlyph({ name: projectFeature.icon, className: "h-6 w-6" }).props.className, "h-6 w-6")
     assert.notEqual(project.props.children[0].props.d, people.props.children[1].props.d)
     const person = mod.exports.NavigationIconGlyph({ name: "person" })
     assert.equal(person.type, "svg")
