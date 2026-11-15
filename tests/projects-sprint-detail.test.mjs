@@ -31,9 +31,13 @@ function setup(options = {}) {
 }
 
 describe("Sprint detail under the 總產出 trend", () => {
-  it("shows each selected bar's value at its top and opens the Sprint panel on a click", () => {
+  it("opens on the newest Sprint with its bars labelled, and switches on a click", () => {
     const { render, draw, sprintTarget } = setup()
-    assert.equal(nodes(draw()).filter((n) => n.props["data-bar-value"] !== undefined).length, 0, "nothing labelled before a selection")
+    // A finished query shows the newest Sprint (6824, index 1) without any click.
+    assert.equal(detailOf(render()).props.sprint.id, 6824)
+    assert.equal(nodes(draw()).filter((n) => n.props["data-selection-index"] === 1).length, 1, "the newest Sprint starts selected")
+    // Sprint 59 only has Story Points filled, so only that bar gets a value label.
+    assert.deepEqual(nodes(draw()).filter((n) => n.props["data-bar-value"] !== undefined).map((n) => n.props["data-bar-value"]), ["points"])
     sprintTarget(render(), 0).props.onClick()
     const labels = nodes(draw()).filter((n) => n.props["data-bar-value"] !== undefined)
     assert.deepEqual(labels.map((n) => [n.props["data-bar-value"], n.props.children]), [["points", "8"], ["actual", "12"]], "Story Points and Actual SP of the clicked Sprint")
@@ -43,9 +47,15 @@ describe("Sprint detail under the 總產出 trend", () => {
     assert.match(String(panel.props.sprint.startDate), /^2026-/)
   })
 
-  it("clears the panel when the same Sprint is clicked again", () => {
+  it("clears the panel when the same Sprint is clicked twice", () => {
     const { render, sprintTarget } = setup()
     const click = (index) => { sprintTarget(render(), index).props.onClick() }
+    // The page's pre-selection is not a click: the first click confirms it, the second clears it.
+    assert.equal(detailOf(render()).props.sprint.id, 6824)
+    click(1)
+    assert.equal(detailOf(render()).props.sprint.id, 6824)
+    click(1)
+    assert.equal(detailOf(render()), undefined, "the second click clears")
     click(0)
     assert.ok(detailOf(render()))
     click(0)
@@ -54,6 +64,7 @@ describe("Sprint detail under the 總產出 trend", () => {
 
   it("splits completed Story Points per team and divides them by the placeholder capacity", () => {
     const { render, sprintTarget, h } = setup()
+    // Sprint 58 (the older one) carries both teams' completed points.
     sprintTarget(render(), 0).props.onClick()
     // The panel is a plain function: calling it yields its markup tree with the pie slices and capacity rows.
     const html = renderToStaticMarkup(detailOf(render()).type(detailOf(render()).props))

@@ -95,7 +95,13 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [outputView, setOutputView] = useState<OutputView>("all-teams")
   const [includeQa, setIncludeQa] = useState(true)
   // Sprint picked in the 總產出 trend; the detail panel below the chart shows its team split and capacity realization.
-  const [selectedOutputSprint, setSelectedOutputSprint] = useState<number | null>(null)
+  // A completed query opens with the newest Sprint already selected, so its detail panel is visible at once.
+  // Selection is owned here; `initialSprintId` is set once so a cleared selection stays cleared.
+  const [selectedOutputSprint, setSelectedOutputSprint] = useState<number | null>(() => {
+    const newest = [...result.sprints].sort((a, b) => b.startDate.localeCompare(a.startDate) || b.id - a.id)[0]
+    return newest?.id ?? null
+  })
+  const [initialOutputSprint] = useState(selectedOutputSprint)
   const { groupStates } = useTeamMembers()
   const attribution = result.teamAttribution
   const hasAttribution = attribution?.status === "available"
@@ -296,7 +302,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     <div className="min-w-0">
     {topicPanel("output", <Panel title={multi ? "總產出趨勢" : "Sprint 總產出"} controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* 全團隊總覽 always charts both units (two bars, two curves), so the unit switch only applies to 各團隊產出. */}{outputView === "by-team" || !hasAttribution ? <Units<Unit> name="總產出" value={outputUnit} onChange={(unit) => { if (unit !== "count" && unit !== outputUnit) { setOutputUnit(unit); clearOutputDetail() } }} choices={["sp", "actualSp"]} labels={outputUnitLabels} compact /> : null}<Units name="總產出顯示" value={outputView} onChange={(view) => { if (view !== outputView) { setOutputView(view); clearOutputDetail() } }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? outputMemberViewLabels : outputViewLabels} disabled={!hasAttribution} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => { setIncludeQa(event.target.checked); clearOutputDetail() }} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label></div>}>
       {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全範圍總產出。</p>}
-      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} />
+      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialOutputSprint} />
       {sprintDetailSprint && <ProjectsSprintDetail sprint={sprintDetailSprint} teams={sprintBreakdown} />}
     </Panel>)}
     {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總產出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">

@@ -48,7 +48,7 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
@@ -62,15 +62,22 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   emptyMessage?: string
   /** Reports the clicked Sprint, or null when a second click clears the selection. */
   onSprintSelect?: (index: number | null) => void
+  /** Sprint already selected by the page on mount; clicking it once clears, matching a deliberate selection. */
+  initialSprintId?: number | null
 }) {
   const patternPrefix = `projects-stack-${useId().replace(/[^a-zA-Z0-9_-]/g, "_")}`
   const container = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(640)
   const [hover, setHover] = useState<number | null>(null)
   const [focus, setFocus] = useState<number | null>(null)
-  const [pinned, setPinned] = useState<number | null>(null)
-  const [selected, setSelected] = useState(0)
-  const [committedVisual, setCommittedVisual] = useState(false)
+  // A page-selected Sprint (the newest one after a query) starts out committed, so its band and labels show at once.
+  // Captured on mount only: later prop changes must not resurrect a selection the user cleared.
+  const [initialIndex] = useState(() => initialSprintId === null ? -1 : sprints.findIndex((sprint) => sprint.id === initialSprintId))
+  const [pinned, setPinned] = useState<number | null>(() => initialIndex >= 0 ? initialIndex : null)
+  const [selected, setSelected] = useState(() => Math.max(0, initialIndex))
+  const [committedVisual, setCommittedVisual] = useState(() => initialIndex >= 0)
+  // The pre-selected Sprint has not been clicked yet: its first click just confirms it.
+  const seeded = useRef(initialIndex >= 0)
   const [emphasis, setEmphasis] = useState<string | null>(null)
   const readoutFocused = useRef(false)
   // The last Sprint whose plot was clicked, and whether the pointer moved since that click.
@@ -128,8 +135,14 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   // A Sprint is "selected" only by a click. Hover and focus may preview it, but they never make a later
   // click look like a second one; only two clicks on the same Sprint (with no pointer motion between them) clear it.
   const toggle = (index: number) => {
+    // Decide from the PREVIOUS click before recording this one, or every click would look like a repeat.
+    // The page's pre-selection is not a click, so the first click on it only confirms it.
+    const preseeded = seeded.current && clicked.current === null
+    const again = !preseeded && clicked.current === index && !moved.current && committedVisual
+    seeded.current = false
+    clicked.current = index; moved.current = false
     setSelected(index); setPinned(index)
-    if (clicked.current === index && !moved.current && committedVisual) { setCommittedVisual(false); onSprintSelect?.(null); return }
+    if (again) { setCommittedVisual(false); onSprintSelect?.(null); return }
     setCommittedVisual(true)
     onSprintSelect?.(index)
   }
@@ -137,7 +150,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
     if (!visible.length || readoutFocused.current || focus !== null) return
     // Any motion after a click ends that gesture, so the next click always selects.
     moved.current = true
-    setHover(index); select(index, false)
+    // Hover only previews (crosshair, bar labels); the committed selection stays exactly where it was clicked.
+    setHover(index)
   }
   const dismissReadout = () => {
     readoutFocused.current = false
@@ -145,11 +159,11 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
     dismiss()
   }
   const ticks = integer && maximum <= 4 ? Array.from({ length: maximum + 1 }, (_, index) => index) : [0, .25, .5, .75, 1].map((fraction) => integer ? Math.round(maximum * fraction) : maximum * fraction)
-  const selection = !distribution && committedVisual && active !== null && sprints[active] ? (() => {
-    // Cover both side-by-side bars of the Sprint, not just its centre line.
-    const center = x(active), halfBand = Math.min(40, Math.max(barWidth * 2, (sprints.length <= 1 ? plotWidth : plotWidth / (sprints.length - 1)) * .8)) / 2
+  // The selection decoration follows the selected Sprint only: hover previews the readout but must not move or hide it.
+  const selection = !distribution && committedVisual && visible.length > 0 && pinned !== null && sprints[pinned] ? (() => {
+    const center = x(pinned), halfBand = (sprints.length <= 1 ? plotWidth : plotWidth / (sprints.length - 1)) * .2
     const bandLeft = Math.max(left, center - halfBand), bandRight = Math.min(width - right, center + halfBand)
-    return { index: active, bandLeft, bandWidth: bandRight - bandLeft, pill: axisSpan(center, Math.min(160, labelWidth(sprints[active].name) + 24), left, width - right) }
+    return { index: pinned, bandLeft, bandWidth: bandRight - bandLeft, pill: axisSpan(center, Math.min(160, labelWidth(sprints[pinned].name) + 24), left, width - right) }
   })() : null
   const axisLabel = (name: string) => name.length > 14 ? `${name.slice(0, 12)}…` : name
   const coveredLabel = (name: string, index: number) => {
@@ -241,7 +255,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
         {active !== null && <line className="projects-trend-crosshair" x1={x(active)} x2={x(active)} y1={top} y2={top + plotHeight} aria-hidden="true" />}
         {sprints.map((sprint, index) => <g key={sprint.id}>
           {(width >= 480 || sprints.length <= 3 || index === 0 || index === sprints.length - 1) && <text className={`projects-trend-x-label${coveredLabel(sprint.name, index) ? " is-covered" : ""}`} x={x(index)} y={top + plotHeight + 27} textAnchor={index === 0 ? "start" : index === sprints.length - 1 ? "end" : "middle"} aria-hidden="true">{axisLabel(sprint.name)}</text>}
-          {!!visible.length && <rect data-sprint-index={index} x={index === 0 ? plotLeft - 12 : (x(index - 1) + x(index)) / 2} y={top - 8} width={Math.max(24, sprints.length === 1 ? plotWidth + 24 : plotWidth / (sprints.length - 1) / (index === 0 || index === sprints.length - 1 ? 2 : 1) + (index === 0 || index === sprints.length - 1 ? 12 : 0))} height={plotHeight + 38} fill="transparent" role="button" tabIndex={index === selected ? 0 : -1} className="projects-trend-target" aria-label={`${sprint.name}，${sprint.startDate} 至 ${sprint.endDate}，查看 ${unit} 趨勢數值`} aria-controls={`${id}-readout`} aria-expanded={active === index} onFocus={() => { setHover(null); setFocus(index); select(index, false) }} onBlur={() => setFocus(null)} onClick={() => { clicked.current = index; moved.current = false; toggle(index) }} onKeyDown={(event) => {
+          {!!visible.length && <rect data-sprint-index={index} x={index === 0 ? plotLeft - 12 : (x(index - 1) + x(index)) / 2} y={top - 8} width={Math.max(24, sprints.length === 1 ? plotWidth + 24 : plotWidth / (sprints.length - 1) / (index === 0 || index === sprints.length - 1 ? 2 : 1) + (index === 0 || index === sprints.length - 1 ? 12 : 0))} height={plotHeight + 38} fill="transparent" role="button" tabIndex={index === selected ? 0 : -1} className="projects-trend-target" aria-label={`${sprint.name}，${sprint.startDate} 至 ${sprint.endDate}，查看 ${unit} 趨勢數值`} aria-controls={`${id}-readout`} aria-expanded={active === index} onFocus={() => { setHover(null); setFocus(index) }} onBlur={() => setFocus(null)} onClick={() => toggle(index)} onKeyDown={(event) => {
             if (event.key === "Escape") dismiss()
             if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(index) }
             if (event.key === "ArrowLeft" || event.key === "ArrowRight") {

@@ -4,7 +4,7 @@
 .projects-analysis th, .projects-analysis td { padding: .65rem .75rem; border-bottom: 1px solid #e2e8f0; vertical-align: top; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .projects-analysis thead th { color: #475569; font-size: .75rem; font-weight: 500; }
 .projects-analysis tbody th { font-weight: 500; }
-.projects-viz { --viz-surface: #ffffff; --viz-sp: #2a78d6; --viz-actual: #eb6834; --viz-type-0: #2a78d6; --viz-type-1: #eb6834; --viz-type-2: #1baf7a; --viz-type-3: #eda100; --viz-type-4: #e87ba4; --viz-type-5: #008300; --viz-type-6: #6250d6; --viz-grid: #e2e8f0; --viz-text: #475569; --viz-points: #93b8e8; --viz-focus: #0f172a; --viz-selection-band: #f1f5f9; --viz-selection-pill: #e2e8f0; --viz-selection-text: #0f172a; --viz-selection-border: #cbd5e1; }
+.projects-viz { --viz-surface: #ffffff; --viz-sp: #2a78d6; --viz-actual: #eb6834; --viz-type-0: #2a78d6; --viz-type-1: #eb6834; --viz-type-2: #1baf7a; --viz-type-3: #eda100; --viz-type-4: #e87ba4; --viz-type-5: #008300; --viz-type-6: #6250d6; --viz-grid: #e2e8f0; --viz-text: #475569; --viz-points: #93b8e8; --viz-focus: #0f172a; --viz-selection-band: #dbeafe; --viz-selection-pill: #dbeafe; --viz-selection-text: #1e3a8a; --viz-selection-border: #3b82f6; }
 .projects-trend-svg { touch-action: pan-y; }
 .projects-trend-line { fill: none; stroke: var(--series-color); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .projects-stack-fill { fill: var(--series-color); }
@@ -33,18 +33,19 @@
 .projects-trend-target { outline: none; stroke: none; cursor: pointer; }
 .projects-trend-focus-cue { stroke: var(--viz-focus); stroke-width: 2; stroke-linecap: round; opacity: 0; pointer-events: none; }
 .projects-trend-target:focus-visible + .projects-trend-focus-cue { opacity: 1; }
-.projects-trend-selection-band { fill: var(--viz-selection-band); pointer-events: none; }
+/* The selected Sprint must read as selected: a tinted band with an accent edge, visible on white and dark surfaces. */
+.projects-trend-selection-band { fill: var(--viz-selection-band); stroke: var(--viz-selection-border); stroke-width: 1; pointer-events: none; }
 .projects-trend-x-label.is-covered { display: none; }
 .projects-trend-sprint-pill { position: absolute; box-sizing: border-box; padding: 4px 10px; border: 1px solid var(--viz-selection-border); border-radius: 999px; background: var(--viz-selection-pill); color: var(--viz-selection-text); font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .projects-trend-tooltip { overflow-wrap: anywhere; }
 .projects-distribution-track { background: linear-gradient(to right, var(--viz-grid) 1px, transparent 1px); padding-block: 6px; }
 .projects-distribution-fill { background: var(--series-color); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .projects-viz { --viz-surface: #0f172a; --viz-sp: #3987e5; --viz-actual: #d95926; --viz-type-0: #3987e5; --viz-type-1: #d95926; --viz-type-2: #199e70; --viz-type-3: #c98500; --viz-type-4: #d55181; --viz-type-5: #008300; --viz-type-6: #9085e9; --viz-grid: #334155; --viz-text: #cbd5e1; --viz-points: #6f9fd8; --viz-focus: #f1f5f9; --viz-selection-band: #1e293b; --viz-selection-pill: #334155; --viz-selection-text: #f1f5f9; --viz-selection-border: #64748b; }
+  :root:not([data-theme="light"]) .projects-viz { --viz-surface: #0f172a; --viz-sp: #3987e5; --viz-actual: #d95926; --viz-type-0: #3987e5; --viz-type-1: #d95926; --viz-type-2: #199e70; --viz-type-3: #c98500; --viz-type-4: #d55181; --viz-type-5: #008300; --viz-type-6: #9085e9; --viz-grid: #334155; --viz-text: #cbd5e1; --viz-points: #6f9fd8; --viz-focus: #f1f5f9; --viz-selection-band: #1e3a8a; --viz-selection-pill: #1e40af; --viz-selection-text: #eff6ff; --viz-selection-border: #60a5fa; }
   :root:not([data-theme="light"]) .projects-analysis th, :root:not([data-theme="light"]) .projects-analysis td { border-color: #334155; }
   :root:not([data-theme="light"]) .projects-analysis thead th { color: #cbd5e1; }
 }
-:root[data-theme="dark"] .projects-viz { --viz-surface: #0f172a; --viz-sp: #3987e5; --viz-actual: #d95926; --viz-type-0: #3987e5; --viz-type-1: #d95926; --viz-type-2: #199e70; --viz-type-3: #c98500; --viz-type-4: #d55181; --viz-type-5: #008300; --viz-type-6: #9085e9; --viz-grid: #334155; --viz-text: #cbd5e1; --viz-points: #6f9fd8; --viz-focus: #f1f5f9; --viz-selection-band: #1e293b; --viz-selection-pill: #334155; --viz-selection-text: #f1f5f9; --viz-selection-border: #64748b; }
+:root[data-theme="dark"] .projects-viz { --viz-surface: #0f172a; --viz-sp: #3987e5; --viz-actual: #d95926; --viz-type-0: #3987e5; --viz-type-1: #d95926; --viz-type-2: #199e70; --viz-type-3: #c98500; --viz-type-4: #d55181; --viz-type-5: #008300; --viz-type-6: #9085e9; --viz-grid: #334155; --viz-text: #cbd5e1; --viz-points: #6f9fd8; --viz-focus: #f1f5f9; --viz-selection-band: #1e3a8a; --viz-selection-pill: #1e40af; --viz-selection-text: #eff6ff; --viz-selection-border: #60a5fa; }
 :root[data-theme="dark"] .projects-analysis th, :root[data-theme="dark"] .projects-analysis td { border-color: #334155; }
 :root[data-theme="dark"] .projects-analysis thead th { color: #cbd5e1; }
 @media print, (forced-colors: active) {

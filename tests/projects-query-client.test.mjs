@@ -355,24 +355,25 @@ describe("projects result visualization and readonly local details", () => {
   }
   const selectedBand = (tree) => nodes(tree).find((n) => n.props["data-selection-index"] !== undefined)
   const selectedPill = (tree) => nodes(tree).find((n) => n.props["data-pill-index"] !== undefined)
-  it("keeps hover-only sticky readouts without selection decoration and retains a committed Sprint during same-slot motion", () => {
+  it("keeps hover decorative only and holds a committed Sprint through pointer motion", () => {
     const { render, pointer, h } = selectionFixture()
     assert.equal(selectedBand(render()), undefined)
     assert.equal(selectedPill(render()), undefined)
     pointer(5)
-    const atFive = nodes(render()).find((n) => n.props.className === "projects-trend-crosshair").props.x1
+    assert.ok(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair"), "hover previews a crosshair")
     assert.equal(selectedBand(render()), undefined, "hover never decorates")
     nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerLeave()
-    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair")?.props.x1, atFive, "hover stays sticky after leaving")
+    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair"), undefined, "leaving removes the hover preview")
     assert.equal(selectedPill(render()), undefined)
     target(render(), 2).props.onClick()
     assert.equal(selectedBand(render()).props["data-selection-index"], 2)
     assert.equal(selectedPill(render()).props["data-pill-index"], 2)
     pointer(2)
     assert.equal(selectedBand(render()).props["data-selection-index"], 2)
+    // Hovering another Sprint keeps the committed selection; it never follows the pointer.
     pointer(4)
-    assert.equal(selectedBand(render()), undefined)
-    assert.equal(selectedPill(render()), undefined)
+    assert.equal(selectedBand(render()).props["data-selection-index"], 2)
+    assert.equal(selectedPill(render()).props["data-pill-index"], 2)
     assert.equal(h.requests.length, 0)
   })
   it("clears a committed Sprint when it is clicked again while keeping the resting panel and detail Sprint", () => {
@@ -434,13 +435,16 @@ describe("projects result visualization and readonly local details", () => {
   it("clamps selection bounds at both plot edges, preserves full names, and draws the band behind data", () => {
     const { render, props } = selectionFixture()
     for (const index of [0, 2, 5]) {
-      // Focus alone only previews the readout; the band and pill belong to an actual selection (click).
+      // Focus only previews; the band and pill belong to an actual selection (click).
+      const beforeFocus = selectedBand(render())?.props["data-selection-index"]
       target(render(), index).props.onFocus()
-      assert.equal(selectedBand(render()), undefined, "focus does not select")
+      assert.equal(selectedBand(render())?.props["data-selection-index"], beforeFocus, "focus never changes the selection")
       target(render(), index).props.onClick()
       const tree = render(), band = selectedBand(tree), pill = selectedPill(tree), svg = nodes(tree).find((n) => n.type === "svg" && n.props.onPointerMove)
       const crosshair = nodes(tree).find((n) => n.props.className === "projects-trend-crosshair")
-      assert.ok(band.props.width > 0 && band.props.width <= 40)
+      // A compact band around the Sprint keeps the selection visible without covering its neighbours.
+      const slot = (488 - 58) / 5
+      assert.ok(band.props.width > 0 && band.props.width >= slot * .25 && band.props.width <= slot * .6)
       assert.ok(band.props.x >= 58 && band.props.x + band.props.width <= 488)
       assert.ok(crosshair.props.x1 >= band.props.x && crosshair.props.x1 <= band.props.x + band.props.width)
       assert.equal(pill.props.children, props.sprints[index].name)
@@ -453,6 +457,30 @@ describe("projects result visualization and readonly local details", () => {
       assert.ok(order.indexOf(band) < order.findIndex((n) => n.props["data-series"] === "sp"))
       target(render(), index).props.onBlur()
     }
+  })
+  it("keeps the selection band on the selected Sprint while the pointer moves across the plot", () => {
+    const { render, pointer } = (() => {
+      const h = projectsHarness(), Component = h.load(CHART).ProjectsTrendChart
+      const sprints = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, name: `Sprint ${58 + index}`, startDate: "2026-01-01", endDate: "2026-01-14" }))
+      const props = { id: "selection", sprints, series: [{ id: "sp", label: "SP", color: "sp", values: sprints.map((_, index) => ({ value: index, display: String(index) })) }], unit: "SP", formatTick: String }
+      const render = (overrides = {}) => h.invoke(Component, { ...props, ...overrides })
+      const move = (index) => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ pointerType: "mouse", clientX: 58 + index * 430 / 5, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
+      return { render, pointer: move }
+    })()
+    const band = (tree) => nodes(tree).find((n) => n.props["data-selection-index"] !== undefined)?.props["data-selection-index"]
+    nodes(render()).find((n) => n.props["data-sprint-index"] === 1).props.onClick()
+    assert.equal(band(render()), 1)
+    // Hovering other Sprints must not move or hide the committed selection.
+    for (const index of [4, 0, 3]) {
+      pointer(index)
+      assert.equal(band(render()), 1, `hovering Sprint ${index} keeps the band on Sprint 1`)
+      nodes(render()).find((n) => n.type === "svg" && n.props.onPointerLeave).props.onPointerLeave()
+      assert.equal(band(render()), 1, "leaving the plot keeps the selection")
+    }
+    // Only an actual second click (with no motion in between) clears it.
+    nodes(render()).find((n) => n.props["data-sprint-index"] === 1).props.onClick()
+    nodes(render()).find((n) => n.props["data-sprint-index"] === 1).props.onClick()
+    assert.equal(band(render()), undefined)
   })
   it("does not decorate distribution or all-hidden charts, and centers single Sprint selection without fabricating a line", () => {
     const { render, props } = selectionFixture()
