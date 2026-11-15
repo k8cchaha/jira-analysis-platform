@@ -128,7 +128,7 @@ describe("Sprint detail under the 總產出 trend", () => {
     const jql = links.map((href) => decodeURIComponent(new URL(href).searchParams.get("jql")))
     // Sprint 58 completed Android task 1 and Web task 2 (see setup()); every link names exactly one of them.
     assert.deepEqual([...new Set(jql)].sort(), ["id in (1) ORDER BY key ASC", "id in (2) ORDER BY key ASC"])
-    assert.equal(links.length, 8, "two slices, two SP labels, two rates and two bars")
+    assert.equal(links.length, 6, "SP label, rate and bar for each of the two rows; slices now drill down instead")
     assert.ok(links.every((href) => new URL(href).host === "jira.example.test"))
   })
   it("charts the team's members and renames both views when only one team is in scope", () => {
@@ -152,6 +152,32 @@ describe("Sprint detail under the 總產出 trend", () => {
     const drawn = h.invoke(outputChart(tree).type, outputChart(tree).props)
     nodes(drawn).find((n) => n.type === "button" && n.props["aria-label"] === "顯示 Alice Chen 產出").props.onClick()
     assert.deepEqual(plain(outputChart(render()).props.legendToggle.visibleIds), ["member:account-web"])
+  })
+  it("swells a pie slice on hover and grows that team's member bars on click", () => {
+    const { render, h, sprintTarget } = setup()
+    // Sprint 58 (index 0) carries both teams' completed points.
+    sprintTarget(render(), 0).props.onClick()
+    const detail = detailOf(render())
+    const pie = nodes(detail.type(detail.props)).find((node) => node.type?.name === "TeamPie")
+    const drawPie = () => h.invoke(pie.type, pie.props)
+    const slice = (tree, id) => nodes(tree).find((node) => node.props["data-pie-team"] === id)
+    const strokeOf = (tree, id) => nodes(slice(tree, id)).filter((node) => node.type === "circle").map((circle) => circle.props.strokeWidth)
+    assert.deepEqual(strokeOf(drawPie(), "ent-android"), [22, 30], "idle slice")
+    slice(drawPie(), "ent-android").props.onPointerEnter()
+    assert.equal(strokeOf(drawPie(), "ent-android")[0], 26, "hover swells the slice")
+    slice(drawPie(), "ent-android").props.onPointerLeave()
+    const idle = drawPie()
+    assert.equal(nodes(idle).find((node) => node.props["data-pie-members"] !== undefined), undefined, "nothing grows before a click")
+    slice(idle, "ent-android").props.onClick()
+    const open = drawPie()
+    const members = nodes(open).find((node) => node.props["data-pie-members"] !== undefined)
+    assert.equal(members.props["data-pie-members"], "ent-android")
+    // Members are keyed by Jira account; only Android contributed completed points in Sprint 58.
+    assert.deepEqual(nodes(open).filter((node) => node.props["data-pie-member"] !== undefined).map((node) => node.props["data-pie-member"]), ["account-android"], "one row per member with points")
+    assert.equal(slice(open, "ent-android").props["aria-pressed"], true, "the open slice stays expanded")
+    // Clicking the same slice closes it again.
+    slice(open, "ent-android").props.onClick()
+    assert.equal(nodes(drawPie()).find((node) => node.props["data-pie-members"] !== undefined), undefined)
   })
   it("uses 40 points per member for Telasa", () => {
     // Telasa S1xx sprints: use its own ids and a task resolved inside the first one.

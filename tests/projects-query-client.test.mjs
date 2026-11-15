@@ -111,7 +111,7 @@ describe("local Projects topic tabs", () => {
       const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
       const result = resultFixture(h.load(MODEL), [task(1)], request), render = () => h.invoke(Component, { result })
       const tree = render(), tabs = topicTabs(tree), panels = topicPanels(tree)
-      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "完成的任務類型", "Sprint 完成率", "開發品質", "開發壓力", "目前未完成"])
+      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "Sprint 完成率", "完成的任務類型", "開發品質", "開發壓力", "目前未完成"])
       assert.equal(panels.length, 6)
       assert.equal(activePanel(tree).props["data-topic"], "output")
       assert.equal(tabs.filter((tab) => tab.props["aria-selected"]).length, 1)
@@ -140,6 +140,59 @@ describe("local Projects topic tabs", () => {
       assert.equal(h.requests.length, 0)
     }
   })
+  it("switches Sprint completion between 全團隊 and 各團隊 and honours 含 QA-Task", () => {
+    const h = projectsHarness()
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a", points: 8 }),
+      task(2, { assigneeAccountId: "a", points: 2, resolvedDate: null }),
+      task(3, { assigneeAccountId: "b", points: 4, issueType: "QA-Task" }),
+    ], multiRequest, { status: "available", byAssignee: [{ accountId: "a", teamId: "ent-android" }, { accountId: "b", teamId: "ent-web" }] })
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const controls = (tree) => nodes(nodes(nodes(tree).find((node) => node.props["data-topic"] === "commitment")).find((node) => node.type?.name === "Panel").props.controls)
+    const series = (tree) => chartNode(tree, "commitment").props.series.map((entry) => [entry.label, entry.values.map((value) => value.display)])
+    // Default: one aggregate curve, including the QA-Task in both numerator and denominator (12 of 14 SP).
+    assert.deepEqual(plain(series(render())), [["全團隊完成率", ["85.7%", "—／不適用"]]])
+    // Per team: only teams with data remain, each curve on its own team.
+    controls(render()).find((node) => Array.isArray(node.props?.choices) && node.props.choices.includes("by-team")).props.onChange("by-team")
+    // The team denominator is the team's whole Dev-Task population, so unfinished work pulls it below 100%.
+    assert.deepEqual(plain(series(render())), [["Android", ["80%", "—／不適用"]], ["Web", ["100%", "—／不適用"]]])
+    // Excluding QA-Task removes Web, whose whole population was the QA-Task.
+    controls(render()).find((node) => node.props?.type === "checkbox").props.onChange({ target: { checked: false } })
+    assert.deepEqual(plain(series(render())), [["Android", ["80%", "—／不適用"]]])
+    const panel = nodes(nodes(render()).find((node) => node.props["data-topic"] === "commitment")).find((node) => node.type?.name === "Panel")
+    assert.equal(panel.props.description, undefined, "the old explanatory description is gone")
+  })
+  it("counts only Sprint-window completions, plus blocked parents when that box is ticked", () => {
+    const h = projectsHarness()
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a", points: 5, resolvedDate: "2026-05-01" }),
+      task(2, { assigneeAccountId: "a", points: 3, resolvedDate: null, parentStatus: "Pending" }),
+      task(3, { assigneeAccountId: "a", points: 2, resolvedDate: "2026-06-20" }),
+    ], multiRequest, { status: "available", byAssignee: [{ accountId: "a", teamId: "ent-android" }] })
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const boxes = (tree) => nodes(nodes(nodes(tree).find((node) => node.props["data-topic"] === "commitment")).find((node) => node.type?.name === "Panel").props.controls).filter((node) => node.props?.type === "checkbox")
+    const first = (tree) => chartNode(tree, "commitment").props.series[0].values[0]
+    assert.deepEqual(plain(boxes(render()).map((box) => box.props.checked)), [true, true], "含 QA-Task and 受阻母票計為已完成 are both ticked by default")
+    // 5 (in window) + 3 (blocked parent) of 10 SP; the June completion is outside Sprint 58 and is not counted.
+    assert.equal(first(render()).value, 0.8)
+    boxes(render())[1].props.onChange({ target: { checked: false } })
+    assert.equal(first(render()).value, 0.5)
+  })
+  it("drops the 全團隊／各團隊 switch for a single team and charts each member's completion rate", () => {
+    const h = projectsHarness()
+    h.groupStates["ent-android"] = { status: "success", members: [{ accountId: "a1", displayName: "Alice" }, { accountId: "a2", displayName: "Bob" }] }
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a1", points: 8, resolvedDate: "2026-05-01" }),
+      task(2, { assigneeAccountId: "a1", points: 12, resolvedDate: null }),
+      task(3, { assigneeAccountId: "a2", points: 6, resolvedDate: "2026-05-02" }),
+      task(4, { assigneeAccountId: "a2", points: 2, resolvedDate: null }),
+    ], { ...multiRequest, groups: ["ent-android"] }, { status: "available", byAssignee: [{ accountId: "a1", teamId: "ent-android" }, { accountId: "a2", teamId: "ent-android" }] })
+    const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const panel = nodes(nodes(tree).find((node) => node.props["data-topic"] === "commitment")).find((node) => node.type?.name === "Panel")
+    assert.equal(nodes(panel.props.controls).filter((node) => Array.isArray(node.props?.choices)).length, 0, "no view switch for one team")
+    const chart = chartNode(tree, "commitment")
+    assert.deepEqual(plain(chart.props.series.map((entry) => [entry.label, entry.values[0].display])), [["Alice", "40%"], ["Bob", "75%"]])
+  })
   it("uses Sprint 完成率 for metric labels while retaining the internal metric identifiers", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], request)
@@ -148,10 +201,10 @@ describe("local Projects topic tabs", () => {
       assert.equal(nodes(panel).find((node) => node.type?.name === "Panel").props.title, "Sprint 完成率")
       assert.doesNotMatch(h.render(Component, { result }), /Commitment/)
       if (request) {
+        // 全團隊完成率 is the default: one aggregate curve whose value is completed ÷ all SP.
         const series = chartNode(tree, "commitment").props.series[0]
         assert.equal(series.id, "commitment")
-        assert.equal(series.label, "Sprint 完成率")
-        assert.deepEqual(plain(series.values[0].actions.map((action) => action.label)), ["Sprint 完成率 分子 · 完成明細", "Sprint 完成率 分母 · 全部明細"])
+        assert.equal(series.label, "全團隊完成率")
       }
       assert.equal(h.requests.length, 0)
     }
@@ -161,7 +214,7 @@ describe("local Projects topic tabs", () => {
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
     const focused = []
     for (const tab of topicTabs(render())) tab.props.ref({ focus() { focused.push(tab.props.children) }, scrollIntoView() {} })
-    for (const [key, expected] of [["ArrowLeft", "unfinished"], ["ArrowRight", "output"], ["End", "unfinished"], ["Home", "output"], ["ArrowRight", "types"]]) {
+    for (const [key, expected] of [["ArrowLeft", "unfinished"], ["ArrowRight", "output"], ["End", "unfinished"], ["Home", "output"], ["ArrowRight", "commitment"]]) {
       let prevented = 0
       topicTabs(render()).find((tab) => tab.props["aria-selected"]).props.onKeyDown({ key, preventDefault() { prevented++ } })
       const next = render()
@@ -171,7 +224,7 @@ describe("local Projects topic tabs", () => {
     }
     for (const key of ["Escape", "ArrowDown", "Tab", "Enter"]) {
       topicTabs(render()).find((tab) => tab.props["aria-selected"]).props.onKeyDown({ key, preventDefault() { assert.fail(`Unexpected prevention: ${key}`) } })
-      assert.equal(activePanel(render()).props["data-topic"], "types")
+      assert.equal(activePanel(render()).props["data-topic"], "commitment")
     }
     assert.ok(topicPanels(render()).every((panel) => !panel.props.onKeyDown))
     assert.equal(h.requests.length, 0)
@@ -264,7 +317,7 @@ describe("projects result visualization and readonly local details", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { resolvedDate: null, sprintIds: [6824], points: 8 })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     const charts = nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart")
-    assert.deepEqual(charts.map((node) => node.props.id), ["output", "types", "commitment", "quality", "pressure", "unfinished-sp", "unfinished-count"])
+    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "types", "quality", "pressure", "unfinished-sp", "unfinished-count"])
     assert.deepEqual([...chartNode(tree, "output").props.sprints].map((s) => s.id), [6823, 6824])
     assert.deepEqual(plain(chartNode(tree, "output").props.series[0].values.map((v) => v.value)), [3, 0])
     assert.deepEqual(plain(chartNode(tree, "unfinished-sp").props.series[0].values.map((v) => v.value)), [0, 8])
@@ -517,7 +570,10 @@ describe("projects result visualization and readonly local details", () => {
     // The value carries its own readout ("2／1 張數") even though the separate hover panel is gone.
     assert.match(String(renderToStaticMarkup(chart.props.series[0].values[0].readout)), /200%|2／1/)
     assert.deepEqual(plain(chart.props.series[0].values[0].actions.map((a) => a.label)), ["Bug 明細", "Dev 明細"])
-    assert.equal(chartNode(tree, "commitment").props.series[0].values[0].actions.length, 2)
+    // Completion is computed from the plotted cohort now, so it carries a readout and note instead of actions.
+    const commitment = chartNode(tree, "commitment").props.series[0].values[0]
+    assert.equal(commitment.value, 1, "all Dev-Task work completed in the Sprint → 100%")
+    assert.match(String(renderToStaticMarkup(commitment.note)), /9／9 SP/)
   })
   it("details use the selected observation's original metric predicates without fetching", () => {
     const h = projectsHarness(), model = h.load(MODEL), Component = h.load(VIEW).ProjectsAnalysisView
@@ -567,8 +623,11 @@ describe("projects result visualization and readonly local details", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { devType: "Bug" }), task(3, { devType: "Bug", issueType: "QA-Task" }), task(4, { resolvedDate: null }), task(5, { devType: "OP-Bug" })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     // Ratio links live on each chart datum (the separate trend readout panel was removed).
+    // Completion is computed from the plotted cohort: Dev-Tasks 1, 2, 4, 5 (QA task 3 excluded, unfinished 4 counted
+    // in the denominator) → 12 of 15 SP completed, i.e. 80%.
     const commitment = chartNode(tree, "commitment").props.series[0].values[0]
-    expectQuery(commitment.readout, "Sprint 完成率 · 全部 Dev-Task", ["1", "2", "4", "5"])
+    assert.match(String(renderToStaticMarkup(commitment.note)), /12／15 SP/)
+    assert.equal(commitment.value, 0.8)
     const quality = chartNode(tree, "quality").props.series[0].values[0]
     expectQuery(quality.readout, "Bug／Dev · Bug＋Dev 比較母體", ["1", "2", "3"])
     expectQuery(quality.note, "Bug／Dev 分子 · 張數", ["2", "3"])

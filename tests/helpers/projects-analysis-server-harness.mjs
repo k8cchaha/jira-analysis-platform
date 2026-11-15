@@ -16,7 +16,7 @@ export const fields = [
   { id: "customfield_14642", name: "Dev Type", schema: { type: "option" } },
 ]
 export const issueTypes = [{ id: "20", name: "Dev-Task", subtask: true }, { id: "21", name: "QA-Task", subtask: true }]
-export const parent = (id = "1", project = "SUN") => ({ id, key: `${project}-${id}`, fields: { project: { id: "10", key: project }, issuetype: { id: "3", name: "Story", subtask: false } } })
+export const parent = (id = "1", project = "SUN", statusName = "In Progress") => ({ id, key: `${project}-${id}`, fields: { project: { id: "10", key: project }, issuetype: { id: "3", name: "Story", subtask: false }, status: { name: statusName } } })
 export const task = (id = "101", parentId = "1", overrides = {}) => ({ id, key: `SUN-${id}`, fields: { project: { id: "10", key: "SUN" }, summary: `Task ${id}`, issuetype: issueTypes[0], parent: { id: parentId, key: `SUN-${parentId}` }, assignee: null, status: { name: "Done" }, resolutiondate: "2026-10-25T16:00:00Z", customfield_10005: null, customfield_13736: 2.345, customfield_14642: { id: "31", value: "Dev" }, ...overrides } })
 export const plain = (value) => JSON.parse(JSON.stringify(value))
 

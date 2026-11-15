@@ -78,7 +78,7 @@ export function projectsHarness() {
 }
 export function nodes(tree) { if (Array.isArray(tree)) return tree.flatMap(nodes); if (!tree?.props) return []; return [tree, ...nodes(tree.props.children)] }
 export function task(id, overrides = {}) {
-  return { id: String(id), key: `SUN-${id}`, summary: `Work ${id}`, parentId: "999", parentKey: "SUN-999", projectId: "100", projectKey: "SUN", issueType: "Dev-Task", devType: "Dev", points: 3, actualPoints: 2, resolvedDate: "2026-04-28", assigneeAccountId: null, assigneeDisplayName: null, statusName: "Done", sprintIds: [6823], ...overrides }
+  return { id: String(id), key: `SUN-${id}`, summary: `Work ${id}`, parentId: "999", parentKey: "SUN-999", projectId: "100", projectKey: "SUN", issueType: "Dev-Task", devType: "Dev", points: 3, actualPoints: 2, resolvedDate: "2026-04-28", assigneeAccountId: null, assigneeDisplayName: null, statusName: "Done", parentStatus: "In Progress", sprintIds: [6823], ...overrides }
 }
 export function resultFixture(model, tasks = [], request = { project: "SUN", sprintIds: [6823], groups: [], browserTimeZone: "UTC" }, teamAttribution) {
   const startedAt = "2026-11-12T12:00:00Z"

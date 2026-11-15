@@ -91,6 +91,7 @@ export function defaultsHarness({ path = "/sprint/planning", search = "", storag
     "@/components/edit-dialog": inert("EditDialog"), "@/components/ticket-link": inert("TicketLink"),
     "@/lib/planning-subset": { parsePlanningSubsetResult: () => assert.fail("unexpected planning request") },
     "@/lib/burndown-series": { computeBurndownSeries: () => [] },
+    "@/lib/blocked-parent": { BLOCKED_PARENT_STATUSES: new Set(["Request Info", "Pending", "Reproduce"]) },
     "@/app/(app)/sprint/burndown/burndown-chart": inert("BurndownChart"),
     "@/app/(app)/sprint/burndown/unestimated-button": inert("UnestimatedButton"),
     "@/app/(app)/sprint/burndown/day-tasks-dialog": inert("DayTasksDialog"),

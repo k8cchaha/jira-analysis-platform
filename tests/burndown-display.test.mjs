@@ -54,6 +54,7 @@ function harness() {
       return { totalPoints: 5, days: [], tasks: input.tasks, unestimated: [] }
     } },
     "@/lib/jira-dashboard-filter": { DASHBOARD_TEAMS: [] },
+    "@/lib/blocked-parent": { BLOCKED_PARENT_STATUSES: new Set(["Request Info", "Pending", "Reproduce"]) },
   }
   for (const [module, name] of [
     ["sprint-selector", "SprintSelector"], ["burndown-chart", "BurndownChart"],

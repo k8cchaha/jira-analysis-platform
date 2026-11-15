@@ -233,14 +233,16 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
         }
       } finally { await iterator.return(undefined) }
     }
-    const parents = new Map<string, { key: string; sprintIds: Set<number> }>()
+    const parents = new Map<string, { key: string; sprintIds: Set<number>; statusName: string | null }>()
     for (const sprint of sprints) {
-      for await (const issues of pages(projectsAnalysisParentIssuesJql(request.project, sprint.id), ["issuetype"])) {
+      for await (const issues of pages(projectsAnalysisParentIssuesJql(request.project, sprint.id), ["issuetype", "status"])) {
         for (const issue of issues) {
           const issueProject = required(issue.fields, "project"), type = required(issue.fields, "issuetype")
           if (!projectsRecord(issueProject) || issueProject.id !== projectId || issueProject.key !== request.project || !issueKey(issue.key, request.project) || !projectsRecord(type) || type.subtask !== false || typeof type.name !== "string" || !["story", "task", "bug"].includes(type.name.trim().toLowerCase())) invalid()
           remember(issue)
-          const parent = parents.get(issue.id) ?? { key: issue.key, sprintIds: new Set<number>() }
+          const parentStatus = required(issue.fields, "status")
+          if (parentStatus !== null && !projectsRecord(parentStatus)) invalid()
+          const parent = parents.get(issue.id) ?? { key: issue.key, sprintIds: new Set<number>(), statusName: parentStatus === null ? null : nullableName(parentStatus.name) }
           parent.sprintIds.add(sprint.id)
           parents.set(issue.id, parent)
         }
@@ -285,7 +287,7 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
             let resolvedDate: string | null
             try { resolvedDate = resolveDate(resolved) } catch { invalid() }
             remember(issue)
-            tasks.set(issue.id, { id: issue.id, key: issue.key, summary, parentId: parentValue.id, parentKey: parent.key, projectId: issueProject.id, projectKey: issueProject.key, issueType, devType, points, actualPoints, resolvedDate, assigneeAccountId, assigneeDisplayName, statusName, sprintIds: [...parent.sprintIds].sort((a, b) => a - b) })
+            tasks.set(issue.id, { id: issue.id, key: issue.key, summary, parentId: parentValue.id, parentKey: parent.key, projectId: issueProject.id, projectKey: issueProject.key, issueType, devType, points, actualPoints, resolvedDate, assigneeAccountId, assigneeDisplayName, statusName, parentStatus: parent.statusName, sprintIds: [...parent.sprintIds].sort((a, b) => a - b) })
           }
         }
       }

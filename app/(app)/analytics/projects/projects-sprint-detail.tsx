@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { TeamCapacity } from "@/lib/projects-capacity"
 
@@ -17,44 +18,90 @@ export type SprintTeamBreakdown = {
   kind?: "team" | "member"
   /** Jira search for exactly this row's issues; null when the link cannot be built completely. */
   href?: string | null
+  /** Completed Actual SP, and the team's members, both only filled in team mode. */
+  actualPoints?: number | null
+  members?: SprintMember[]
 }
+
+/** A team member's completed points in the selected Sprint, for the pie's drill-down bars. */
+export type SprintMember = { teamId: string; label: string; color: string; points: number; actualPoints: number }
 
 const dash = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 1 }).format(value)
 const percent = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("zh-TW", { style: "percent", maximumFractionDigits: 1 }).format(value)
 
-/** Donut drawn with stroke dashes: each slice is a team's share of the completed Story Points. */
+/**
+ * Donut of each team's share of completed Story Points. Hovering a slice swells it slightly; clicking it locks that
+ * slice open and grows a member bar chart underneath.
+ */
 function TeamPie({ teams, total }: { teams: readonly SprintTeamBreakdown[]; total: number }) {
   const slices = teams.filter((team) => (team.points ?? 0) > 0)
   const radius = 52, circumference = 2 * Math.PI * radius
+  const [hovered, setHovered] = useState<string | null>(null)
+  // The slice is "pinned" once clicked; clicking it again collapses the member chart.
+  const [pinned, setPinned] = useState<string | null>(null)
   // Pre-compute each slice's running offset so rendering stays side-effect free.
   // Same construction as Planning's donut: a small gap between slices keeps the surface color visible.
   const gap = 2
   const arcs = total > 0 ? slices.reduce<{ team: SprintTeamBreakdown; drawn: number; offset: number }[]>((all, team) => {
     const length = (team.points ?? 0) / total * circumference
-    all.push({ team, drawn: Math.max(0, length - gap), offset: all.length ? all[all.length - 1].offset + all[all.length - 1].drawn + gap : 0 })
+    const offset = all.length ? all[all.length - 1].offset + all[all.length - 1].drawn + gap : 0
+    all.push({ team, drawn: Math.max(0, length - gap), offset })
     return all
   }, []) : []
-  return <div className="flex min-w-0 flex-wrap items-center gap-5">
-    <svg role="img" aria-label={total > 0 ? `完成 Story Points 依團隊佔比，共 ${dash(total)} 點` : "此 Sprint 沒有已填 Story Points"} width="176" height="176" viewBox="0 0 140 140" className="h-44 w-44 shrink-0">
-      <circle cx="70" cy="70" r={radius} fill="none" stroke="var(--viz-grid)" strokeWidth="22" />
-      {arcs.map(({ team, drawn, offset }) => {
-        const common = { cx: 70, cy: 70, r: radius, fill: "none", stroke: `var(--viz-${team.color})`, strokeWidth: 22, strokeDasharray: `${drawn} ${circumference - drawn}`, strokeDashoffset: -offset, transform: "rotate(-90 70 70)" }
-        // Each slice opens exactly that row's issues in Jira; the wider transparent ring is an easier hit area.
-        return team.href
-          ? <a key={team.teamId} href={team.href} target="_blank" rel="noopener noreferrer" data-pie-team={team.teamId} aria-label={`在 Jira 開啟 ${team.label} 的 ${dash(team.points)} SP 工作單（另開分頁）`} className="cursor-pointer"><circle {...common} className="transition-[stroke-width] duration-200 hover:[stroke-width:26]" /><circle {...common} stroke="transparent" strokeWidth={30} /></a>
-          : <circle key={team.teamId} {...common} data-pie-team={team.teamId} className="transition-[stroke-width] duration-200 hover:[stroke-width:26]" />
-      })}
-      <text x="70" y="66" textAnchor="middle" className="fill-slate-900 text-lg font-semibold dark:fill-slate-100">{total > 0 ? dash(total) : "—"}</text>
-      <text x="70" y="84" textAnchor="middle" className="fill-slate-500 text-[11px] dark:fill-slate-400">完成 SP</text>
-    </svg>
-    <ul className="min-w-0 flex-1 space-y-1 text-sm">
-      {teams.map((team) => <li key={team.teamId} className="flex items-center gap-2">
-        <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm" style={{ background: `var(--viz-${team.color})` }} />
-        <span className="min-w-0 flex-1 truncate">{team.label}</span>
-        <span className="tabular-nums">{team.href ? <a href={team.href} target="_blank" rel="noopener noreferrer" aria-label={`在 Jira 開啟 ${team.label} 的 ${dash(team.points)} SP 工作單（另開分頁）`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dash(team.points)} SP</a> : <>{dash(team.points)} SP</>}</span>
-        <span className="w-14 text-right tabular-nums text-slate-500 dark:text-slate-400">{total > 0 ? percent((team.points ?? 0) / total) : "—"}</span>
-      </li>)}
-    </ul>
+  const expanded = pinned === null ? null : slices.find((team) => team.teamId === pinned) ?? null
+  const members = expanded?.members ?? []
+  const memberMax = Math.max(1, ...members.flatMap((member) => [member.points, member.actualPoints]))
+  const SIZE = 196
+  return <div className="min-w-0">
+    <div className="flex min-w-0 flex-wrap items-center gap-5">
+      <div className="relative shrink-0">
+        <svg role="img" aria-label={total > 0 ? `完成 Story Points 依團隊佔比，共 ${dash(total)} 點` : "此 Sprint 沒有已填 Story Points"} width={SIZE} height={SIZE} viewBox="0 0 140 140" className="h-44 w-44 shrink-0">
+          <circle cx="70" cy="70" r={radius} fill="none" stroke="var(--viz-grid)" strokeWidth="22" />
+          {arcs.map(({ team, drawn, offset }) => {
+            const active = pinned === team.teamId, lit = hovered === team.teamId
+            const common = { cx: 70, cy: 70, r: radius, fill: "none", stroke: `var(--viz-${team.color})`, strokeWidth: active ? 28 : lit ? 26 : 22, strokeDasharray: `${drawn} ${circumference - drawn}`, strokeDashoffset: -offset, transform: "rotate(-90 70 70)", opacity: pinned && !active ? .45 : 1 }
+            // The whole slice is a button so a click can drill down instead of leaving the page; Jira stays on the list.
+            return <g key={team.teamId} role="button" tabIndex={0} data-pie-team={team.teamId} aria-pressed={active}
+              aria-label={`${team.label}：${dash(team.points)} SP，${total > 0 ? percent((team.points ?? 0) / total) : "—"}；${active ? "收合" : "顯示"}成員點數`}
+              className="cursor-pointer outline-none transition-opacity duration-200 focus-visible:opacity-80"
+              onPointerEnter={() => setHovered(team.teamId)} onPointerLeave={() => setHovered(null)}
+              onFocus={() => setHovered(team.teamId)} onBlur={() => setHovered(null)}
+              onClick={() => setPinned((previous) => previous === team.teamId ? null : team.teamId)}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setPinned((previous) => previous === team.teamId ? null : team.teamId) } }}>
+              <circle {...common} className="transition-[stroke-width,opacity] duration-200" />
+              <circle {...common} stroke="transparent" strokeWidth={30} />
+            </g>
+          })}
+          <text x="70" y="66" textAnchor="middle" className="pointer-events-none fill-slate-900 text-lg font-semibold dark:fill-slate-100">{total > 0 ? dash(total) : "—"}</text>
+          <text x="70" y="84" textAnchor="middle" className="pointer-events-none fill-slate-500 text-[11px] dark:fill-slate-400">完成 SP</text>
+        </svg>
+      </div>
+      <ul className="min-w-0 flex-1 space-y-1 text-sm">
+        {teams.map((team) => <li key={team.teamId} className={`flex items-center gap-2 ${pinned && pinned !== team.teamId ? "opacity-60" : ""}`}>
+          <span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-sm" style={{ background: `var(--viz-${team.color})` }} />
+          <span className="min-w-0 flex-1 truncate">{team.label}</span>
+          <span className="tabular-nums">{team.href ? <a href={team.href} target="_blank" rel="noopener noreferrer" aria-label={`在 Jira 開啟 ${team.label} 的 ${dash(team.points)} SP 工作單（另開分頁）`} className="underline decoration-dotted underline-offset-4 hover:decoration-solid">{dash(team.points)} SP</a> : <>{dash(team.points)} SP</>}</span>
+          <span className="w-14 text-right tabular-nums text-slate-500 dark:text-slate-400">{total > 0 ? percent((team.points ?? 0) / total) : "—"}</span>
+        </li>)}
+      </ul>
+    </div>
+    {/* Member chart grows beneath the donut: Story Points in the light tint, Actual SP in the full team colour. */}
+    {expanded && <div className="mt-1 rounded-lg border border-slate-200 p-3 dark:border-slate-700" data-pie-members={expanded.teamId}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm font-medium">{expanded.label} · 成員點數</p>
+        {expanded.href && <a href={expanded.href} target="_blank" rel="noopener noreferrer" aria-label={`在 Jira 開啟 ${expanded.label} 的 ${dash(expanded.points)} SP 工作單（另開分頁）`} className="text-xs underline decoration-dotted underline-offset-4 hover:decoration-solid">在 Jira 開啟</a>}
+      </div>
+      {members.length ? <div className="mt-2 space-y-2">
+        <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400"><span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: `var(--viz-${expanded.color})`, opacity: .35 }} />SP</span><span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: `var(--viz-${expanded.color})` }} />Actual SP</span></div>
+        {members.map((member) => <div key={member.teamId} data-pie-member={member.teamId} className="min-w-0">
+          <div className="flex items-baseline justify-between gap-2 text-xs"><span className="truncate">{member.label}</span><span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">{dash(member.points)} SP · {dash(member.actualPoints)} Actual</span></div>
+          <div className="mt-0.5 space-y-0.5">
+            <div className="h-2 rounded" style={{ width: `${member.points / memberMax * 100}%`, minWidth: 2, background: `var(--viz-${expanded.color})`, opacity: .35 }} />
+            <div className="h-2 rounded" style={{ width: `${member.actualPoints / memberMax * 100}%`, minWidth: 2, background: `var(--viz-${expanded.color})` }} />
+          </div>
+        </div>)}
+      </div> : <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">此團隊在此 Sprint 沒有已填點數的成員。</p>}
+    </div>}
   </div>
 }
 

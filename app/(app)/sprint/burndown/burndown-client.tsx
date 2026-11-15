@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import { BLOCKED_PARENT_STATUSES } from "@/lib/blocked-parent"
 import { computeBurndownSeries } from "@/lib/burndown-series"
 import { burndownHref, parseProjectKey, parseSprintId } from "@/lib/burndown-params"
 import type { BurndownTask, BurndownUnestimated } from "@/lib/jira-burndown"
@@ -22,13 +23,6 @@ type StreamPhase =
   | { status: "streaming" }
   | { status: "complete" }
   | { status: "error"; message: string }
-
-/** 母票處於這些狀態時，其 Dev-Task 在勾選「受阻母票計為已完成」後視為 Done。 */
-const BLOCKED_PARENT_STATUSES: ReadonlySet<string> = new Set([
-  "Request Info",
-  "Pending",
-  "Reproduce",
-])
 
 interface BasePayload {
   today: string
