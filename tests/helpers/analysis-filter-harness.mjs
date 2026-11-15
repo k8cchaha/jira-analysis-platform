@@ -94,7 +94,7 @@ export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) 
       if (name === "./projects-query-client") return { ProjectsQueryClient: function ProjectsQueryClient(props) { return createElement(load(PROJECT_FILTER).ProjectsFilter, { ...props, groups: [], onGroupsChange() {}, onDraftChange() {}, onQuery() {} }) } }
       if (name === "react") return react
       if (name === "react/jsx-runtime") return require(name)
-      if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
+      if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href), replace: (href) => pushes.push(href) }) }
       // No saved defaults: preserve the original controlled group state and SSR behavior.
       if (name === "@/components/filter-defaults-provider") return { useDefaultTeamGroups: () => react.useState([]) }
       if (name === "@/components/navigation-blocker") return { GuardedLink: ({ children, ...props }) => createElement("a", props, children) }

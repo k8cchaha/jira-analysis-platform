@@ -14,7 +14,7 @@ describe("project analysis configured-Sprint URL parameters", () => {
     assert.equal(client.key, null)
     assert.deepEqual(plain(client.props), { project: null, sprints: [], selectedSprintIds: [], error: null, dateMigrationHref: null })
   })
-  for (const project of ["SUN", "TKK", "PRIDE"]) it(`${project} provides configured Sprints for browser-local eligibility filtering without preselection`, async () => {
+  for (const project of ["SUN", "TKK", "PRIDE"]) it(`${project} provides configured Sprints; the browser preselects the newest ones`, async () => {
     const h = harness("2026-11-12")
     const props = await selectionProps(h, { project })
     assert.deepEqual(plain(props.sprints), plain(h.load("lib/jira-sprint-data.ts").getProjectSprints(project)))
@@ -263,9 +263,12 @@ describe("project Sprint-only UI and navigation", () => {
     const props = await selectionProps(h, {})
     let tree = h.invoke(ProjectsFilter, props)
     const assertControls = (tree, projectSelected, queryEnabled) => {
-      const [, sprints, team] = tree.props.children[0].props.children
+      const [, sprints, latest, team] = tree.props.children[0].props.children
       assert.equal(sprints.props.disabled, !projectSelected)
       assert.equal(sprints.props["aria-disabled"], !projectSelected)
+      // The shortcut sits beside the Sprints filter and is never pressed without an exact recent selection.
+      assert.equal(latest.props.type, "button")
+      if (!projectSelected) assert.equal(latest.props["aria-pressed"], false)
       assert.equal(team.props.inert, !projectSelected)
       assert.equal(team.props["aria-disabled"], !projectSelected)
       assert.equal(queryButton(tree).props.disabled, !queryEnabled)
@@ -366,6 +369,31 @@ describe("project Sprint-only UI and navigation", () => {
     checkbox(next, "S128").props.onChange({ target: { checked: true } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&sprint=6619")
   })
+  it("近 5 Sprints picks the five newest ended Sprints and stays pressed only for that exact selection", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const latestOf = (tree) => nodes(tree).find((node) => node.type === "button" && Array.isArray(node.props.children) && node.props.children[1] === 5 && "aria-pressed" in node.props)
+    const props = await selectionProps(h, { project: "SUN" })
+    let tree = h.invoke(ProjectsFilter, props)
+    const newest = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 5)
+    const expectedIds = newest.map((sprint) => sprint.id).sort((a, b) => a - b)
+    assert.equal(newest.length, 5)
+    assert.equal(latestOf(tree).props["aria-pressed"], false, JSON.stringify({ ids: props.selectedSprintIds, expected: expectedIds }))
+    latestOf(tree).props.onClick()
+    assert.equal(h.pushes.at(-1), `/analytics/projects?project=SUN&sprint=${expectedIds.join("&sprint=")}`)
+    // A manual selection of exactly those five Sprints shows the same pressed state.
+    const manual = await selectionProps(h, { project: "SUN", sprint: expectedIds.map(String) })
+    tree = h.invoke(ProjectsFilter, manual)
+    assert.equal(latestOf(tree).props["aria-pressed"], true)
+    // Dropping one of the five (keeping four newest plus the next older sprint) leaves the shortcut unpressed.
+    // A fresh harness models a real navigation, which discards the optimistic selection made above.
+    const fresh = harness("2026-11-12"), FreshFilter = fresh.load(FILTER).ProjectsFilter
+    const ended = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate))
+    const swapped = [...expectedIds.slice(1), ended[5].id]
+    const fewer = nodes(await fresh.page({ project: "SUN", sprint: swapped.map(String) })).find((node) => node.type?.name === "ProjectsQueryClient").props
+    tree = fresh.invoke(FreshFilter, fewer)
+    assert.equal(latestOf(tree).props["aria-pressed"], false)
+  })
   it("keeps Project, Sprints, Team and Query in one wrapping row with central widths", async () => {
     const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
@@ -373,8 +401,8 @@ describe("project Sprint-only UI and navigation", () => {
     for (const params of [{}, { project: "SUN", sprint: ["6823", "7518"] }]) {
       const tree = h.invoke(ProjectsFilter, await selectionProps(h, params))
       const row = tree.props.children[0]
-      const [project, sprints, team, query] = row.props.children
-      assert.equal(row.props.children.length, 4)
+      const [project, sprints, latest, team, query] = row.props.children
+      assert.equal(row.props.children.length, 5)
       assert.match(row.props.className, /flex-wrap/)
       assert.match(row.props.className, /items-end/)
       assert.match(row.props.className, /min-w-0/)
@@ -382,6 +410,7 @@ describe("project Sprint-only UI and navigation", () => {
       assert.equal(team.props.children, teamOf(tree))
       assert.equal(sprints.type, "fieldset")
       assert.ok(nodes(sprints).includes(sprintDropdown(tree)))
+      assert.deepEqual(plain(latest.props.children), ["近 ", 5, " Sprints"])
       assert.equal(query.props.children, queryButton(tree))
       assert.equal(nodes(sprints).includes(queryButton(tree)), false)
       assert.equal(sprints.props.disabled, !params.project)
@@ -530,7 +559,10 @@ describe("project Sprint-only UI and navigation", () => {
       h.flushEffects()
       assert.equal(panel.scrollTop, Math.min(optionTop, maxScroll))
       assert.equal(panel.scrollTop > 0, maxScroll > 0)
-      assert.deepEqual(h.pushes, [])
+      // The only navigation is the newest-Sprints preselection (no analysis is triggered).
+      // Same rule as the filter: ended Sprints, newest first by start date, capped at one analysis run.
+      const newest = rows.map((row) => props.sprints.find((sprint) => sprint.id === row.props["data-sprint-id"])).slice(0, 6).map((sprint) => sprint.id).sort((a, b) => a - b)
+      assert.deepEqual(h.pushes, [`/analytics/projects?project=${project}&` + newest.map((id) => `sprint=${id}`).join("&")])
     }
   })
   it("waits for new Project options before locating a pending open panel", async () => {

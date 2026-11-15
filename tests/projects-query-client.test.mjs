@@ -111,7 +111,7 @@ describe("local Projects topic tabs", () => {
       const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
       const result = resultFixture(h.load(MODEL), [task(1)], request), render = () => h.invoke(Component, { result })
       const tree = render(), tabs = topicTabs(tree), panels = topicPanels(tree)
-      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總輸出", "完成的任務類型", "Sprint 完成率", "開發品質", "開發壓力", "目前未完成"])
+      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "完成的任務類型", "Sprint 完成率", "開發品質", "開發壓力", "目前未完成"])
       assert.equal(panels.length, 6)
       assert.equal(activePanel(tree).props["data-topic"], "output")
       assert.equal(tabs.filter((tab) => tab.props["aria-selected"]).length, 1)
@@ -134,7 +134,8 @@ describe("local Projects topic tabs", () => {
         assert.equal(topicTabs(next).filter((trigger) => trigger.props.tabIndex === 0).length, 1)
         assert.deepEqual(plain(log), ["focus", { block: "nearest", inline: "nearest" }])
       }
-      assert.equal(nodes(render()).filter((node) => node.type?.name === "DataTable").length, 6)
+      // The data tables below the charts were removed on request; panels still render their charts only.
+      assert.equal(nodes(render()).filter((node) => node.type?.name === "DataTable").length, 0)
       assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 7 : 2)
       assert.equal(h.requests.length, 0)
     }
@@ -145,7 +146,6 @@ describe("local Projects topic tabs", () => {
       const Component = h.load(VIEW).ProjectsAnalysisView, tree = h.invoke(Component, { result })
       const panel = topicPanels(tree).find((node) => node.props["data-topic"] === "commitment")
       assert.equal(nodes(panel).find((node) => node.type?.name === "Panel").props.title, "Sprint 完成率")
-      assert.ok(h.render(Component, { result }).includes("Sprint 完成率 比率與分子分母"))
       assert.doesNotMatch(h.render(Component, { result }), /Commitment/)
       if (request) {
         const series = chartNode(tree, "commitment").props.series[0]
@@ -187,7 +187,7 @@ describe("local Projects topic tabs", () => {
     const label = text(readout(draw()))
     clickTopic(render(), "開發品質")
     nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.onChange("actualSp")
-    clickTopic(render(), "總輸出"); clickTopic(render(), "完成的任務類型")
+    clickTopic(render(), "總產出"); clickTopic(render(), "完成的任務類型")
     assert.equal(nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.value, "count")
     assert.equal(chartNode(render(), "types").key, original.key)
     assert.equal(text(readout(draw())), label)
@@ -199,10 +199,10 @@ describe("local Projects topic tabs", () => {
   it("keeps local details outside panels, clearing them only when changing topic", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)])
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
-    nodes(activePanel(render())).find((node) => node.props["aria-label"] === "全範圍總輸出，查看工作單明細").props.onClick()
+    nodes(activePanel(render())).find((node) => node.props["aria-label"] === "全範圍總產出，查看工作單明細").props.onClick()
     assert.ok(localDetail(render()))
     assert.ok(topicPanels(render()).every((panel) => !localDetail(panel)))
-    clickTopic(render(), "總輸出")
+    clickTopic(render(), "總產出")
     assert.ok(localDetail(render()))
     clickTopic(render(), "開發品質")
     assert.equal(localDetail(render()), undefined)
@@ -220,12 +220,12 @@ describe("local Projects topic tabs", () => {
 })
 
 describe("projects result visualization and readonly local details", () => {
-  it("renders six categories plus unknown, coverage and ratio formulas", () => {
+  it("renders six categories plus unknown and ratio formulas", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1, { points: null, actualPoints: 5 }), task(2, { devType: "Bug", points: 6 }), task(3, { devType: "Bug", points: 3 }), task(4, { resolvedDate: null, points: 0 })])
     const html = h.render(h.load(VIEW).ProjectsAnalysisView, { result })
-    for (const text of ["—／未填", "Actual SP", "Sprint 完成率", "OP-Bug", "未分類", "200%", "分母全部 Dev-Task SP", "未填", "查看數據表", "單一 Sprint 顯示類型分布"]) assert.ok(html.includes(text), text)
+    for (const text of ["—／未填", "Actual SP", "Sprint 完成率", "OP-Bug", "未分類", "200%", "未填", "單一 Sprint 顯示類型分布"]) assert.ok(html.includes(text), text)
     assert.doesNotMatch(html, /NaN|Infinity|績效排行/)
-    assert.equal((html.match(/<details/g) ?? []).length, 6)
+    assert.equal((html.match(/<details/g) ?? []).length, 0, "no collapsible data tables remain")
     assert.ok(html.includes('aria-label="圖例"'))
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     assert.equal(nodes(tree).filter((node) => node.type === "button" && node.props.className?.includes("text-2xl")).length, 0)
@@ -240,9 +240,7 @@ describe("projects result visualization and readonly local details", () => {
       for (const removed of ["已套用：", "張唯一來源（含母票）", "完成日依 Jira 帳號時區", "已結束判定依瀏覽器", "不是 Sprint 起始承諾或結束快照", "請勿將跨 Sprint 輸出直接相加", "有底線的數字可在 Jira", "本站明細不會另查資料", result.startedAt, result.generatedAt]) {
         assert.ok(!html.includes(removed), `Unexpected result explanation: ${removed}`)
       }
-      assert.equal((html.match(/<details/g) ?? []).length, 6)
-      assert.ok(html.includes("本站明細"))
-      assert.ok(html.includes('target="_blank"'))
+      assert.equal((html.match(/<details/g) ?? []).length, 0, "no collapsible data tables remain")
       assert.equal(h.requests.length, 0)
     }
   })
@@ -312,38 +310,41 @@ describe("projects result visualization and readonly local details", () => {
     assert.equal(legends(render())[3].props["aria-pressed"], true)
     assert.deepEqual(identities(), original)
     target(render(), 0).props.onFocus()
-    assert.equal(nodes(readout(render())).filter((n) => n.type === "strong").length, 7)
-    assert.equal(nodes(readout(render())).filter((n) => n.type === "button").length, 1)
-    assert.equal(nodes(render()).filter((n) => n.props.role === "tooltip").length, 0)
+    // The trend readout was removed; focus still previews the Sprint through the crosshair.
+    assert.equal(readout(render()), undefined, "no trend readout below the chart")
+    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair").props.x1 > 0, true)
     legends(render())[3].props.onClick()
     assert.equal(nodes(render()).filter((n) => n.props.className?.includes("is-context")).length, 0)
     assert.deepEqual(identities(), original)
     assert.equal(h.requests.length, 0)
   })
-  it("has focus-priority readouts, Escape, pointer crosshair, arrow navigation and touch pinning", () => {
+  it("has focus-priority crosshairs, Escape, pointer crosshair, arrow navigation and touch ignoring", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], multiRequest)
     const chart = chartNode(h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }), "output"), render = () => h.invoke(chart.type, chart.props)
     const svg = (tree) => nodes(tree).find((n) => n.type === "svg" && n.props.onPointerMove)
+    const crosshair = (tree) => nodes(tree).find((n) => n.props.className === "projects-trend-crosshair")
     const pointer = { pointerType: "mouse", clientX: 640, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } }
     svg(render()).props.onPointerMove(pointer)
-    assert.match(renderToStaticMarkup(readout(render())), /Sprint 59/)
+    assert.ok(crosshair(render()), "hover shows the crosshair")
+    const hovered = crosshair(render()).props.x1
     target(render(), 0).props.onFocus()
-    assert.match(renderToStaticMarkup(readout(render())), /Sprint 58/)
+    assert.notEqual(crosshair(render()).props.x1, hovered, "focus takes priority over hover")
     svg(render()).props.onPointerLeave()
-    assert.ok(readout(render()))
+    assert.ok(crosshair(render()), "leaving keeps the focused crosshair")
     target(render(), 0).props.onKeyDown({ key: "Escape" })
-    assert.equal(readout(render()), undefined)
+    assert.equal(crosshair(render()), undefined, "Escape dismisses")
     let selector, focused = false
     target(render(), 0).props.onKeyDown({ key: "ArrowRight", preventDefault() {}, currentTarget: { ownerSVGElement: { querySelector(value) { selector = value; return { focus() { focused = true } } } } } })
     assert.equal(selector, '[data-sprint-index="1"]'); assert.equal(focused, true)
     svg(render()).props.onPointerMove({ ...pointer, pointerType: "touch" })
-    assert.equal(readout(render()), undefined)
+    assert.equal(crosshair(render()), undefined, "touch scrolling never pins")
     target(render(), 1).props.onClick()
-    assert.ok(readout(render())); svg(render()).props.onPointerLeave(); assert.ok(readout(render()))
+    assert.ok(selectedBandEquals(render(), 1))
     target(render(), 1).props.onKeyDown({ key: "Escape" })
-    assert.equal(readout(render()), undefined)
+    assert.equal(nodes(render()).find((n) => n.props["data-selection-index"] !== undefined), undefined)
     assert.equal(h.requests.length, 0)
   })
+  const selectedBandEquals = (tree, index) => nodes(tree).find((n) => n.props["data-selection-index"] === index) !== undefined
   const selectionFixture = () => {
     const h = projectsHarness(), Component = h.load(CHART).ProjectsTrendChart
     const sprints = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, name: index === 2 ? "Sprint 60 · 很長的合成測試名稱用於驗證選取標籤" : `Sprint ${58 + index}`, startDate: "2026-01-01", endDate: "2026-01-14" }))
@@ -359,11 +360,10 @@ describe("projects result visualization and readonly local details", () => {
     assert.equal(selectedBand(render()), undefined)
     assert.equal(selectedPill(render()), undefined)
     pointer(5)
-    assert.match(text(readout(render())), /Sprint 63/)
-    assert.ok(nodes(render()).some((n) => n.props.className === "projects-trend-crosshair"))
-    assert.equal(selectedBand(render()), undefined)
+    const atFive = nodes(render()).find((n) => n.props.className === "projects-trend-crosshair").props.x1
+    assert.equal(selectedBand(render()), undefined, "hover never decorates")
     nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerLeave()
-    assert.match(text(readout(render())), /Sprint 63/)
+    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair")?.props.x1, atFive, "hover stays sticky after leaving")
     assert.equal(selectedPill(render()), undefined)
     target(render(), 2).props.onClick()
     assert.equal(selectedBand(render()).props["data-selection-index"], 2)
@@ -371,34 +371,73 @@ describe("projects result visualization and readonly local details", () => {
     pointer(2)
     assert.equal(selectedBand(render()).props["data-selection-index"], 2)
     pointer(4)
-    assert.match(text(readout(render())), /Sprint 62/)
     assert.equal(selectedBand(render()), undefined)
     assert.equal(selectedPill(render()), undefined)
     assert.equal(h.requests.length, 0)
   })
+  it("clears a committed Sprint when it is clicked again while keeping the resting panel and detail Sprint", () => {
+    const { render, pointer } = selectionFixture()
+    const detailSprint = () => text(render()).match(/工作單明細 · ([^（]+)/)?.[1]
+    // Browsers deliver pointer motion and focus before the click, and focusing already commits the Sprint.
+    const click = (index) => {
+      const tree = render(), hit = target(tree, index), svg = nodes(tree).find((n) => n.type === "svg" && n.props.onPointerMove)
+      svg.props.onPointerMove({ pointerType: "mouse", clientX: hit.props.x + hit.props.width / 2, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
+      target(render(), index).props.onFocus()
+      // A pointer move that lands just before the click is part of the same gesture, not a new one.
+      svg.props.onPointerMove({ pointerType: "mouse", clientX: hit.props.x + hit.props.width / 2, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
+      target(render(), index).props.onClick()
+    }
+    click(2)
+    assert.equal(selectedBand(render()).props["data-selection-index"], 2)
+    assert.ok(selectedPill(render()))
+    const committedDetail = detailSprint()
+    // The first click is never swallowed by hover/focus; the second one clears the decoration.
+    click(2)
+    assert.equal(selectedBand(render()), undefined, "band cleared")
+    assert.equal(selectedPill(render()), undefined, "pill cleared")
+    // The resting Sprint stays focusable and the detail list does not fall back to the first Sprint.
+    assert.equal(target(render(), 2).props.tabIndex, 0)
+    assert.equal(detailSprint(), committedDetail)
+    assert.equal(nodes(render()).filter((n) => n.props["data-pill-index"] !== undefined).length, 0)
+    // Moving to another Sprint clears the pairing; one click there selects it rather than clearing it.
+    click(4)
+    assert.equal(selectedBand(render()).props["data-selection-index"], 4)
+    assert.equal(selectedBand(render()).props["data-selection-index"], 4)
+    // Moving the pointer away and back is still the same selected Sprint: one more click clears again.
+    pointer(3); pointer(4)
+    target(render(), 4).props.onClick()
+    assert.equal(selectedBand(render()), undefined, "a move does not turn the next click into a fresh selection")
+    // A cleared Sprint is reselected by one click.
+    target(render(), 4).props.onClick()
+    assert.equal(selectedBand(render()).props["data-selection-index"], 4)
+  })
   it("commits keyboard focus and Enter/Space, clears decoration on dismiss, and retains CSS-controlled compact focus cues", () => {
     const { render } = selectionFixture()
     target(render(), 0).props.onFocus()
-    assert.equal(selectedPill(render()).props["data-pill-index"], 0)
+    // Focus alone previews through the crosshair; only Enter/Space commits a selection.
+    assert.equal(selectedPill(render()), undefined)
+    assert.ok(nodes(render()).some((n) => n.props.className === "projects-trend-crosshair"))
     assert.equal(nodes(render()).filter((n) => n.props.className === "projects-trend-focus-cue").length, 6)
     target(render(), 0).props.onKeyDown({ key: "Escape" })
-    assert.equal(readout(render()), undefined)
+    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair"), undefined)
     assert.equal(selectedBand(render()), undefined)
     assert.equal(nodes(render()).filter((n) => n.props.className === "projects-trend-focus-cue").length, 6)
     for (const key of ["Enter", " "]) {
       target(render(), 0).props.onKeyDown({ key, preventDefault() {} })
       assert.equal(selectedBand(render()).props["data-selection-index"], 0)
-      readout(render()).props.onKeyDown({ key: "Escape", preventDefault() {} })
+      target(render(), 0).props.onKeyDown({ key: "Escape" })
       assert.equal(selectedPill(render()), undefined)
     }
     target(render(), 3).props.onFocus()
-    assert.equal(selectedPill(render()).props["data-pill-index"], 3)
-    assert.match(text(readout(render())), /Sprint 61/)
+    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair").props.x1, nodes(render()).find((n) => n.props["data-sprint-index"] === 3).props.x + nodes(render()).find((n) => n.props["data-sprint-index"] === 3).props.width / 2)
   })
   it("clamps selection bounds at both plot edges, preserves full names, and draws the band behind data", () => {
     const { render, props } = selectionFixture()
     for (const index of [0, 2, 5]) {
+      // Focus alone only previews the readout; the band and pill belong to an actual selection (click).
       target(render(), index).props.onFocus()
+      assert.equal(selectedBand(render()), undefined, "focus does not select")
+      target(render(), index).props.onClick()
       const tree = render(), band = selectedBand(tree), pill = selectedPill(tree), svg = nodes(tree).find((n) => n.type === "svg" && n.props.onPointerMove)
       const crosshair = nodes(tree).find((n) => n.props.className === "projects-trend-crosshair")
       assert.ok(band.props.width > 0 && band.props.width <= 40)
@@ -441,18 +480,14 @@ describe("projects result visualization and readonly local details", () => {
     assert.match(paths(two)[0].props.d, / L /); assert.doesNotMatch(paths(two)[0].props.d, / C /)
     const missing = h.invoke(Component, { id: "missing", sprints, series: [{ id: "x", label: "SP", color: "sp", values: sprints.map(() => ({ value: null, display: "未填" })) }], unit: "SP", formatTick: String })
     assert.equal(paths(missing).length, 0); assert.equal(markers(missing).length, 0)
-    assert.match(renderToStaticMarkup(missing), /全部未填或不適用/)
+    assert.equal(nodes(missing).filter((n) => n.props["data-bar-value"] !== undefined).length, 0)
   })
-  it("shows ratios above 100% with interactive readouts and separate local detail actions", () => {
+  it("shows ratios above 100% with separate local detail actions", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { devType: "Bug" }), task(3, { devType: "Bug" })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }), chart = chartNode(tree, "quality")
     assert.equal(chart.props.series[0].values[0].value, 2)
-    const render = () => h.invoke(chart.type, chart.props)
-    target(render(), 0).props.onFocus()
-    assert.match(renderToStaticMarkup(readout(render())), /200%/)
-    assert.match(text(readout(render())), /2／1 張數/)
-    assert.equal(nodes(readout(render())).filter((n) => n.type === "button").length, 1)
-    assert.equal(nodes(render()).filter((n) => n.props.role === "tooltip").length, 0)
+    // The value carries its own readout ("2／1 張數") even though the separate hover panel is gone.
+    assert.match(String(renderToStaticMarkup(chart.props.series[0].values[0].readout)), /200%|2／1/)
     assert.deepEqual(plain(chart.props.series[0].values[0].actions.map((a) => a.label)), ["Bug 明細", "Dev 明細"])
     assert.equal(chartNode(tree, "commitment").props.series[0].values[0].actions.length, 2)
   })
@@ -462,8 +497,9 @@ describe("projects result visualization and readonly local details", () => {
     const render = () => h.invoke(Component, { result })
     const chart = chartNode(render(), "output"), draw = () => h.invoke(chart.type, chart.props)
     target(draw(), 1).props.onClick()
-    nodes(draw()).find((n) => n.type === "button" && n.props.children === "全範圍總輸出 SP，查看工作單明細").props.onClick()
-    const tree = render(), detail = nodes(tree).find((n) => n.props.title && text(n.props.title).includes("全範圍總輸出 SP"))
+    // The 工作單明細 button row was removed: open the same cohort from the chart datum itself.
+    chartNode(render(), "output").props.series[0].values[1].actions[0].onClick()
+    const tree = render(), detail = nodes(tree).find((n) => n.props.title && text(n.props.title).includes("全範圍總產出 SP"))
     assert.ok(text(detail.props.title).includes("Sprint 59")); assert.ok(text(detail.props.title).includes("1 張工作單"))
     assert.match(renderToStaticMarkup(tree), /Work 2/); assert.match(renderToStaticMarkup(tree), /md:hidden/)
     assert.equal(h.requests.length, 0)
@@ -491,64 +527,46 @@ describe("projects result visualization and readonly local details", () => {
       task(6, { sprintIds: [6824], resolvedDate: "2026-05-12" }),
     ], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 SP，", ["1", "2", "5"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 Actual SP，", ["1", "2", "5"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 SP · 已填張數", ["1", "5"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 SP · 未填張數", ["2"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 Actual SP · 已填張數", ["2", "5"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 Actual SP · 未填張數", ["1"])
-    expectQuery(tree, "Sprint 58 · 全範圍總輸出 SP · 完整率母體", ["1", "2", "5"])
-    expectQuery(tree, "Sprint 58 · 目前未完成，", ["3"])
-    expectQuery(tree, "Sprint 58 · 區間外完成，", ["4"])
-    expectQuery(tree, "Sprint 58 · 區間外完成 SP，", ["4"])
-    expectQuery(tree, "Sprint 58 · 母體張數，", ["1", "2", "3", "4", "5"])
-    expectQuery(tree, "Sprint 58 · TKK SP，", ["5"])
-    expectQuery(tree, "Sprint 58 · SUN SP，", ["1", "2", "3", "4"])
-    expectQuery(tree, "Sprint 58 · TKK＋SUN SP，", ["1", "2", "3", "4", "5"])
-    expectQuery(tree, "Sprint 59 · 全範圍總輸出 SP，", ["6"])
+    // The charts carry the same cohorts as links; tables that used to list these per Sprint are gone.
+    const pressure = chartNode(tree, "pressure")
+    const sprint58 = (series) => pressure.props.series.find((s) => s.label === series).values[0].readout
+    // Pressure uses each task's own project: TKK holds task 5, SUN holds the rest of Sprint 58.
+    expectQuery(sprint58("TKK"), "TKK SP，", ["5"])
+    expectQuery(sprint58("SUN"), "SUN SP，", ["1", "2", "3", "4"])
     assert.equal(h.requests.length, 0)
   })
   it("links ratio comparison, numerator and denominator separately without changing formulas", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { devType: "Bug" }), task(3, { devType: "Bug", issueType: "QA-Task" }), task(4, { resolvedDate: null }), task(5, { devType: "OP-Bug" })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
-    expectQuery(tree, "Sprint 完成率 · 全部 Dev-Task", ["1", "2", "4", "5"])
-    expectQuery(tree, "Sprint 完成率 分子 · SP", ["1", "2", "5"])
-    expectQuery(tree, "Sprint 完成率 分母 · SP", ["1", "2", "4", "5"])
-    expectQuery(tree, "Bug／Dev · Bug＋Dev 比較母體", ["1", "2", "3"])
-    for (const unit of ["張數", "SP", "Actual SP"]) {
-      expectQuery(tree, `Bug／Dev 分子 · ${unit}`, ["2", "3"])
-      expectQuery(tree, `Bug／Dev 分母 · ${unit}`, ["1"])
-    }
-    const chart = chartNode(tree, "quality"), render = () => h.invoke(chart.type, chart.props)
-    target(render(), 0).props.onFocus()
-    expectQuery(readout(render()), "Bug＋Dev 比較母體", ["1", "2", "3"])
-    assert.match(text(readout(render())), /200%/)
+    // Ratio links live on each chart datum (the separate trend readout panel was removed).
+    const commitment = chartNode(tree, "commitment").props.series[0].values[0]
+    expectQuery(commitment.readout, "Sprint 完成率 · 全部 Dev-Task", ["1", "2", "4", "5"])
+    const quality = chartNode(tree, "quality").props.series[0].values[0]
+    expectQuery(quality.readout, "Bug／Dev · Bug＋Dev 比較母體", ["1", "2", "3"])
+    expectQuery(quality.note, "Bug／Dev 分子 · 張數", ["2", "3"])
+    expectQuery(quality.note, "Bug／Dev 分母 · 張數", ["1"])
+    assert.match(String(renderToStaticMarkup(quality.readout)), /200%/)
   })
-  it("retains the same readout when leaving the plot or tabbing into links, with one roving observation", () => {
+  it("keeps one roving Sprint target and links the selected Sprint to its bars", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { sprintIds: [6824], resolvedDate: "2026-05-12" })], multiRequest)
     const chart = chartNode(h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }), "output"), render = () => h.invoke(chart.type, chart.props)
-    const svg = () => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove)
-    target(render(), 0).props.onFocus(); target(render(), 0).props.onBlur()
-    svg().props.onPointerLeave()
-    assert.match(text(readout(render())), /Sprint 58/)
-    readout(render()).props.onFocusCapture()
-    svg().props.onPointerMove({ pointerType: "mouse", clientX: 640, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
-    assert.match(text(readout(render())), /Sprint 58/)
-    expectQuery(readout(render()), "全範圍總輸出 SP", ["1"])
+    // Exactly one Sprint is in the tab order, and it controls the chart's own region.
     assert.equal(nodes(render()).filter((n) => n.props["data-sprint-index"] !== undefined && n.props.tabIndex === 0).length, 1)
     assert.equal(target(render(), 0).props["aria-controls"], "output-readout")
-    readout(render()).props.onBlurCapture({ currentTarget: { contains: () => false }, relatedTarget: null })
-    svg().props.onPointerMove({ pointerType: "mouse", clientX: 640, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
-    assert.match(text(readout(render())), /Sprint 59/)
-    readout(render()).props.onKeyDown({ key: "Escape", preventDefault() {} })
-    assert.equal(readout(render()), undefined)
+    // Clicking a Sprint selects it (band) and labels both bar tops; clicking it again clears both.
+    target(render(), 1).props.onClick()
+    assert.equal(nodes(render()).find((n) => n.props["data-selection-index"] === 1) !== undefined, true)
+    assert.equal(nodes(render()).filter((n) => n.props["data-sprint-index"] !== undefined && n.props.tabIndex === 0).length, 1)
+    target(render(), 1).props.onClick()
+    assert.equal(nodes(render()).find((n) => n.props["data-selection-index"] === 1), undefined)
+    assert.equal(nodes(render()).filter((n) => n.props["data-bar-value"] !== undefined).length, 0)
     assert.equal(h.requests.length, 0)
   })
   it("single-Sprint summary and distribution use external numbers and independent local details", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1, { points: 0 }), task(2, { devType: "Bug" }), task(3, { devType: "OP-Bug" })])
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
     const tiles = nodes(render()).filter((n) => n.type === "article" && "data-summary-tile" in n.props)
-    expectQuery(tiles[0], "總輸出 SP", ["1", "2", "3"])
+    expectQuery(tiles[0], "總產出 SP", ["1", "2", "3"])
     expectQuery(tiles[3], "Bug＋Dev 比較母體", ["1", "2"])
     nodes(tiles[3]).find((n) => n.type === "button").props.onClick()
     const details = nodes(render()).find((n) => n.props.title && text(n.props.title).includes("張工作單"))
@@ -566,8 +584,8 @@ describe("projects result visualization and readonly local details", () => {
     const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
     const result = resultFixture(h.load(MODEL), [task(1, { points: 0, actualPoints: null })])
     const render = (result) => h.invoke(Component, { result })
-    expectQuery(render(result), "總輸出 SP，", ["1"])
-    assert.equal(searchLinks(render(result)).some((a) => a.label?.includes("總輸出 Actual SP，")), false)
+    expectQuery(render(result), "總產出 SP，", ["1"])
+    assert.equal(searchLinks(render(result)).some((a) => a.label?.includes("總產出 Actual SP，")), false)
     assert.equal(searchLinks(render(result)).some((a) => a.label?.includes("目前未完成")), false)
     assert.doesNotMatch(renderToStaticMarkup(render({ ...result, jiraBaseUrl: null })), /href=/)
     assert.doesNotMatch(renderToStaticMarkup(render(resultFixture(h.load(MODEL)))), /href=/)

@@ -17,7 +17,7 @@ JQL是查詢語言，不是工時或Insight計算引擎。`POST /search/jql`是�
 | 資料 | REST欄位 | JQL引用／意義 | 主要用途 |
 | --- | --- | --- | --- |
 | Story Points（SP） | `customfield_10005` | `cf[10005]`，非負數字 | Planning分派、Burn Down基準、工作量SP、Projects六指標、Dashboard缺值 |
-| Actual Story Points | `customfield_13736` | `cf[13736]`，數字 | Dashboard缺值、已完成Actual摘要、工作量Actual、Projects輸出／分類／品質 |
+| Actual Story Points | `customfield_13736` | `cf[13736]`，數字 | Dashboard缺值、已完成Actual摘要、工作量Actual、Projects產出／分類／品質 |
 | Dev Type | `customfield_14642` | `cf[14642]`，option | Planning工作單分類、Projects完成六類＋未分類及Bug／Dev |
 | Impact Scope | `customfield_14848` | `cf[14848]` | Dashboard缺值及本人補填；single／multi必須發現 |
 | Release Package | `customfield_13476` | `cf[13476]` | Dashboard Impact範圍；唯讀JQL不假設schema |
@@ -179,7 +179,7 @@ SSE不是Jira變更推播，而是本次完整讀取結果。Burn Down不再發d
 | Planning | Sprint母票下Dev＋QA，全狀態 | null／非法加總0，0保留但未估JQL含0 | 本機Sprint、app UTC今天；無近Nd |
 | Burn Down | 已估Dev，完整載入現行resolutiondate按日分組；另有預設啟用的受阻覆寫 | nullSP排除，0有效；非法SP／非空非法Resolved報錯；空日期無fallback，覆寫仍可計完成 | 驗證Jira帳號具名時區（含DST）；UTC今天、min(today,end,start+59天)；區間後完成不夾末日 |
 | 工作量 | 期間曾Done的Dev，再Resolved→Updated→末日投影 | SP／Actual獨立missing，0有效、不互補 | UTC+8分桶及截止；早於from排除、晚於to夾末日；週一起日>=from |
-| Projects | 所選Project＋Sprint母票下Dev＋QA；總輸出按Resolved含首末日；未完成只看現行空日期 | SP／Actual獨立null，0有效；全未填sum=null、空母體0、部分已填附coverage；必要欄位omitted報錯 | 完成依驗證Jira帳號時區，無fallback／截點／受阻覆寫；eligibility為browser timezone＋server clock，end<today |
+| Projects | 所選Project＋Sprint母票下Dev＋QA；總產出按Resolved含首末日；未完成只看現行空日期 | SP／Actual獨立null，0有效；全未填sum=null、空母體0、部分已填附coverage；必要欄位omitted報錯 | 完成依驗證Jira帳號時區，無fallback／截點／受阻覆寫；eligibility為browser timezone＋server clock，end<today |
 | Capacity | 全mock | filled=false不代表容量0 | 固定10天×2；本機Project state不是Sprint紀錄 |
 
 各功能百分比不相同：
@@ -189,7 +189,7 @@ SSE不是Jira變更推播，而是本次完整讀取結果。Burn Down不再發d
 - **Projects Commitment**：Issue Type=Dev-Task、所有Dev Type的區間內完成SP／全部當前Sprint Dev-Task SP；不是Sprint起始承諾快照。
 - **Projects Bug／Dev**：完成工作單的exact Dev Type Bug／Dev，張數、SP、Actual三比率；OP-Bug排除，不是Bug／(Bug＋Dev)。分母0或全未填不適用，部分已填標示缺值，比率>100%不夾值。
 
-Projects輸出及六類＋未分類使用同批完成工作單；TKK／SUN壓力使用同一母體的**子票自身Project**，不加完成窗、不擴到全站。未完成只看現行Resolved空白，區間外完成另列供對帳。同票可屬多個Sprint，不提供跨Sprint相加的唯一總輸出，暫無Capacity比較。
+Projects產出及六類＋未分類使用同批完成工作單；TKK／SUN壓力使用同一母體的**子票自身Project**，不加完成窗、不擴到全站。未完成只看現行Resolved空白，區間外完成另列供對帳。同票可屬多個Sprint，不提供跨Sprint相加的唯一總產出，暫無Capacity比較。
 
 公式與明細限制以 [Planning](features/sprint-planning.md)、[Burn Down](features/sprint-burndown.md)、[工作量](features/analytics-workload.md)、[Projects](features/analytics-projects.md) 的詳述為準。不能聲稱同一「已完成」在所有頁面得到相同答案。
 

@@ -14,6 +14,8 @@ import { closestSprint, filterEndedSprints, type SprintRecord } from "@/lib/jira
 import { useBrowserToday } from "@/components/date-range-field"
 
 export type ProjectsFilterProps = ProjectsSelection & { sprints: readonly SprintRecord[]; dateMigrationHref: string | null }
+/** How many newest ended Sprints the shortcut picks; within the 1–6 analysis limit. */
+const RECENT_SPRINT_COUNT = 5
 /** URL 只保存條件；分析必須經明確提交。Team 由不隨 URL remount 的 query client 持有。 */
 export function ProjectsFilter(props: ProjectsFilterProps & {
   groups: string[]; onGroupsChange: (groups: string[]) => void
@@ -33,6 +35,17 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
   useLayoutEffect(() => { latestSelection.current = selection }, [selection])
   const availableSprints = selection.project === props.project && today ? filterEndedSprints(props.sprints, today) : []
   const orderedSprints = [...availableSprints].sort((a, b) => b.startDate.localeCompare(a.startDate))
+  // Opening the page with only a project preselects the newest ended Sprints, never more than one analysis run.
+  const preselected = selection.project === props.project && today !== null && !selection.error && !selection.selectedSprintIds.length
+    ? orderedSprints.slice(0, PROJECTS_SPRINT_LIMIT).map((sprint) => sprint.id)
+    : null
+  useEffect(() => {
+    if (!preselected || JSON.stringify(preselected) === JSON.stringify(props.selectedSprintIds)) return
+    const href = projectsFilterHref({ project: props.project, selectedSprintIds: preselected, error: null })
+    router.replace(href)
+    // The optimistic value keeps the inputs consistent until the server-rendered selection arrives.
+    startTransition(() => setSelection({ project: props.project, selectedSprintIds: preselected, error: null }))
+  }, [preselected, props.project, props.selectedSprintIds, router, setSelection])
   const ids = selection.selectedSprintIds
   const hasUnavailableSprints = today !== null && selection.project === props.project && ids.some((id) => !availableSprints.some((sprint) => sprint.id === id))
   const sprintError = selection.error || (hasUnavailableSprints ? "已選條件包含尚未結束或不可檢視的 Sprint，請重新選擇已結束的 Sprints。" : null)
@@ -72,6 +85,15 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
     if (latestSelection.current.project === project) return
     setSprintsOpen(false)
     navigate({ project, selectedSprintIds: [], error: null })
+  }
+  // "近 5 個 Sprints" shortcut: the five most recent ended Sprints, matching the list's own newest-first order.
+  const latestSprintIds = orderedSprints.slice(0, RECENT_SPRINT_COUNT).map((sprint) => sprint.id).sort((a, b) => a - b)
+  const latestAvailable = latestSprintIds.length === RECENT_SPRINT_COUNT
+  const latestSelected = latestAvailable && JSON.stringify(ids) === JSON.stringify(latestSprintIds) && !sprintError
+  function selectLatest() {
+    const current = latestSelection.current
+    if (!current.project || current.project !== props.project || !latestAvailable) return
+    navigate({ project: current.project, selectedSprintIds: latestSprintIds, error: null })
   }
   function toggleSprint(id: number, checked: boolean) {
     const current = latestSelection.current
@@ -115,6 +137,9 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
             <p id="projects-sprints-help" className="sr-only">可複選該專案結束日期早於今天的 Sprints；每次可分析 1–6 個已結束 Sprint。</p>
           </div>
         </fieldset>
+        {/* Quick pick beside the Sprints filter; pressed whenever the selection is exactly those five Sprints. */}
+        <button type="button" aria-pressed={latestSelected} disabled={!projectSelected || !latestAvailable} onClick={selectLatest}
+          className={`h-10 shrink-0 rounded-lg border px-3 text-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 ${latestSelected ? "border-blue-600 bg-blue-50 font-semibold text-blue-700 dark:border-blue-500 dark:bg-slate-800 dark:text-blue-300" : "border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"}`}>近 {RECENT_SPRINT_COUNT} Sprints</button>
         <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
           <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => {
             if (latestSelection.current.project && JSON.stringify([...groups].sort()) !== JSON.stringify([...nextGroups].sort())) {

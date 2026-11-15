@@ -4,8 +4,11 @@ import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from "rea
 import { TicketLink } from "@/components/ticket-link"
 import { projectsAnalysisIssueIdsJql } from "@/lib/jira-jql"
 import { DASHBOARD_TEAMS, DashboardFilterError } from "@/lib/jira-dashboard-filter"
+import { useTeamMembers } from "@/components/team-members-provider"
+import { memberCapacity, teamCapacities } from "@/lib/projects-capacity"
+import { ProjectsSprintDetail, sprintTeamBreakdown } from "./projects-sprint-detail"
 import { jiraIssueHref, jiraSearchHref } from "@/lib/jira-url"
-import { PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
+import { ProjectsAnalysisValidationError, PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsMetricFilter, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
 import { ProjectsTrendChart, type TrendDatum, type TrendSeries } from "./projects-trend-chart"
 import "./projects-analysis.css"
 
@@ -33,7 +36,7 @@ const outputEncodings: { color: string; encoding: NonNullable<TrendSeries["encod
 const outputTeams = [...DASHBOARD_TEAMS.map((team, index) => ({ id: team.group, label: team.label, ...outputEncodings[index] })), { id: "other", label: "其他", ...outputEncodings[13] }]
 const outputUnitLabels = { sp: "Story Points", actualSp: "Actual Story Points" }
 const topics = [
-  { id: "output", label: "總輸出" },
+  { id: "output", label: "總產出" },
   { id: "types", label: "完成的任務類型" },
   { id: "commitment", label: "Sprint 完成率" },
   { id: "quality", label: "開發品質" },
@@ -42,6 +45,13 @@ const topics = [
 ] as const
 type Topic = typeof topics[number]["id"]
 const unitLabels: Record<Unit, string> = { sp: "SP", actualSp: "Actual SP", count: "張數" }
+type OutputView = "all-teams" | "by-team"
+/** Sentinel: in 全團隊總覽 the chart sums the visible teams itself instead of waiting for a total series. */
+const OVERVIEW_STACK = "__overview__"
+const outputViewLabels: Record<OutputView, string> = { "all-teams": "全團隊總覽", "by-team": "各團隊產出" }
+/** With one team in scope the same two views compare that team's members instead. */
+const outputMemberViewLabels: Record<OutputView, string> = { "all-teams": "全成員總覽", "by-team": "各成員產出" }
+type SegmentedValue = Unit | OutputView
 const pointFields = { sp: "points", actualSp: "actualPoints" } as const
 const qualityMetrics: readonly ProjectsMetric[] = [{ kind: "type", value: "Bug" }, { kind: "type", value: "Dev" }]
 const number = (value: number) => new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2, ...(value > 0 && (value < .01 || value >= 1e12) ? { notation: "scientific" as const } : value >= 10_000 ? { notation: "compact" as const } : {}) }).format(value)
@@ -62,11 +72,11 @@ function Ratio({ value, unit, main, numerator, denominator }: { value: ProjectsR
 function Panel({ title, description, controls, children }: { title: ReactNode; description?: string; controls?: ReactNode; children: ReactNode }) {
   return <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 sm:p-6 dark:border-slate-800 dark:bg-slate-900"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>{controls && <div className="ml-auto min-w-0 max-w-full">{controls}</div>}</div>{description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>}<div className="mt-4 min-w-0">{children}</div></section>
 }
-function DataTable({ children, label = "查看數據表" }: { children: ReactNode; label?: string }) {
-  return <details className="projects-data-table mt-5 border-t border-slate-200 pt-3 dark:border-slate-700"><summary className="min-h-9 cursor-pointer text-sm font-medium text-slate-600 focus-visible:outline-2 dark:text-slate-300">{label}</summary><div className="mt-3 overflow-x-auto">{children}</div></details>
-}
-function Units({ name, value, onChange, ratios = false, choices = ["sp", "actualSp", "count"], labels, compact = false }: { name: string; value: Unit; onChange: (value: Unit) => void; ratios?: boolean; choices?: readonly Unit[]; labels?: Partial<Record<Unit, string>>; compact?: boolean }) {
-  return <div role="group" aria-label={`${name}呈現單位`} className={`${compact ? "" : "mb-4 "}flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1 text-xs dark:bg-slate-800`}>{choices.map((unit) => <button type="button" key={unit} aria-label={labels?.[unit]} aria-pressed={value === unit} className="min-h-9 rounded-md px-3 py-1 font-medium focus-visible:outline-2 focus-visible:outline-blue-600 aria-pressed:bg-white aria-pressed:shadow-sm dark:aria-pressed:bg-slate-700" onClick={() => onChange(unit)}>{unitLabels[unit]}{ratios ? "比" : ""}</button>)}</div>
+/** One segmented control; defaults to the SP／Actual SP／張數 unit set and can host any labelled choice set. */
+function Units<V extends SegmentedValue = Unit>({ name, value, onChange, ratios = false, choices, labels, compact = false, disabled = false, groupLabel }: { name: string; value: V; onChange: (value: V) => void; ratios?: boolean; choices?: readonly V[]; labels?: Partial<Record<V, string>>; compact?: boolean; disabled?: boolean; groupLabel?: string }) {
+  const items = (choices ?? ["sp", "actualSp", "count"] as unknown as readonly V[])
+  const text = (item: V) => labels?.[item] ?? (ratios ? `${unitLabels[item as Unit]}比` : unitLabels[item as Unit])
+  return <div role="group" aria-label={groupLabel ?? `${name}呈現單位`} aria-disabled={disabled || undefined} className={`${compact ? "" : "mb-4 "}flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1 text-xs dark:bg-slate-800 ${disabled ? "opacity-60" : ""}`}>{items.map((item) => <button type="button" key={item} disabled={disabled} aria-label={labels?.[item]} aria-pressed={value === item} className="min-h-9 rounded-md px-3 py-1 font-medium focus-visible:outline-2 focus-visible:outline-blue-600 aria-pressed:bg-white aria-pressed:shadow-sm disabled:cursor-not-allowed dark:aria-pressed:bg-slate-700" onClick={() => onChange(item)}>{text(item)}</button>)}</div>
 }
 
 export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResult }) {
@@ -79,9 +89,18 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const candidates = outputTeams.filter((team) => !result.request.groups.length || result.request.groups.includes(team.id))
   const [outputUnit, setOutputUnit] = useState<"sp" | "actualSp">("sp")
   const [visibleTeams, setVisibleTeams] = useState<string[]>(() => candidates.map((team) => team.id))
-  const [showTotal, setShowTotal] = useState(false)
+  // Members hidden from the single-team chart; empty means every member of that team is shown.
+  const [hiddenMembers, setHiddenMembers] = useState<string[]>([])
+  const toggleMember = (id: string) => { setHiddenMembers((previous) => previous.includes(id) ? previous.filter((member) => member !== id) : [...previous, id]); clearOutputDetail() }
+  const [outputView, setOutputView] = useState<OutputView>("all-teams")
+  const [includeQa, setIncludeQa] = useState(true)
+  // Sprint picked in the 總產出 trend; the detail panel below the chart shows its team split and capacity realization.
+  const [selectedOutputSprint, setSelectedOutputSprint] = useState<number | null>(null)
+  const { groupStates } = useTeamMembers()
   const attribution = result.teamAttribution
   const hasAttribution = attribution?.status === "available"
+  // Unchecked QA-Task filtering is display-only: it recomputes output cohorts locally and never rewrites the server summary.
+  const outputFilter: ProjectsMetricFilter | undefined = includeQa ? undefined : { excludeQa: true }
   const clearOutputDetail = () => setDetail((previous) => previous && !Array.isArray(previous.metric) && (previous.metric as ProjectsMetric | OutputTeamMetric).kind === "output-teams" ? null : previous)
   const toggleTeam = (id: string) => {
     setVisibleTeams((previous) => previous.includes(id) ? previous.filter((team) => team !== id) : candidates.filter((team) => previous.includes(team.id) || team.id === id).map((team) => team.id))
@@ -91,11 +110,11 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const cohorts = new Map<string, ProjectsAnalysisTask[]>()
   const links = new Map<string, { href: string | null; unavailable?: string }>()
   const issues = (id: number, metric: DetailMetric): ProjectsAnalysisTask[] => {
-    const key = JSON.stringify([id, metric])
+    const key = JSON.stringify([id, metric, includeQa])
     if (!cohorts.has(key)) {
       const sprint = result.sprints.find((item) => item.id === id)
       const metrics: readonly (ProjectsMetric | OutputTeamMetric)[] = Array.isArray(metric) ? metric : [metric as ProjectsMetric | OutputTeamMetric]
-      const selected = sprint ? metrics.flatMap((item) => item.kind === "output-teams" ? selectProjectsOutputTeamIssues(result.tasks, sprint, attribution ?? { status: "unavailable", reason: "not_provided" }, item.teamIds) : selectProjectsMetricIssues(result.tasks, sprint, item)) : []
+      const selected = sprint ? metrics.flatMap((item) => item.kind === "output-teams" ? selectProjectsOutputTeamIssues(result.tasks, sprint, attribution ?? { status: "unavailable", reason: "not_provided" }, item.teamIds, outputFilter) : selectProjectsMetricIssues(result.tasks, sprint, item, item.kind === "custom" ? outputFilter : undefined)) : []
       cohorts.set(key, [...new Map(selected.map((task) => [task.id, task])).values()])
     }
     return cohorts.get(key)!
@@ -129,15 +148,13 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const button = (id: number, metric: DetailMetric, label: string, children: ReactNode = "本站明細") => <button type="button" className="min-h-9 rounded px-1 py-1 text-left text-xs underline decoration-slate-300 underline-offset-4 hover:decoration-slate-600 focus-visible:outline-2 focus-visible:outline-blue-600 dark:decoration-slate-600" aria-label={`${label}，查看工作單明細`} onClick={() => show(id, metric, label)}>{children}</button>
   const pointValue = (id: number, metric: DetailMetric, label: string, value: PointTotal) => metricValue(id, metric, label, value.sum, points(value))
   const countValue = (id: number, metric: DetailMetric, label: string, count: number) => metricValue(id, metric, label, count, `${number(count)} 張`)
-  const pointCell = (id: number, metric: DetailMetric, label: string, value: PointTotal, unit: "sp" | "actualSp" = "sp") => <>{pointValue(id, metric, label, value)}{coverage(id, metric, label, value, unit)}{button(id, metric, label)}</>
-  const countCell = (id: number, metric: DetailMetric, label: string, count: number) => <>{countValue(id, metric, label, count)}<span className="block">{button(id, metric, label)}</span></>
   const sprint = detail ? result.sprints.find((item) => item.id === detail.id) : null
   const tasks = detail && sprint ? issues(sprint.id, detail.metric) : []
-  const totalsCells = (id: number, metric: DetailMetric, label: string, value: WorkTotals) => <><td>{pointCell(id, metric, `${label} SP`, value.sp)}</td><td>{pointCell(id, metric, `${label} Actual SP`, value.actualSp, "actualSp")}</td><td>{countCell(id, metric, `${label} 張數`, value.count)}</td></>
   const action = (id: number, metric: DetailMetric, label: string) => ({ label, onClick: () => show(id, metric, label) })
-  const totalSeries = (id: string, label: string, color: string, select: (summary: ProjectsSprintSummary) => WorkTotals, unit: Unit, metric: DetailMetric): TrendSeries => ({ id, label, color, values: result.summaries.map((summary) => {
+  // `paired` also carries the other point unit, so stacked bars can show Actual SP next to the Story Point estimate.
+  const totalSeries = (id: string, label: string, color: string, select: (summary: ProjectsSprintSummary) => WorkTotals, unit: Unit, metric: DetailMetric, paired = false): TrendSeries => ({ id, label, color, values: result.summaries.map((summary) => {
     const total = select(summary), point = unit === "count" ? null : total[unit]
-    return { value: unit === "count" ? total.count : point!.sum, display: unit === "count" ? number(total.count) : points(point!), readout: metricValue(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, unit === "count" ? total.count : point!.sum, unit === "count" ? number(total.count) : points(point!)), note: point ? coverage(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, point, unit as "sp" | "actualSp") : undefined, partial: point ? point.missingCount > 0 : false, actions: [action(summary.sprint.id, metric, `${label} ${unitLabels[unit]}，查看工作單明細`)] }
+    return { value: unit === "count" ? total.count : point!.sum, points: paired ? total.sp.sum : undefined, actualPoints: paired ? total.actualSp.sum : undefined, display: unit === "count" ? number(total.count) : points(point!), readout: metricValue(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, unit === "count" ? total.count : point!.sum, unit === "count" ? number(total.count) : points(point!)), note: point ? coverage(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, point, unit as "sp" | "actualSp") : undefined, partial: point ? point.missingCount > 0 : false, actions: [action(summary.sprint.id, metric, `${label} ${unitLabels[unit]}，查看工作單明細`)] }
   }) })
   const ratioParts = (s: ProjectsSprintSummary, kind: "commitment" | "quality", unit: Unit) => {
     const commitment = kind === "commitment", value = commitment ? s.commitment : s.quality[unit]
@@ -159,9 +176,73 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const teamTotals = (s: ProjectsSprintSummary, teamIds: readonly string[]) => projectsWorkTotals(issues(s.sprint.id, outputMetric(teamIds)))
   // Filter complete zero observations only; missing/partial points remain unknown, not zero.
   // Keep manual visibility preferences for every candidate so unit changes can restore eligibility.
-  const outputSeries: TrendSeries[] = hasAttribution ? candidates.map((team) => ({ ...totalSeries(team.id, team.label, team.color, (s) => teamTotals(s, [team.id]), outputUnit, outputMetric([team.id])), encoding: team.encoding })).filter((series) => !series.values.every((datum) => datum.value === 0 && !datum.partial)) : [totalSeries("scope-output", "全範圍總輸出", "focus", (s) => s.output, outputUnit, { kind: "output" })]
-  const displayedTeams = outputSeries.filter((series) => visibleTeams.includes(series.id)).map((series) => series.id)
-  if (hasAttribution && showTotal && displayedTeams.length) outputSeries.push({ ...totalSeries("visible-total", "顯示團隊合計", "focus", (s) => teamTotals(s, displayedTeams), outputUnit, outputMetric(displayedTeams)), encoding: { shape: 0, dash: "2 4" }, toggleable: false })
+  // QA filter is display-only: outputs are recomputed from the same filtered cohorts as their details and links.
+  const outputTotal = (s: ProjectsSprintSummary) => projectsWorkTotals(issues(s.sprint.id, { kind: "custom" }))
+  const scopeOutput = (s: ProjectsSprintSummary) => includeQa ? s.output : outputTotal(s)
+  // A team is plotted only when it has nonzero output for the unit. The legend therefore reports eligible
+  // teams as visible, so a hidden team is re-included when a filter (QA-Task, unit) makes it eligible again.
+  const outputTeamSeries = hasAttribution ? candidates.map((team) => ({ ...totalSeries(team.id, team.label, team.color, (s) => teamTotals(s, [team.id]), outputUnit, outputMetric([team.id]), true), encoding: team.encoding })).filter((series) => !series.values.every((datum) => datum.value === 0 && !datum.partial)) : [totalSeries("scope-output", "全範圍總產出", "focus", scopeOutput, outputUnit, includeQa ? { kind: "output" } : { kind: "custom" })]
+  // Placeholder capacity: members of each visible team × per-member points for this project (see lib/projects-capacity).
+  const sprintDetailSprint = selectedOutputSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedOutputSprint) ?? null
+  const memberCount = (teamId: string) => { const state = groupStates[teamId]; return state?.status === "success" ? state.members.length : 0 }
+  // Story Points per visible team come from the chart's own team series, keeping QA filtering and attribution rules identical.
+  const visibleCandidates = candidates.filter((team) => visibleTeams.includes(team.id))
+  // Exactly one visible team: the output view and the Sprint panel both speak in terms of that team's members.
+  const singleTeam = visibleCandidates.length === 1 ? visibleCandidates[0] : null
+  const sprintIndex = sprintDetailSprint ? result.sprints.findIndex((sprint) => sprint.id === sprintDetailSprint.id) : -1
+  const memberColors = ["sp", "actual", "type-2", "type-3", "type-4", "type-6"]
+  // Member series for that single team: each member's completed SP per Sprint, with the same QA toggle as the chart.
+  const memberSeries: TrendSeries[] = (() => {
+    const roster = singleTeam ? groupStates[singleTeam.id] : undefined
+    if (!singleTeam || roster?.status !== "success") return []
+    const names = new Map(roster.members.map((member) => [member.accountId, member.displayName]))
+    const cohortOf = (sprintId: number, accountId: string) => issues(sprintId, outputMetric([singleTeam.id])).filter((task) => (task.assigneeAccountId ?? "unassigned") === accountId)
+    const accounts = [...new Set(result.sprints.flatMap((sprint) => issues(sprint.id, outputMetric([singleTeam.id])).map((task) => task.assigneeAccountId ?? "unassigned")))]
+    const labelOf = (accountId: string) => names.get(accountId) ?? result.tasks.find((task) => task.assigneeAccountId === accountId)?.assigneeDisplayName ?? "未指派"
+    // Members get their own colors from the token list so they stay distinguishable within one team's bars.
+    return accounts.map((accountId, index) => {
+      const values = result.summaries.map((summary) => {
+        const totals = projectsWorkTotals(cohortOf(summary.sprint.id, accountId))
+        const point = outputUnit === "sp" ? totals.sp : totals.actualSp
+        return { value: point.sum, points: totals.sp.sum, actualPoints: totals.actualSp.sum, display: points(point), partial: point.missingCount > 0 }
+      })
+      return { id: `member:${accountId}`, label: labelOf(accountId), color: memberColors[index % memberColors.length], values }
+    }).filter((series) => series.values.some((datum) => datum.points !== null))
+  })()
+  // One team in scope charts that team's members instead of the teams themselves.
+  const outputSeries: TrendSeries[] = memberSeries.length ? memberSeries : outputTeamSeries
+  const displayedTeams = memberSeries.length ? memberSeries.filter((series) => !hiddenMembers.includes(series.id)).map((series) => series.id) : outputSeries.filter((series) => visibleTeams.includes(series.id)).map((series) => series.id)
+  const teamCapacityRows = teamCapacities(result.request.project, Object.fromEntries(candidates.map((team) => [team.id, memberCount(team.id)])))
+  // With exactly one team selected the panel compares that team's members instead of the teams.
+  const memberBreakdown = () => {
+    const team = visibleCandidates[0]
+    const roster = team ? groupStates[team.id] : undefined
+    if (!team || !sprintDetailSprint || roster?.status !== "success") return []
+    const cohort = issues(sprintDetailSprint.id, outputMetric([team.id]))
+    const byAccount = new Map<string, { name: string; points: number; tasks: ProjectsAnalysisTask[] }>()
+    for (const task of cohort) {
+      if (task.issueType === "QA-Task" && !includeQa) continue
+      const accountId = task.assigneeAccountId ?? "unassigned"
+      const entry = byAccount.get(accountId) ?? { name: task.assigneeDisplayName ?? "未指派", points: 0, tasks: [] }
+      entry.points += task.points ?? 0
+      entry.tasks.push(task)
+      byAccount.set(accountId, entry)
+    }
+    const names = new Map(roster.members.map((member) => [member.accountId, member.displayName]))
+    const capacity = memberCapacity(result.request.project)
+    return [...byAccount.entries()]
+      .sort((a, b) => b[1].points - a[1].points || a[1].name.localeCompare(b[1].name))
+      .map(([accountId, entry], index) => ({ teamId: accountId, label: names.get(accountId) ?? entry.name, color: memberColors[index % memberColors.length], points: entry.points, capacity, memberCount: 1, kind: "member" as const, href: searchLink(entry.tasks).href }))
+  }
+  const sprintBreakdown = sprintDetailSprint ? (singleTeam ? memberBreakdown() : sprintTeamBreakdown(visibleCandidates.map((team) => {
+    const series = outputTeamSeries.find((entry) => entry.id === team.id)
+    return { id: team.id, label: team.label, color: team.color, points: series?.values[sprintIndex]?.points ?? series?.values[sprintIndex]?.value ?? null }
+  }), teamCapacityRows, (teamId) => outputTeams.find((team) => team.id === teamId)?.label ?? teamId).map((entry) => {
+    // Without verified team attribution the cohort cannot be built; the row then simply has no Jira link.
+    let tasks: ProjectsAnalysisTask[] = []
+    try { tasks = issues(sprintDetailSprint.id, outputMetric([entry.teamId])) } catch (error) { if (!(error instanceof ProjectsAnalysisValidationError)) throw error }
+    return { ...entry, href: searchLink(tasks).href }
+  })) : []
   const typeSeries = PROJECTS_DEV_TYPES.map((label, index) => totalSeries(label, label, `type-${index}`, (s) => s.devTypes.find((group) => group.label === label)!.totals, typeUnit, { kind: "type", value: label }))
   const commitmentSeries: TrendSeries[] = [{ id: "commitment", label: "Sprint 完成率", color: "sp", values: result.summaries.map((s) => ratioDatum(s, "commitment", "sp")) }]
   const qualitySeries: TrendSeries[] = [{ id: "quality", label: `Bug／Dev · ${unitLabels[qualityUnit]}比`, color: "actual", values: result.summaries.map((s) => ratioDatum(s, "quality", qualityUnit)) }]
@@ -177,7 +258,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const summaryTiles = multi ? [] : (() => {
     const s = first, id = s.sprint.id
     return [
-      { topic: "output", label: "全範圍總輸出", metric: { kind: "output" } as DetailMetric, value: <>{pointValue(id, { kind: "output" }, `全範圍總輸出 ${unitLabels[outputUnit]}`, s.output[outputUnit])} {unitLabels[outputUnit]}</>, extra: countValue(id, { kind: "output" }, "全範圍完成張數", s.output.count) },
+      { topic: "output", label: "全範圍總產出", metric: (includeQa ? { kind: "output" } : { kind: "custom" }) as DetailMetric, value: <>{pointValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, `全範圍總產出 ${unitLabels[outputUnit]}`, scopeOutput(s)[outputUnit])} {unitLabels[outputUnit]}</>, extra: countValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, "全範圍完成張數", scopeOutput(s).count) },
       { topic: "types", label: "完成的任務類型", metric: { kind: "output" } as DetailMetric, value: countValue(id, { kind: "output" }, "完成的任務類型張數", s.output.count), extra: "六類 Dev Type＋未分類，詳見下方" },
       { topic: "commitment", label: "Sprint 完成率", metric: { kind: "commitment-all" } as DetailMetric, value: ratioView(s, "commitment", "sp"), extra: "分子當期完成／分母全部 Dev-Task" },
       { topic: "quality", label: "開發品質 · Bug／Dev", metric: qualityMetrics, value: ratioView(s, "quality", "count"), extra: "Bug＋Dev 比較母體（非績效評等）" },
@@ -213,35 +294,29 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
       {topics.map((topic, index) => <button key={topic.id} type="button" role="tab" id={`${topicId}-${topic.id}-tab`} aria-controls={`${topicId}-${topic.id}-panel`} aria-selected={activeTopic === topic.id} tabIndex={activeTopic === topic.id ? 0 : -1} ref={(element) => { if (element) topicTabs.current[topic.id] = element; else delete topicTabs.current[topic.id] }} onClick={(event) => selectTopic(topic.id, event.currentTarget)} onKeyDown={(event) => onTopicKeyDown(event, index)} className="min-h-11 shrink-0 rounded-lg px-4 py-2 text-sm font-medium whitespace-nowrap text-slate-600 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-blue-600 focus-visible:outline-offset-[-2px] aria-selected:bg-white aria-selected:text-slate-900 aria-selected:shadow-sm dark:text-slate-400 dark:hover:text-slate-100 dark:aria-selected:bg-slate-700 dark:aria-selected:text-slate-100">{topic.label}</button>)}
     </div>
     <div className="min-w-0">
-    {topicPanel("output", <Panel title={multi ? "總輸出趨勢" : "Sprint 總輸出"} controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3"><Units name="總輸出" value={outputUnit} onChange={(unit) => { if (unit !== "count" && unit !== outputUnit) { setOutputUnit(unit); clearOutputDetail() } }} choices={["sp", "actualSp"]} labels={outputUnitLabels} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs has-disabled:cursor-not-allowed has-disabled:opacity-60"><input type="checkbox" checked={showTotal} disabled={!hasAttribution} onChange={(event) => { setShowTotal(event.target.checked); clearOutputDetail() }} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />顯示總量</label></div>}>
-      {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全範圍總輸出。</p>}
-      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && showTotal ? "visible-total" : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} />
-      {hasAttribution && <DataTable label="查看團隊數據表"><table><caption className="sr-only">各團隊完整輸出核對（不隨圖例隱藏）</caption><thead><tr><th>Sprint</th><th>團隊</th><th>SP</th><th>Actual SP</th><th>完成張數</th></tr></thead><tbody>{result.summaries.flatMap((summary) => candidates.map((team) => <tr key={`${summary.sprint.id}-${team.id}`}><th scope="row">{summary.sprint.name}</th><td>{team.label}</td>{totalsCells(summary.sprint.id, outputMetric([team.id]), team.label, teamTotals(summary, [team.id]))}</tr>))}</tbody></table></DataTable>}
-      <DataTable label="查看全範圍數據表"><table><caption className="sr-only">全範圍總輸出與目前未完成比較（不隨圖例隱藏）</caption><thead><tr><th>Sprint</th><th>全範圍輸出 SP</th><th>全範圍輸出 Actual SP</th><th>完成張數</th><th>目前未完成</th><th>未完成 SP</th></tr></thead><tbody>{result.summaries.map((summary) => <tr key={summary.sprint.id}><th scope="row">{summary.sprint.name}</th>{totalsCells(summary.sprint.id, { kind: "output" }, "全範圍總輸出", summary.output)}<td>{countCell(summary.sprint.id, { kind: "unfinished" }, "目前未完成", summary.unfinished.count)}</td><td>{pointCell(summary.sprint.id, { kind: "unfinished" }, "未完成 SP", summary.unfinished.sp)}</td></tr>)}</tbody></table></DataTable>
+    {topicPanel("output", <Panel title={multi ? "總產出趨勢" : "Sprint 總產出"} controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* 全團隊總覽 always charts both units (two bars, two curves), so the unit switch only applies to 各團隊產出. */}{outputView === "by-team" || !hasAttribution ? <Units<Unit> name="總產出" value={outputUnit} onChange={(unit) => { if (unit !== "count" && unit !== outputUnit) { setOutputUnit(unit); clearOutputDetail() } }} choices={["sp", "actualSp"]} labels={outputUnitLabels} compact /> : null}<Units name="總產出顯示" value={outputView} onChange={(view) => { if (view !== outputView) { setOutputView(view); clearOutputDetail() } }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? outputMemberViewLabels : outputViewLabels} disabled={!hasAttribution} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => { setIncludeQa(event.target.checked); clearOutputDetail() }} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label></div>}>
+      {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全範圍總產出。</p>}
+      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} />
+      {sprintDetailSprint && <ProjectsSprintDetail sprint={sprintDetailSprint} teams={sprintBreakdown} />}
     </Panel>)}
-    {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總輸出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">
+    {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總產出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">
       <Units name="完成的任務類型" value={typeUnit} onChange={setTypeUnit} />
       <ProjectsTrendChart key={`types-${typeUnit}`} id="types" sprints={result.sprints} series={typeSeries} unit={unitLabels[typeUnit]} formatTick={number} integer={typeUnit === "count"} distribution={!multi} focusableLegend />
-      <DataTable><table><caption className="sr-only">Sprint Dev Type 的 SP、Actual SP、張數</caption><thead><tr><th>Sprint</th><th>Dev Type</th><th>SP</th><th>Actual SP</th><th>張數</th></tr></thead><tbody>{result.summaries.flatMap((summary) => summary.devTypes.map(({ label, totals }) => <tr key={`${summary.sprint.id}-${label}`}><th scope="row">{summary.sprint.name}</th><td>{label}</td>{totalsCells(summary.sprint.id, { kind: "type", value: label }, label, totals)}</tr>))}</tbody></table></DataTable>
     </Panel>)}
     {topicPanel("commitment", <Panel title="Sprint 完成率" description="Issue Type Dev-Task（所有 Dev Type）的當期完成 SP／全部 SP。不是 Sprint 起始承諾快照。">
         {multi ? trend("commitment", commitmentSeries, "%") : ratioView(first, "commitment", "sp")}
-        <DataTable><table><caption className="sr-only">Sprint 完成率 比率與分子分母</caption><thead><tr><th>Sprint</th><th>Sprint 完成率 · SP</th></tr></thead><tbody>{result.summaries.map((s) => <tr key={s.sprint.id}><th scope="row">{s.sprint.name}</th><td>{ratioView(s, "commitment", "sp")}<div className="mt-1 flex flex-wrap gap-2 text-xs">{button(s.sprint.id, { kind: "commitment-done" }, "Sprint 完成率 分子", "完成本站明細")}{button(s.sprint.id, { kind: "commitment-all" }, "Sprint 完成率 分母", "全部本站明細")}</div>{commitmentCoverage(s)}</td></tr>)}</tbody></table></DataTable>
     </Panel>)}
     {topicPanel("quality", <Panel title="開發品質 · Bug／Dev" description="完成工作單 Dev Type Bug／Dev；OP-Bug 不納入，不是 Bug／(Bug＋Dev)。比率可超過 100%，不代表績效評等。">
         <Units name="開發品質" value={qualityUnit} onChange={setQualityUnit} ratios />
         {multi ? <ProjectsTrendChart key={`quality-${qualityUnit}`} id="quality" sprints={result.sprints} series={qualitySeries} unit="%" formatTick={percentTick} /> : ratioView(first, "quality", qualityUnit)}
-        <DataTable><table><caption className="sr-only">Bug／Dev 三種比率與分子分母</caption><thead><tr><th>Sprint</th><th>張數比</th><th>SP 比</th><th>Actual SP 比</th></tr></thead><tbody>{result.summaries.map((s) => <tr key={s.sprint.id}><th scope="row">{s.sprint.name}</th><td>{ratioView(s, "quality", "count")}<div className="mt-1 flex gap-2 text-xs">{button(s.sprint.id, qualityMetrics[0], "Bug", "Bug 本站明細")}{button(s.sprint.id, qualityMetrics[1], "Dev", "Dev 本站明細")}</div></td><td>{ratioView(s, "quality", "sp")}</td><td>{ratioView(s, "quality", "actualSp")}</td></tr>)}</tbody></table></DataTable>
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">0 或未填分母不適用；有缺值的點數比只使用已填點數，非完整估算。</p>
     </Panel>)}
     {topicPanel("pressure", <Panel title="開發壓力" description="TKK／SUN 工作單自身 Project 的 SP，不加 Resolved 區間限制；不額外查全站資料。">
         {multi ? trend("pressure", pressureSeries, "SP") : <p className="text-sm">TKK {pointValue(first.sprint.id, { kind: "pressure", value: "TKK" }, "TKK SP", first.pressure.TKK.sp)} SP · SUN {pointValue(first.sprint.id, { kind: "pressure", value: "SUN" }, "SUN SP", first.pressure.SUN.sp)} SP · 合計 {pointValue(first.sprint.id, { kind: "pressure" }, "TKK＋SUN SP", first.pressure.combined.sp)} SP</p>}
-        <DataTable><table><caption className="sr-only">工作單 Project 壓力及對帳</caption><thead><tr><th>Sprint</th><th>TKK SP</th><th>SUN SP</th><th>TKK＋SUN SP</th><th>母體 SP／張數</th><th>區間外完成</th></tr></thead><tbody>{result.summaries.map((s) => <tr key={s.sprint.id}><th scope="row">{s.sprint.name}</th>{([["TKK", s.pressure.TKK], ["SUN", s.pressure.SUN], [undefined, s.pressure.combined]] as const).map(([value, total]) => <td key={value ?? "combined"}>{pointCell(s.sprint.id, { kind: "pressure", value }, `${value ?? "TKK＋SUN"} SP`, total.sp)}</td>)}<td>{pointCell(s.sprint.id, { kind: "population" }, "母體 SP", s.population.sp)}<span className="block text-xs">{countValue(s.sprint.id, { kind: "population" }, "母體張數", s.population.count)}</span></td><td>{countCell(s.sprint.id, { kind: "outside" }, "區間外完成", s.outsideWindow.count)}<span className="block text-xs">{pointValue(s.sprint.id, { kind: "outside" }, "區間外完成 SP", s.outsideWindow.sp)} SP</span></td></tr>)}</tbody></table></DataTable>
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Sub-task 通常與母票同 Project，壓力可能等於母體 SP；PRIDE 可能為 0。尚未與 Capacity 比較。</p>
     </Panel>)}
     {topicPanel("unfinished", <Panel title="目前未完成" description="只看現行 Resolved 空白，不限 Sprint 區間；區間外已完成不算未完成。SP／張數分開呈現。">
         {multi ? <div className="space-y-6"><div><h3 className="mb-2 text-sm font-medium">未完成 SP</h3>{trend("unfinished-sp", [totalSeries("unfinished-sp", "未完成 SP", "sp", (s) => s.unfinished, "sp", { kind: "unfinished" })], "SP")}</div><div className="border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="mb-2 text-sm font-medium">未完成張數</h3>{trend("unfinished-count", [totalSeries("unfinished-count", "未完成張數", "actual", (s) => s.unfinished, "count", { kind: "unfinished" })], "張數", true)}</div></div> : <p className="text-sm">{countValue(first.sprint.id, { kind: "unfinished" }, "目前未完成張數", first.unfinished.count)} · {pointValue(first.sprint.id, { kind: "unfinished" }, "目前未完成 SP", first.unfinished.sp)} SP</p>}
-        <DataTable><table><caption className="sr-only">目前未完成張數及 SP</caption><thead><tr><th>Sprint</th><th>未完成張數</th><th>未完成 SP</th></tr></thead><tbody>{result.summaries.map((s) => <tr key={s.sprint.id}><th scope="row">{s.sprint.name}</th><td>{countCell(s.sprint.id, { kind: "unfinished" }, "目前未完成", s.unfinished.count)}</td><td>{pointCell(s.sprint.id, { kind: "unfinished" }, "未完成 SP", s.unfinished.sp)}</td></tr>)}</tbody></table></DataTable>
     </Panel>)}
     </div>
     {detail && sprint && <Panel title={<>{sprint.name} · {detail.label} · {valueLink(tasks.length, number(tasks.length), tasks, `${sprint.name} · ${detail.label} 明細張數`)} 張工作單</>} description="本次完整查詢資料的唯讀明細，不會另查 Jira。">

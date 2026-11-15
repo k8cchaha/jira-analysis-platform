@@ -28,7 +28,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | Sprint／[開發狀況／Burn Down](features/sprint-burndown.md) | `/sprint/burndown` | 觀察每日完成／剩餘節奏 | 不易看完成日序與剩餘工作 | 實際與理想節奏、未完成票、完成口徑差異、受阻覆寫 | 已實作；已估Dev-only |
 | Sprint／[Capacity](features/sprint-capacity.md) | `/sprint/capacity` | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
 | 分析／[工作量分析](features/analytics-workload.md) | `/analytics/workload` | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
-| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 比較已結束 Sprint 的唯讀工作摘要 | 輸出、工作構成與承諾／品質口徑不清 | SP／Actual輸出、六類Dev Type、Commitment、Bug／Dev、TKK／SUN壓力、目前未完成及本地明細 | 已實作；手動查詢，現值非歷史快照，無Capacity比較 |
+| 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 比較已結束 Sprint 的唯讀工作摘要 | 輸出、工作構成與承諾／品質口徑不清 | SP／Actual產出、六類Dev Type、Commitment、Bug／Dev、TKK／SUN壓力、目前未完成及本地明細 | 已實作；手動查詢，現值非歷史快照，無Capacity比較 |
 | 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |

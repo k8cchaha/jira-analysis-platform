@@ -10,6 +10,7 @@ export const CLIENT = "app/(app)/analytics/projects/projects-query-client.tsx"
 export const VIEW = "app/(app)/analytics/projects/projects-analysis-view.tsx"
 export const CHART = "app/(app)/analytics/projects/projects-trend-chart.tsx"
 export const GEOMETRY = "app/(app)/analytics/projects/projects-trend-geometry.ts"
+export const SPRINT_DETAIL = "app/(app)/analytics/projects/projects-sprint-detail.tsx"
 export const plain = (value) => JSON.parse(JSON.stringify(value))
 export function projectsHarness() {
   const modules = new Map(), components = new Map(), effects = [], requests = [], events = new Map()
@@ -50,7 +51,7 @@ export function projectsHarness() {
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
     if (path.endsWith(".css")) return {}
-    if (!path.startsWith("lib/") && ![CLIENT, VIEW, CHART, GEOMETRY].includes(path)) throw new Error(`Unexpected module ${path}`)
+    if (!path.startsWith("lib/") && !path.startsWith("app/(app)/analytics/projects/") && ![CLIENT, VIEW, CHART, GEOMETRY].includes(path)) throw new Error(`Unexpected module ${path}`)
     const loadedModule = { exports: {} }; modules.set(path, loadedModule)
     if (!compiled.has(path)) compiled.set(path, ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"), { fileName: path, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)
     const fixtureRequire = (name) => {
@@ -62,7 +63,7 @@ export function projectsHarness() {
       if (name === "@/components/ticket-link") return { TicketLink: ({ task, jiraBaseUrl }) => createElement("a", { href: `${jiraBaseUrl}/browse/${encodeURIComponent(task.key)}` }, task.key) }
       let base = name.startsWith("@/") ? name.slice(2) : name.startsWith(".") ? normalize(`${dirname(path)}/${name}`) : null
       if (!base) throw new Error(`Unexpected import ${name}`)
-      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
+      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART, SPRINT_DETAIL].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
       return load(base)
     }
     vm.runInContext(`(function(require,module,exports){${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)

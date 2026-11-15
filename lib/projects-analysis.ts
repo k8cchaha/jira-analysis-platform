@@ -20,7 +20,13 @@ export type ProjectsAnalysisTask = {
 export type PointTotal = { sum: number | null; knownCount: number; missingCount: number }
 export type WorkTotals = { count: number; sp: PointTotal; actualSp: PointTotal }
 export type ProjectsRatio = { numerator: number | null; denominator: number | null; value: number | null; partial: boolean }
-export type ProjectsMetric = { kind: "population" | "output" | "unfinished" | "outside" | "commitment-all" | "commitment-done" | "type" | "pressure"; value?: string }
+/** `custom` is a display-only output cohort (completed in the Sprint, optionally without QA-Task) the server summary never computes. */
+export type ProjectsMetric = { kind: "population" | "output" | "unfinished" | "outside" | "commitment-all" | "commitment-done" | "type" | "pressure" | "custom"; value?: string }
+/**
+ * `excludeQa` drops QA-Task from a client-side (custom) cohort; server summaries are never rewritten, so
+ * charts, tables and local details must all pass the same filter.
+ */
+export type ProjectsMetricFilter = { excludeQa?: boolean }
 export type ProjectsSprintSummary = {
   sprint: SprintRecord; population: WorkTotals; output: WorkTotals; unfinished: WorkTotals; outsideWindow: WorkTotals
   devTypes: { label: string; totals: WorkTotals }[]; commitment: ProjectsRatio; commitmentPoints: { done: PointTotal; all: PointTotal }
@@ -75,7 +81,7 @@ export function resolveProjectsAnalysisSprints(request: ProjectsAnalysisRequest,
     return { ...configured, startDate, endDate }
   }).sort((a, b) => a.startDate.localeCompare(b.startDate) || a.id - b.id)
 }
-export function selectProjectsMetricIssues(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, metric: ProjectsMetric): ProjectsAnalysisTask[] {
+export function selectProjectsMetricIssues(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, metric: ProjectsMetric, filter?: ProjectsMetricFilter): ProjectsAnalysisTask[] {
   const completed = (task: ProjectsAnalysisTask) => task.resolvedDate !== null && task.resolvedDate >= sprint.startDate && task.resolvedDate <= sprint.endDate
   return tasks.filter((task) => {
     if (!task.sprintIds.includes(sprint.id)) return false
@@ -88,6 +94,8 @@ export function selectProjectsMetricIssues(tasks: readonly ProjectsAnalysisTask[
       case "commitment-done": return task.issueType === "Dev-Task" && completed(task)
       case "type": return completed(task) && devTypeLabelOf(task.devType) === metric.value
       case "pressure": return (task.projectKey === "TKK" || task.projectKey === "SUN") && (!metric.value || task.projectKey === metric.value)
+      // Same output cohort as "output" (completed in this Sprint), then apply the display-only QA exclusion.
+      case "custom": return completed(task) && !(filter?.excludeQa && task.issueType === "QA-Task")
     }
   })
 }
@@ -128,17 +136,17 @@ function parseTeamAttribution(value: unknown, tasks: readonly ProjectsAnalysisTa
 }
 
 /** Unavailable attribution is an explicit failure, never a fabricated Other/zero total. */
-export function selectProjectsOutputTeamIssues(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, attribution: ProjectsTeamAttribution, teamIds: readonly string[]): ProjectsAnalysisTask[] {
+export function selectProjectsOutputTeamIssues(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, attribution: ProjectsTeamAttribution, teamIds: readonly string[], filter?: ProjectsMetricFilter): ProjectsAnalysisTask[] {
   const validated = parseTeamAttribution(attribution, tasks, [])
   if (validated.status !== "available") return invalid("團隊歸屬暫時無法使用。")
   const allowed = new Set<string>([...DASHBOARD_TEAMS.map((team) => team.group), "other"])
   if (teamIds.some((id) => !allowed.has(id))) return invalid()
   const visible = new Set(teamIds)
   const byAssignee = new Map(validated.byAssignee.map((entry) => [entry.accountId, entry.teamId]))
-  return selectProjectsMetricIssues(tasks, sprint, { kind: "output" }).filter((task) => visible.has(task.assigneeAccountId === null ? "other" : byAssignee.get(task.assigneeAccountId)!))
+  return selectProjectsMetricIssues(tasks, sprint, filter?.excludeQa ? { kind: "custom" } : { kind: "output" }, filter).filter((task) => visible.has(task.assigneeAccountId === null ? "other" : byAssignee.get(task.assigneeAccountId)!))
 }
-export function summarizeProjectsTeamOutput(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, attribution: ProjectsTeamAttribution, teamIds: readonly string[]): WorkTotals {
-  return projectsWorkTotals(selectProjectsOutputTeamIssues(tasks, sprint, attribution, teamIds))
+export function summarizeProjectsTeamOutput(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord, attribution: ProjectsTeamAttribution, teamIds: readonly string[], filter?: ProjectsMetricFilter): WorkTotals {
+  return projectsWorkTotals(selectProjectsOutputTeamIssues(tasks, sprint, attribution, teamIds, filter))
 }
 function ratio(numerator: number | null, denominator: number | null, partial = false): ProjectsRatio {
   const value = numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null
