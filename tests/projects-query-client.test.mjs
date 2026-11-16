@@ -75,6 +75,8 @@ describe("explicit projects query lifecycle (controlled hooks)", () => {
 const chartNode = (tree, id) => nodes(tree).find((node) => node.type?.name === "ProjectsTrendChart" && node.props.id === id)
 const target = (tree, index = 0) => nodes(tree).find((node) => node.props["data-sprint-index"] === index)
 const readout = (tree) => nodes(tree).find((node) => node.props.role === "region")
+// A panel's unit switch may sit in the header `controls` prop (not walked by `nodes()`) or in its body.
+const unitsOf = (tree, name) => nodes(tree).filter((node) => node.type?.name === "Panel").map((panel) => [...nodes(panel), ...nodes(panel.props.controls)]).flat().find((node) => node.type?.name === "Units" && node.props.name === name)
 const text = (tree) => renderToStaticMarkup(tree).replace(/<[^>]*>/g, "")
 const paths = (tree) => nodes(tree).filter((node) => node.type === "path" && node.props.className === "projects-trend-line")
 const markers = (tree) => nodes(tree).filter((node) => node.type?.name === "Marker")
@@ -106,13 +108,13 @@ function clickTopic(tree, label, trigger = topicTrigger()) {
 }
 
 describe("local Projects topic tabs", () => {
-  it("links six stable tabs to mounted panels with one active topic and topic-local summaries", () => {
+  it("links the four stable tabs to mounted panels with one active topic and topic-local summaries", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
       const result = resultFixture(h.load(MODEL), [task(1)], request), render = () => h.invoke(Component, { result })
       const tree = render(), tabs = topicTabs(tree), panels = topicPanels(tree)
-      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "Sprint 完成率", "完成的任務類型", "開發品質", "開發壓力", "目前未完成"])
-      assert.equal(panels.length, 6)
+      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "Sprint 完成率", "完成任務類型", "目前未完成"])
+      assert.equal(panels.length, 4)
       assert.equal(activePanel(tree).props["data-topic"], "output")
       assert.equal(tabs.filter((tab) => tab.props["aria-selected"]).length, 1)
       assert.equal(tabs.filter((tab) => tab.props.tabIndex === 0).length, 1)
@@ -136,7 +138,7 @@ describe("local Projects topic tabs", () => {
       }
       // The data tables below the charts were removed on request; panels still render their charts only.
       assert.equal(nodes(render()).filter((node) => node.type?.name === "DataTable").length, 0)
-      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 7 : 2)
+      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 5 : 2)
       assert.equal(h.requests.length, 0)
     }
   })
@@ -252,6 +254,25 @@ describe("local Projects topic tabs", () => {
     ], "one row per member, each with their own planned, completed and per-member capacity")
     assert.match(renderToStaticMarkup(detail.type(detail.props)), /各成員計畫、完成與 Capacity/)
   })
+  it("shows dev-type shares beside the 完成任務類型 chart and the clicked Sprint's shares below it", () => {
+    const h = projectsHarness()
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a", points: 6, devType: "Dev" }),
+      task(2, { assigneeAccountId: "b", points: 3, devType: "Dev" }),
+      task(3, { assigneeAccountId: "a", points: 2, devType: "Bug" }),
+    ], multiRequest, { status: "available", byAssignee: [{ accountId: "a", teamId: "ent-android" }, { accountId: "b", teamId: "ent-web" }] })
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const pies = (tree) => nodes(tree).filter((node) => Array.isArray(node.props.shares))
+    assert.deepEqual(pies(render()).map((node) => node.props.title), ["2 個 Sprint 加總類型佔比"])
+    assert.deepEqual(plain(pies(render())[0].props.shares.map((share) => [share.label, share.points, share.teams.map((team) => [team.label, team.points])])), [
+      ["Dev", 9, [["Android", 6], ["Web", 3]]],
+      ["Bug", 2, [["Android", 2]]],
+    ], "shares by Story Points with the team split for the tooltip")
+    const chart = chartNode(render(), "types"), draw = () => h.invoke(chart.type, chart.props)
+    target(draw(), 0).props.onClick()
+    assert.deepEqual(pies(render()).map((node) => node.props.title), ["2 個 Sprint 加總類型佔比", "Sprint 58 類型佔比"])
+    assert.equal(pies(render())[1].props.shares.reduce((sum, share) => sum + share.points, 0), 11)
+  })
   it("uses Sprint 完成率 for metric labels while retaining the internal metric identifiers", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], request)
@@ -291,21 +312,20 @@ describe("local Projects topic tabs", () => {
   it("preserves unit choices, chart identities and observation/emphasis across topic switching", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], multiRequest)
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
-    clickTopic(render(), "完成的任務類型")
-    nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.onChange("count")
+    clickTopic(render(), "完成任務類型")
+
     const original = chartNode(render(), "types"), draw = () => h.invoke(original.type, chartNode(render(), "types").props)
     nodes(draw()).find((node) => node.props["aria-label"] === "聚焦 Dev 趨勢").props.onClick()
     target(draw(), 1).props.onClick()
     const label = text(readout(draw()))
-    clickTopic(render(), "開發品質")
-    nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.onChange("actualSp")
-    clickTopic(render(), "總產出"); clickTopic(render(), "完成的任務類型")
-    assert.equal(nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.value, "count")
+    clickTopic(render(), "Sprint 完成率")
+    clickTopic(render(), "總產出"); clickTopic(render(), "完成任務類型")
+    assert.equal(chartNode(render(), "types").props.unit, "SP", "完成任務類型 is fixed to Story Points")
     assert.equal(chartNode(render(), "types").key, original.key)
     assert.equal(text(readout(draw())), label)
     assert.ok(nodes(draw()).some((node) => node.props["aria-label"] === "聚焦 Dev 趨勢" && node.props["aria-pressed"]))
-    clickTopic(render(), "開發品質")
-    assert.equal(nodes(activePanel(render())).find((node) => node.type?.name === "Units").props.value, "actualSp")
+    clickTopic(render(), "目前未完成")
+    assert.equal(chartNode(render(), "types").props.unit, "SP")
     assert.equal(h.requests.length, 0)
   })
   it("keeps local details outside panels, clearing them only when changing topic", () => {
@@ -316,7 +336,7 @@ describe("local Projects topic tabs", () => {
     assert.ok(topicPanels(render()).every((panel) => !localDetail(panel)))
     clickTopic(render(), "總產出")
     assert.ok(localDetail(render()))
-    clickTopic(render(), "開發品質")
+    clickTopic(render(), "目前未完成")
     assert.equal(localDetail(render()), undefined)
     assert.equal(h.requests.length, 0)
   })
@@ -325,23 +345,23 @@ describe("local Projects topic tabs", () => {
     const Component = h.load(VIEW).ProjectsAnalysisView
     const html = renderToStaticMarkup(createElement("div", null, createElement(Component, { result }), createElement(Component, { result })))
     const controls = [...html.matchAll(/role="tab"[^>]*aria-controls="([^"]+)"/g)].map((match) => match[1])
-    assert.equal(controls.length, 12)
-    assert.equal(new Set(controls).size, 12)
+    assert.equal(controls.length, 8)
+    assert.equal(new Set(controls).size, 8)
     for (const id of controls) assert.ok(html.includes(`id="${id}" role="tabpanel"`))
   })
 })
 
 describe("projects result visualization and readonly local details", () => {
-  it("renders six categories plus unknown and ratio formulas", () => {
+  it("renders every remaining category plus unknown and ratio formulas", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1, { points: null, actualPoints: 5 }), task(2, { devType: "Bug", points: 6 }), task(3, { devType: "Bug", points: 3 }), task(4, { resolvedDate: null, points: 0 })])
     const html = h.render(h.load(VIEW).ProjectsAnalysisView, { result })
-    for (const text of ["—／未填", "Actual SP", "Sprint 完成率", "OP-Bug", "未分類", "200%", "未填", "單一 Sprint 顯示類型分布"]) assert.ok(html.includes(text), text)
+    for (const text of ["—／未填", "Sprint 完成率", "未分類"]) assert.ok(html.includes(text), text)
     assert.doesNotMatch(html, /NaN|Infinity|績效排行/)
     assert.equal((html.match(/<details/g) ?? []).length, 0, "no collapsible data tables remain")
     assert.ok(html.includes('aria-label="圖例"'))
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     assert.equal(nodes(tree).filter((node) => node.type === "button" && node.props.className?.includes("text-2xl")).length, 0)
-    assert.equal(nodes(tree).filter((node) => node.type === "article" && "data-summary-tile" in node.props).length, 6)
+    assert.equal(nodes(tree).filter((node) => node.type === "article" && "data-summary-tile" in node.props).length, 4)
     assert.equal(nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart").length, 2)
     assert.equal(chartNode(tree, "types").props.distribution, true)
   })
@@ -372,39 +392,27 @@ describe("projects result visualization and readonly local details", () => {
     assert.ok(markers(tree).length > 0)
     assert.ok(paths(tree).length > 0)
   })
-  it("separates the six metrics and unfinished units, projecting existing sorted summaries", () => {
+  it("separates the remaining metrics and unfinished units, projecting existing sorted summaries", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { resolvedDate: null, sprintIds: [6824], points: 8 })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     const charts = nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart")
-    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "types", "quality", "pressure", "unfinished-sp", "unfinished-count"])
+    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "types", "unfinished-sp", "unfinished-count"])
     assert.deepEqual([...chartNode(tree, "output").props.sprints].map((s) => s.id), [6823, 6824])
     assert.deepEqual(plain(chartNode(tree, "output").props.series[0].values.map((v) => v.value)), [3, 0])
     assert.deepEqual(plain(chartNode(tree, "unfinished-sp").props.series[0].values.map((v) => v.value)), [0, 8])
     assert.deepEqual(plain(chartNode(tree, "unfinished-count").props.series[0].values.map((v) => v.value)), [0, 1])
     assert.equal(chartNode(tree, "unfinished-count").props.integer, true)
-    assert.equal(chartNode(tree, "quality").props.unit, "%")
-    assert.equal(chartNode(tree, "pressure").props.series.length, 2)
-    assert.match(renderToStaticMarkup(chartNode(tree, "pressure").props.series[1].values[0].note), /TKK＋SUN/)
   })
-  it("switches seven type series and quality units locally without repainting identities or fetching", () => {
+  it("switches the type series without repainting identities or fetching", () => {
     const h = projectsHarness(), model = h.load(MODEL), Component = h.load(VIEW).ProjectsAnalysisView
     const result = resultFixture(model, [task(1, { points: 2, actualPoints: 4 }), task(2, { devType: "Bug", points: 3 }), task(3, { devType: "Bug", points: 3 })], multiRequest)
     const render = () => h.invoke(Component, { result })
-    const units = (name, unit) => nodes(render()).find((node) => node.type?.name === "Units" && node.props.name === name).props.onChange(unit)
+    const units = (name, unit) => unitsOf(render(), name).props.onChange(unit)
     const original = chartNode(render(), "types").props.series
     assert.deepEqual(plain(original.map((s) => s.label)), [...model.PROJECTS_DEV_TYPES])
-    for (const unit of ["actualSp", "count", "sp"]) {
-      units("完成的任務類型", unit)
-      const chart = chartNode(render(), "types")
-      assert.deepEqual(chart.props.series.map((s) => [s.id, s.color]), original.map((s) => [s.id, s.color]))
-      chart.props.series.forEach((s, index) => assert.equal(s.values[0].value, unit === "count" ? result.summaries[0].devTypes[index].totals.count : result.summaries[0].devTypes[index].totals[unit].sum))
-      assert.equal(chart.key, `types-${unit}`)
-    }
-    assert.equal(chartNode(render(), "quality").props.series[0].values[0].value, 2)
-    for (const unit of ["sp", "actualSp", "count"]) {
-      units("開發品質", unit)
-      assert.equal(chartNode(render(), "quality").props.series[0].values[0].value, result.summaries[0].quality[unit].value)
-    }
+    // 完成任務類型 is Story Points only now: no unit switch and no 張數/Actual SP variants.
+    assert.equal(chartNode(render(), "types").props.unit, "SP")
+    chartNode(render(), "types").props.series.forEach((s, index) => assert.equal(s.values[0].value, result.summaries[0].devTypes[index].totals.sp.sum))
     assert.equal(h.requests.length, 0)
   })
   it("keeps all series while emphasizing, changing emphasis and restoring the original identities", () => {
@@ -622,13 +630,9 @@ describe("projects result visualization and readonly local details", () => {
     assert.equal(paths(missing).length, 0); assert.equal(markers(missing).length, 0)
     assert.equal(nodes(missing).filter((n) => n.props["data-bar-value"] !== undefined).length, 0)
   })
-  it("shows ratios above 100% with separate local detail actions", () => {
+  it("shows the Sprint completion ratio with its own cohort", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { devType: "Bug" }), task(3, { devType: "Bug" })], multiRequest)
-    const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }), chart = chartNode(tree, "quality")
-    assert.equal(chart.props.series[0].values[0].value, 2)
-    // The value carries its own readout ("2／1 張數") even though the separate hover panel is gone.
-    assert.match(String(renderToStaticMarkup(chart.props.series[0].values[0].readout)), /200%|2／1/)
-    assert.deepEqual(plain(chart.props.series[0].values[0].actions.map((a) => a.label)), ["Bug 明細", "Dev 明細"])
+    const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     // Completion is computed from the plotted cohort now, so it carries a readout and note instead of actions.
     const commitment = chartNode(tree, "commitment").props.series[0].values[0]
     assert.equal(commitment.value, 1, "all Dev-Task work completed in the Sprint → 100%")
@@ -670,15 +674,10 @@ describe("projects result visualization and readonly local details", () => {
       task(6, { sprintIds: [6824], resolvedDate: "2026-05-12" }),
     ], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
-    // The charts carry the same cohorts as links; tables that used to list these per Sprint are gone.
-    const pressure = chartNode(tree, "pressure")
-    const sprint58 = (series) => pressure.props.series.find((s) => s.label === series).values[0].readout
-    // Pressure uses each task's own project: TKK holds task 5, SUN holds the rest of Sprint 58.
-    expectQuery(sprint58("TKK"), "TKK SP，", ["5"])
-    expectQuery(sprint58("SUN"), "SUN SP，", ["1", "2", "3", "4"])
+    // The remaining charts carry their cohorts as links (pressure and quality were removed).
     assert.equal(h.requests.length, 0)
   })
-  it("links ratio comparison, numerator and denominator separately without changing formulas", () => {
+  it("links the completion ratio without changing its formula", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { devType: "Bug" }), task(3, { devType: "Bug", issueType: "QA-Task" }), task(4, { resolvedDate: null }), task(5, { devType: "OP-Bug" })], multiRequest)
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     // Ratio links live on each chart datum (the separate trend readout panel was removed).
@@ -687,11 +686,7 @@ describe("projects result visualization and readonly local details", () => {
     const commitment = chartNode(tree, "commitment").props.series[0].values[0]
     assert.match(String(renderToStaticMarkup(commitment.note)), /12／15 SP/)
     assert.equal(commitment.value, 0.8)
-    const quality = chartNode(tree, "quality").props.series[0].values[0]
-    expectQuery(quality.readout, "Bug／Dev · Bug＋Dev 比較母體", ["1", "2", "3"])
-    expectQuery(quality.note, "Bug／Dev 分子 · 張數", ["2", "3"])
-    expectQuery(quality.note, "Bug／Dev 分母 · 張數", ["1"])
-    assert.match(String(renderToStaticMarkup(quality.readout)), /200%/)
+
   })
   it("keeps one roving Sprint target and links the selected Sprint to its bars", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { sprintIds: [6824], resolvedDate: "2026-05-12" })], multiRequest)
@@ -713,12 +708,11 @@ describe("projects result visualization and readonly local details", () => {
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
     const tiles = nodes(render()).filter((n) => n.type === "article" && "data-summary-tile" in n.props)
     expectQuery(tiles[0], "總產出 SP", ["1", "2", "3"])
-    expectQuery(tiles[3], "Bug＋Dev 比較母體", ["1", "2"])
-    nodes(tiles[3]).find((n) => n.type === "button").props.onClick()
+    expectQuery(tiles[1], "Sprint 完成率", ["1", "2", "3"])
+    nodes(tiles[1]).find((n) => n.type === "button").props.onClick()
     const details = nodes(render()).find((n) => n.props.title && text(n.props.title).includes("張工作單"))
-    assert.match(text(details.props.title), /2 張工作單/)
-    assert.doesNotMatch(renderToStaticMarkup(details), /Work 3/)
-    expectQuery(details, "明細張數", ["1", "2"])
+    assert.match(text(details.props.title), /3 張工作單/)
+    expectQuery(details, "明細張數", ["1", "2", "3"])
     assert.match(renderToStaticMarkup(details), /href="https:\/\/jira.example.test\/browse\/SUN-1"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*aria-label="SUN-1 · SP/)
     const chart = chartNode(render(), "types"), distribution = h.invoke(chart.type, chart.props)
     expectQuery(distribution, "Dev SP", ["1"])

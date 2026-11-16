@@ -48,7 +48,7 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
@@ -66,6 +66,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   initialSprintId?: number | null
   /** Print each curve's value above its point for the labelled Sprint (aggregate views only). */
   labelPointValues?: boolean
+  /** Plot height in px; letting a neighbouring card drive it keeps a two-column layout aligned. */
+  plotHeight?: number
 }) {
   const patternPrefix = `projects-stack-${useId().replace(/[^a-zA-Z0-9_-]/g, "_")}`
   const container = useRef<HTMLDivElement>(null)
@@ -113,7 +115,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   const totalMarkers = (field: "points" | "actualPoints") => sprints.map((_, index) => stackSeries.some(({ item }) => item.values[index]?.[field] !== null && item.values[index]?.[field] !== undefined))
   // Both side-by-side bars share the axis, so the taller unit (usually Actual SP) must fit it too.
   const maximum = cleanAxisMaximum(implicitTotal ? [...totalValues("points"), ...totalValues("actualPoints")] : lineSeries.flatMap(({ item }) => item.values.flatMap((value) => [value.value, value.points, value.actualPoints].filter((amount): amount is number | null => amount !== undefined))), integer)
-  const left = 58, right = width >= 640 && lineSeries.length <= 4 ? 152 : 18, top = 22, plotHeight = 206, height = 276
+  const left = 58, right = width >= 640 && lineSeries.length <= 4 ? 152 : 18, top = 22
+  const plotHeight = plotHeightProp, height = plotHeight + 70
   const endLabels = !implicitTotal && width >= 640 && lineSeries.length <= 4 ? lineSeries.map(({ item }) => ({ item, value: item.values.at(-1)?.value })).filter((entry) => entry.value !== null && entry.value !== undefined).map((entry) => ({ ...entry, y: top + (1 - entry.value! / maximum) * plotHeight })) : []
   const availableWidth = Math.max(1, width - left - right)
   // Stacked bars are drawn as two tight side-by-side bars — the Story Point estimate next to Actual SP — whose
@@ -181,7 +184,6 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
         return legendToggle && item.toggleable !== false ? <button type="button" key={item.id} aria-pressed={visibleIds!.has(item.id)} aria-label={`顯示 ${item.label} 產出`} className="flex min-h-9 items-center gap-2 rounded-md border border-transparent px-2 text-left focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => legendToggle.onToggle(item.id)}>{keyFor(entry)}<span>{item.label}</span>{!visibleIds!.has(item.id) && <span>· 已隱藏</span>}</button> : focusableLegend && !legendToggle ? <button type="button" key={item.id} aria-pressed={emphasis === item.id} aria-label={`聚焦 ${item.label} 趨勢`} className="flex min-h-9 items-center gap-2 rounded-md border border-transparent px-2 text-left focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => setEmphasis((previous) => previous === item.id ? null : item.id)}>{keyFor(entry)}<span>{item.label}</span>{emphasis === item.id && <span className="text-xs">· 聚焦</span>}</button> : <span key={item.id} className="flex min-h-8 items-center gap-2">{keyFor(entry)}{item.label}</span>
       })}
     </div>}
-    {focusableLegend && <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">點選類型可聚焦其走勢，再點一次恢復全部；所有類型仍保留。{emphasis && `目前聚焦：${series.find((item) => item.id === emphasis)?.label}`}</p>}
     {distribution ? <div className="space-y-3" aria-label={`${sprints[0]?.name} 任務類型分布 · ${unit}`}>
       {visible.map(({ item, index, shape, dash }) => {
         const datum = item.values[0]

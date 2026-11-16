@@ -369,6 +369,21 @@ describe("project Sprint-only UI and navigation", () => {
     checkbox(next, "S128").props.onChange({ target: { checked: true } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&sprint=6619")
   })
+  it("selecting a project preselects exactly the 近 5 Sprints set, so that shortcut starts pressed", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, { project: "SUN" })
+    h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    // The effect navigates to the same five Sprints the shortcut would pick.
+    const five = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 5).map((sprint) => sprint.id).sort((a, b) => a - b)
+    assert.equal(h.pushes.at(-1), `/analytics/projects?project=SUN&` + five.map((id) => `sprint=${id}`).join("&"))
+    // Once that URL is applied the shortcut shows as pressed, with no manual ticking (fresh harness = fresh render).
+    const fresh = harness("2026-11-12"), FreshFilter = fresh.load(FILTER).ProjectsFilter
+    const applied = await selectionProps(fresh, { project: "SUN", sprint: five.map(String) })
+    const shortcut = nodes(fresh.invoke(FreshFilter, applied)).find((node) => node.type === "button" && Array.isArray(node.props.children) && node.props.children[1] === 5)
+    assert.equal(shortcut.props["aria-pressed"], true)
+  })
   it("近 5 Sprints picks the five newest ended Sprints and stays pressed only for that exact selection", async () => {
     const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
@@ -561,7 +576,8 @@ describe("project Sprint-only UI and navigation", () => {
       assert.equal(panel.scrollTop > 0, maxScroll > 0)
       // The only navigation is the newest-Sprints preselection (no analysis is triggered).
       // Same rule as the filter: ended Sprints, newest first by start date, capped at one analysis run.
-      const newest = rows.map((row) => props.sprints.find((sprint) => sprint.id === row.props["data-sprint-id"])).slice(0, 6).map((sprint) => sprint.id).sort((a, b) => a - b)
+      // A project preselects the same five newest Sprints as the 近 5 Sprints shortcut.
+      const newest = rows.map((row) => props.sprints.find((sprint) => sprint.id === row.props["data-sprint-id"])).slice(0, 5).map((sprint) => sprint.id).sort((a, b) => a - b)
       assert.deepEqual(h.pushes, [`/analytics/projects?project=${project}&` + newest.map((id) => `sprint=${id}`).join("&")])
     }
   })

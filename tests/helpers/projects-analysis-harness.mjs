@@ -11,6 +11,7 @@ export const VIEW = "app/(app)/analytics/projects/projects-analysis-view.tsx"
 export const CHART = "app/(app)/analytics/projects/projects-trend-chart.tsx"
 export const GEOMETRY = "app/(app)/analytics/projects/projects-trend-geometry.ts"
 export const SPRINT_DETAIL = "app/(app)/analytics/projects/projects-sprint-detail.tsx"
+export const DEV_TYPE_PIE = "app/(app)/analytics/projects/projects-dev-type-pie.tsx"
 export const plain = (value) => JSON.parse(JSON.stringify(value))
 export function projectsHarness() {
   const modules = new Map(), components = new Map(), effects = [], requests = [], events = new Map()
@@ -63,7 +64,7 @@ export function projectsHarness() {
       if (name === "@/components/ticket-link") return { TicketLink: ({ task, jiraBaseUrl }) => createElement("a", { href: `${jiraBaseUrl}/browse/${encodeURIComponent(task.key)}` }, task.key) }
       let base = name.startsWith("@/") ? name.slice(2) : name.startsWith(".") ? normalize(`${dirname(path)}/${name}`) : null
       if (!base) throw new Error(`Unexpected import ${name}`)
-      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART, SPRINT_DETAIL].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
+      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART, SPRINT_DETAIL, DEV_TYPE_PIE].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
       return load(base)
     }
     vm.runInContext(`(function(require,module,exports){${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)

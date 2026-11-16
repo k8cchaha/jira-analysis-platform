@@ -441,7 +441,7 @@ describe("Projects per-team completed output", () => {
     const { render, draw, toggle, h, Component, result } = setup()
     unitControl(render()).props.onChange("actualSp")
     toggle("Android")
-    for (const label of ["開發品質", "總產出"]) nodes(render()).find((n) => n.props.role === "tab" && n.props.children === label).props.onClick({ currentTarget: { focus() {}, scrollIntoView() {} } })
+    for (const label of ["目前未完成", "總產出"]) nodes(render()).find((n) => n.props.role === "tab" && n.props.children === label).props.onClick({ currentTarget: { focus() {}, scrollIntoView() {} } })
     assert.equal(unitControl(render()).props.value, "actualSp")
     assert.equal(legends(draw())[0].props["aria-pressed"], false)
     const next = projectsHarness(), tree = next.invoke(next.load(VIEW).ProjectsAnalysisView, { result })

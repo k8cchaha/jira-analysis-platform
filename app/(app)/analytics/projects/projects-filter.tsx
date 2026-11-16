@@ -36,8 +36,9 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
   const availableSprints = selection.project === props.project && today ? filterEndedSprints(props.sprints, today) : []
   const orderedSprints = [...availableSprints].sort((a, b) => b.startDate.localeCompare(a.startDate))
   // Opening the page with only a project preselects the newest ended Sprints, never more than one analysis run.
+  // Selecting a project defaults to exactly the 近 5 Sprints shortcut's selection (newest first, capped at five).
   const preselected = selection.project === props.project && today !== null && !selection.error && !selection.selectedSprintIds.length
-    ? orderedSprints.slice(0, PROJECTS_SPRINT_LIMIT).map((sprint) => sprint.id)
+    ? orderedSprints.slice(0, RECENT_SPRINT_COUNT).map((sprint) => sprint.id)
     : null
   useEffect(() => {
     if (!preselected || JSON.stringify(preselected) === JSON.stringify(props.selectedSprintIds)) return

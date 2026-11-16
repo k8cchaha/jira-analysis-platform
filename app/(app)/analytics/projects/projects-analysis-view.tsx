@@ -8,6 +8,7 @@ import { useTeamMembers } from "@/components/team-members-provider"
 import { memberCapacity, teamCapacities } from "@/lib/projects-capacity"
 import { isBlockedParentStatus } from "@/lib/blocked-parent"
 import { ProjectsCommitmentDetail, ProjectsSprintDetail, sprintTeamBreakdown, type CommitmentTeamRow } from "./projects-sprint-detail"
+import { ProjectsDevTypePie } from "./projects-dev-type-pie"
 import { jiraIssueHref, jiraSearchHref } from "@/lib/jira-url"
 import { filterProjectsMetricTasks, projectsPointTotal, projectsRatio, ProjectsAnalysisValidationError, PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, selectProjectsTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsMetricFilter, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
 import { ProjectsTrendChart, type TrendDatum, type TrendSeries } from "./projects-trend-chart"
@@ -39,9 +40,7 @@ const outputUnitLabels = { sp: "Story Points", actualSp: "Actual Story Points" }
 const topics = [
   { id: "output", label: "總產出" },
   { id: "commitment", label: "Sprint 完成率" },
-  { id: "types", label: "完成的任務類型" },
-  { id: "quality", label: "開發品質" },
-  { id: "pressure", label: "開發壓力" },
+  { id: "types", label: "完成任務類型" },
   { id: "unfinished", label: "目前未完成" },
 ] as const
 type Topic = typeof topics[number]["id"]
@@ -55,7 +54,6 @@ const commitmentViewLabels: Record<OutputView, string> = { "all-teams": "全團�
 const outputMemberViewLabels: Record<OutputView, string> = { "all-teams": "全成員總覽", "by-team": "各成員產出" }
 type SegmentedValue = Unit | OutputView
 const pointFields = { sp: "points", actualSp: "actualPoints" } as const
-const qualityMetrics: readonly ProjectsMetric[] = [{ kind: "type", value: "Bug" }, { kind: "type", value: "Dev" }]
 const number = (value: number) => new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2, ...(value > 0 && (value < .01 || value >= 1e12) ? { notation: "scientific" as const } : value >= 10_000 ? { notation: "compact" as const } : {}) }).format(value)
 const points = (value: PointTotal) => value.sum === null ? "—／未填" : number(value.sum)
 const percentTick = (value: number) => value > 0 && value < .0005 ? "<0.1%" : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 1, style: "percent", notation: value >= 1e4 ? "scientific" : "standard" }).format(value)
@@ -86,8 +84,6 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [activeTopic, setActiveTopic] = useState<Topic>("output")
   const topicTabs = useRef<Partial<Record<Topic, HTMLButtonElement>>>({})
   const [detail, setDetail] = useState<{ id: number; metric: DetailMetric; label: string } | null>(null)
-  const [typeUnit, setTypeUnit] = useState<Unit>("sp")
-  const [qualityUnit, setQualityUnit] = useState<Unit>("count")
   const candidates = outputTeams.filter((team) => !result.request.groups.length || result.request.groups.includes(team.id))
   const [outputUnit, setOutputUnit] = useState<"sp" | "actualSp">("sp")
   const [visibleTeams, setVisibleTeams] = useState<string[]>(() => candidates.map((team) => team.id))
@@ -95,6 +91,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [hiddenMembers, setHiddenMembers] = useState<string[]>([])
   // Sprint completion: one aggregate curve for all teams, or one curve per visible team.
   const [commitmentView, setCommitmentView] = useState<OutputView>("all-teams")
+  // Sprint clicked in the 任務類型 chart; its own dev-type share donut renders below the chart.
+  const [selectedTypesSprint, setSelectedTypesSprint] = useState<number | null>(null)
   // Same rule as the dev-status page: a Dev-Task whose parent is blocked counts as completed (ticked by default).
   const [countBlockedParent, setCountBlockedParent] = useState(true)
   // Sprint clicked in the 完成率 chart; its per-team bars render below the chart.
@@ -170,21 +168,14 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     const total = select(summary), point = unit === "count" ? null : total[unit]
     return { value: unit === "count" ? total.count : point!.sum, points: paired ? total.sp.sum : undefined, actualPoints: paired ? total.actualSp.sum : undefined, display: unit === "count" ? number(total.count) : points(point!), readout: metricValue(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, unit === "count" ? total.count : point!.sum, unit === "count" ? number(total.count) : points(point!)), note: point ? coverage(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, point, unit as "sp" | "actualSp") : undefined, partial: point ? point.missingCount > 0 : false, actions: [action(summary.sprint.id, metric, `${label} ${unitLabels[unit]}，查看工作單明細`)] }
   }) })
-  const ratioParts = (s: ProjectsSprintSummary, kind: "commitment" | "quality", unit: Unit) => {
-    const commitment = kind === "commitment", value = commitment ? s.commitment : s.quality[unit]
-    const all: DetailMetric = commitment ? { kind: "commitment-all" } : qualityMetrics
-    const numerator: ProjectsMetric = commitment ? { kind: "commitment-done" } : qualityMetrics[0]
-    const denominator: ProjectsMetric = commitment ? { kind: "commitment-all" } : qualityMetrics[1]
-    const label = commitment ? "Sprint 完成率" : "Bug／Dev"
+  const ratioParts = (s: ProjectsSprintSummary, unit: Unit) => {
+    const value = s.commitment
+    const all: DetailMetric = { kind: "commitment-all" }, numerator: ProjectsMetric = { kind: "commitment-done" }, denominator: ProjectsMetric = { kind: "commitment-all" }
     const amount = (value: number | null) => value === null ? "未填" : number(value)
-    return { value, main: metricValue(s.sprint.id, all, `${label} · ${commitment ? "全部 Dev-Task" : "Bug＋Dev 比較母體"}`, value.value, percent(value)), numerator: metricValue(s.sprint.id, numerator, `${label} 分子 · ${unitLabels[unit]}`, value.numerator, amount(value.numerator)), denominator: metricValue(s.sprint.id, denominator, `${label} 分母 · ${unitLabels[unit]}`, value.denominator, amount(value.denominator)) }
+    return { value, main: metricValue(s.sprint.id, all, "Sprint 完成率 · 全部 Dev-Task", value.value, percent(value)), numerator: metricValue(s.sprint.id, numerator, `Sprint 完成率 分子 · ${unitLabels[unit]}`, value.numerator, amount(value.numerator)), denominator: metricValue(s.sprint.id, denominator, `Sprint 完成率 分母 · ${unitLabels[unit]}`, value.denominator, amount(value.denominator)) }
   }
-  const ratioView = (s: ProjectsSprintSummary, kind: "commitment" | "quality", unit: Unit) => <Ratio {...ratioParts(s, kind, unit)} unit={unitLabels[unit]} />
+  const ratioView = (s: ProjectsSprintSummary, unit: Unit) => <Ratio {...ratioParts(s, unit)} unit={unitLabels[unit]} />
   const commitmentCoverage = (s: ProjectsSprintSummary) => <><span className="mt-1 block">分子完成 SP</span>{coverage(s.sprint.id, { kind: "commitment-done" }, "分子完成 SP", s.commitmentPoints.done, "sp")}<span className="block">分母全部 Dev-Task SP</span>{coverage(s.sprint.id, { kind: "commitment-all" }, "分母全部 Dev-Task SP", s.commitmentPoints.all, "sp")}</>
-  const ratioDatum = (s: ProjectsSprintSummary, kind: "commitment" | "quality", unit: Unit): TrendDatum => {
-    const parts = ratioParts(s, kind, unit)
-    return { value: parts.value.value, display: percent(parts.value), readout: parts.main, partial: parts.value.partial, note: <><span>{parts.numerator}／{parts.denominator} {unitLabels[unit]}{parts.value.partial ? " · 已填點數比（有缺值）" : ""}</span>{kind === "commitment" && commitmentCoverage(s)}</>, actions: kind === "commitment" ? [action(s.sprint.id, { kind: "commitment-done" }, "Sprint 完成率 分子 · 完成明細"), action(s.sprint.id, { kind: "commitment-all" }, "Sprint 完成率 分母 · 全部明細")] : [action(s.sprint.id, qualityMetrics[0], "Bug 明細"), action(s.sprint.id, qualityMetrics[1], "Dev 明細")] }
-  }
   const multi = result.sprints.length > 1
   const outputMetric = (teamIds: readonly string[]): OutputTeamMetric => ({ kind: "output-teams", teamIds })
   const teamTotals = (s: ProjectsSprintSummary, teamIds: readonly string[]) => projectsWorkTotals(issues(s.sprint.id, outputMetric(teamIds)))
@@ -259,7 +250,27 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     try { tasks = issues(sprintDetailSprint.id, outputMetric([entry.teamId])) } catch (error) { if (!(error instanceof ProjectsAnalysisValidationError)) throw error }
     return { ...entry, href: searchLink(tasks).href, members: teamMembers(entry.teamId) }
   })) : []
-  const typeSeries = PROJECTS_DEV_TYPES.map((label, index) => totalSeries(label, label, `type-${index}`, (s) => s.devTypes.find((group) => group.label === label)!.totals, typeUnit, { kind: "type", value: label }))
+  // Dev-type points split by team, for the share donuts. Tasks without attribution fall under 其他.
+  const devTypeShares = (sprintIds: readonly number[]) => PROJECTS_DEV_TYPES.map((label) => {
+    const byTeam = new Map<string, { key: string; label: string; points: number }>()
+    let points = 0
+    for (const sprintId of sprintIds) {
+      for (const task of issues(sprintId, { kind: "type", value: label })) {
+        if (task.points === null) continue
+        const teamId = task.assigneeAccountId === null ? "other" : attribution?.status === "available" ? attribution.byAssignee.find((entry) => entry.accountId === task.assigneeAccountId)?.teamId ?? "other" : "other"
+        const team = outputTeams.find((entry) => entry.id === teamId) ?? outputTeams[outputTeams.length - 1]
+        const entry = byTeam.get(teamId) ?? { key: teamId, label: team.label, points: 0 }
+        entry.points += task.points
+        byTeam.set(teamId, entry)
+        points += task.points
+      }
+    }
+    return { label, points, teams: [...byTeam.values()].sort((a, b) => b.points - a.points || a.label.localeCompare(b.label)) }
+  }).filter((share) => share.points > 0)
+  const allSprintShares = devTypeShares(result.sprints.map((sprint) => sprint.id))
+  const selectedTypeSprint = selectedTypesSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedTypesSprint) ?? null
+  const selectedSprintShares = selectedTypeSprint ? devTypeShares([selectedTypeSprint.id]) : []
+  const typeSeries = PROJECTS_DEV_TYPES.map((label, index) => totalSeries(label, label, `type-${index}`, (s) => s.devTypes.find((group) => group.label === label)!.totals, "sp", { kind: "type", value: label }))
   // Sprint completion: completed SP ÷ all SP of the Dev-Task population, with QA-Task included unless the
   // QA checkbox is off. 全團隊完成率 is one aggregate curve; 各團隊完成率 draws one curve per visible team.
   // A completion rate over a list of tasks, using the same window + blocked-parent rule as the team figures.
@@ -352,9 +363,6 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
       ? [{ id: "commitment", label: "全團隊完成率", color: "sp", values: result.sprints.map((sprint) => commitmentDatum(sprint.id, null)) }]
       : visibleCommitmentTeams.map((team) => ({ id: team.id, label: team.label, color: team.color, encoding: team.encoding, values: result.sprints.map((sprint) => commitmentDatum(sprint.id, [team.id])) }))
           .filter((series) => !series.values.every((datum) => datum.value === null && !datum.partial))
-  const qualitySeries: TrendSeries[] = [{ id: "quality", label: `Bug／Dev · ${unitLabels[qualityUnit]}比`, color: "actual", values: result.summaries.map((s) => ratioDatum(s, "quality", qualityUnit)) }]
-  const pressureSeries = [totalSeries("TKK", "TKK", "sp", (s) => s.pressure.TKK, "sp", { kind: "pressure", value: "TKK" }), totalSeries("SUN", "SUN", "actual", (s) => s.pressure.SUN, "sp", { kind: "pressure", value: "SUN" })]
-  pressureSeries[1].values.forEach((datum, index) => { const s = result.summaries[index]; datum.note = <>{datum.note}<span className="mt-1 block">TKK＋SUN：{pointValue(s.sprint.id, { kind: "pressure" }, "TKK＋SUN SP", s.pressure.combined.sp)} SP</span>{coverage(s.sprint.id, { kind: "pressure" }, "TKK＋SUN SP", s.pressure.combined.sp, "sp")}</> })
   const trend = (id: string, series: TrendSeries[], unit: string, integer = false) => <ProjectsTrendChart id={id} sprints={result.sprints} series={series} unit={unit} integer={integer} formatTick={unit === "%" ? percentTick : number} />
   const first = result.summaries[0]
   const hasUnavailableSearch = result.sprints.some((s) => searchLink(issues(s.id, { kind: "population" })).unavailable)
@@ -366,10 +374,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     const s = first, id = s.sprint.id
     return [
       { topic: "output", label: "全範圍總產出", metric: (includeQa ? { kind: "output" } : { kind: "custom" }) as DetailMetric, value: <>{pointValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, `全範圍總產出 ${unitLabels[outputUnit]}`, scopeOutput(s)[outputUnit])} {unitLabels[outputUnit]}</>, extra: countValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, "全範圍完成張數", scopeOutput(s).count) },
-      { topic: "types", label: "完成的任務類型", metric: { kind: "output" } as DetailMetric, value: countValue(id, { kind: "output" }, "完成的任務類型張數", s.output.count), extra: "六類 Dev Type＋未分類，詳見下方" },
-      { topic: "commitment", label: "Sprint 完成率", metric: { kind: "commitment-all" } as DetailMetric, value: ratioView(s, "commitment", "sp"), extra: "分子當期完成／分母全部 Dev-Task" },
-      { topic: "quality", label: "開發品質 · Bug／Dev", metric: qualityMetrics, value: ratioView(s, "quality", "count"), extra: "Bug＋Dev 比較母體（非績效評等）" },
-      { topic: "pressure", label: "開發壓力 · TKK＋SUN", metric: { kind: "pressure" } as DetailMetric, value: <>{pointValue(id, { kind: "pressure" }, "開發壓力 SP", s.pressure.combined.sp)} SP</>, extra: "範圍內全部工作單，不限完成日期" },
+      { topic: "types", label: "完成任務類型", metric: { kind: "output" } as DetailMetric, value: countValue(id, { kind: "output" }, "完成的任務類型張數", s.output.count), extra: "六類 Dev Type＋未分類，詳見下方" },
+      { topic: "commitment", label: "Sprint 完成率", metric: { kind: "commitment-all" } as DetailMetric, value: ratioView(s, "sp"), extra: "分子當期完成／分母全部 Dev-Task" },
       { topic: "unfinished", label: "目前未完成", metric: { kind: "unfinished" } as DetailMetric, value: countValue(id, { kind: "unfinished" }, "目前未完成張數", s.unfinished.count), extra: <>{pointValue(id, { kind: "unfinished" }, "目前未完成 SP", s.unfinished.sp)} SP · Resolved 空白</> },
     ]
   })()
@@ -414,18 +420,15 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
             : <p className="text-sm">{percent(commitmentRatioFor(first.sprint.id, null))}（{number(commitmentRatioFor(first.sprint.id, null).numerator ?? 0)}／{number(commitmentRatioFor(first.sprint.id, null).denominator ?? 0)} SP）</p>}
       {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={singleTeam ? commitmentMemberRows : commitmentTeamRows} kind={singleTeam ? "member" : "team"} />}
     </Panel>)}
-    {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總產出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">
-      <Units name="完成的任務類型" value={typeUnit} onChange={setTypeUnit} />
-      <ProjectsTrendChart key={`types-${typeUnit}`} id="types" sprints={result.sprints} series={typeSeries} unit={unitLabels[typeUnit]} formatTick={number} integer={typeUnit === "count"} distribution={!multi} focusableLegend />
-    </Panel>)}
-    {topicPanel("quality", <Panel title="開發品質 · Bug／Dev" description="完成工作單 Dev Type Bug／Dev；OP-Bug 不納入，不是 Bug／(Bug＋Dev)。比率可超過 100%，不代表績效評等。">
-        <Units name="開發品質" value={qualityUnit} onChange={setQualityUnit} ratios />
-        {multi ? <ProjectsTrendChart key={`quality-${qualityUnit}`} id="quality" sprints={result.sprints} series={qualitySeries} unit="%" formatTick={percentTick} /> : ratioView(first, "quality", qualityUnit)}
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">0 或未填分母不適用；有缺值的點數比只使用已填點數，非完整估算。</p>
-    </Panel>)}
-    {topicPanel("pressure", <Panel title="開發壓力" description="TKK／SUN 工作單自身 Project 的 SP，不加 Resolved 區間限制；不額外查全站資料。">
-        {multi ? trend("pressure", pressureSeries, "SP") : <p className="text-sm">TKK {pointValue(first.sprint.id, { kind: "pressure", value: "TKK" }, "TKK SP", first.pressure.TKK.sp)} SP · SUN {pointValue(first.sprint.id, { kind: "pressure", value: "SUN" }, "SUN SP", first.pressure.SUN.sp)} SP · 合計 {pointValue(first.sprint.id, { kind: "pressure" }, "TKK＋SUN SP", first.pressure.combined.sp)} SP</p>}
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Sub-task 通常與母票同 Project，壓力可能等於母體 SP；PRIDE 可能為 0。尚未與 Capacity 比較。</p>
+    {topicPanel("types", <Panel title="完成任務類型">
+      {/* The trend sits on top; the two donuts share the row beneath it — all-Sprint summary left, the clicked
+          Sprint's own split right (it appears once a Sprint is clicked). */}
+      <ProjectsTrendChart key="types-sp" id="types" sprints={result.sprints} series={typeSeries} unit={unitLabels.sp} formatTick={number} distribution={!multi} focusableLegend
+        onSprintSelect={(index) => setSelectedTypesSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={selectedTypesSprint} />
+      {(multi || selectedTypeSprint) && <div className="mt-4 grid min-w-0 items-start gap-4 lg:grid-cols-2">
+        {multi && <ProjectsDevTypePie shares={allSprintShares} title={`${result.sprints.length} 個 Sprint 加總類型佔比`} legend="right" />}
+        {selectedTypeSprint && <ProjectsDevTypePie shares={selectedSprintShares} title={`${selectedTypeSprint.name} 類型佔比`} legend="right" />}
+      </div>}
     </Panel>)}
     {topicPanel("unfinished", <Panel title="目前未完成" description="只看現行 Resolved 空白，不限 Sprint 區間；區間外已完成不算未完成。SP／張數分開呈現。">
         {multi ? <div className="space-y-6"><div><h3 className="mb-2 text-sm font-medium">未完成 SP</h3>{trend("unfinished-sp", [totalSeries("unfinished-sp", "未完成 SP", "sp", (s) => s.unfinished, "sp", { kind: "unfinished" })], "SP")}</div><div className="border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="mb-2 text-sm font-medium">未完成張數</h3>{trend("unfinished-count", [totalSeries("unfinished-count", "未完成張數", "actual", (s) => s.unfinished, "count", { kind: "unfinished" })], "張數", true)}</div></div> : <p className="text-sm">{countValue(first.sprint.id, { kind: "unfinished" }, "目前未完成張數", first.unfinished.count)} · {pointValue(first.sprint.id, { kind: "unfinished" }, "目前未完成 SP", first.unfinished.sp)} SP</p>}
