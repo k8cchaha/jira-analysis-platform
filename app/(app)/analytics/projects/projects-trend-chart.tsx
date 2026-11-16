@@ -48,7 +48,7 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
@@ -64,6 +64,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   onSprintSelect?: (index: number | null) => void
   /** Sprint already selected by the page on mount; clicking it once clears, matching a deliberate selection. */
   initialSprintId?: number | null
+  /** Print each curve's value above its point for the labelled Sprint (aggregate views only). */
+  labelPointValues?: boolean
 }) {
   const patternPrefix = `projects-stack-${useId().replace(/[^a-zA-Z0-9_-]/g, "_")}`
   const container = useRef<HTMLDivElement>(null)
@@ -204,7 +206,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
           return <g key={tick}><line x1={left} x2={width - right} y1={y} y2={y} /><text x={left - 9} y={y + 4} textAnchor="end">{formatTick(tick)}</text></g>
         })}</g>
         {/* Stacked mode charts both units, so it labels them together above the plot; other modes keep the unit at the axis. */}
-        {stacked ? <text className="projects-trend-unit-title" x={left + (width - right - left) / 2} y={12} textAnchor="middle">SP / Actual SP</text> : <text className="projects-trend-unit-title" x={left} y={12}>{unit}</text>}
+        {/* Both modes centre the unit above the plot, so the caption never collides with the Y-axis labels. */}
+        <text className="projects-trend-unit-title" x={left + (width - right - left) / 2} y={12} textAnchor="middle">{stacked ? "SP / Actual SP" : unit}</text>
         {selection && <rect className="projects-trend-selection-band" data-selection-index={selection.index} x={selection.bandLeft} y={top} width={selection.bandWidth} height={plotHeight} rx={4} aria-hidden="true" />}
         {stacked && <defs>
           {catalog.map(({ index, shape, dash }) => <pattern key={index} id={`${patternPrefix}-${index}`} width={6 + shape % 7 * 2} height={6 + shape % 7 * 2} patternUnits="userSpaceOnUse" patternTransform={`rotate(${dash ? 135 : 45})`}><line x1={0} x2={0} y1={0} y2={6 + shape % 7 * 2} className="projects-stack-pattern" /></pattern>)}
@@ -236,6 +239,13 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
           const total = (implicitTotal ? totalValues(kind === "points" ? "points" : "actualPoints") : lineSeries[0].item.values.map((datum) => datum[kind === "points" ? "points" : "actualPoints"] ?? null))[column.index]
           if (total === null || total === undefined) return []
           return [<text key={`bar-value-${kind}`} data-bar-value={kind} className={`projects-stack-value projects-stack-value-${kind}`} x={plotLeft + column.x + offset * barOffset} y={top + column.y - 6} textAnchor="middle" aria-hidden="true">{formatTick(total)}</text>]
+        }) : null}
+        {/* Opt-in point labels. Stacked mode needs none: both bars already print their totals above their tops, and the
+            curves meet those same tops. Plain line charts label each series' value just above its point. */}
+        {labelPointValues && !stacked && labelledIndex !== null ? lineSeries.flatMap(({ item }) => {
+          const value = item.values[labelledIndex]?.value
+          if (value === null || value === undefined) return []
+          return [<text key={`line-value-${item.id}`} data-line-value={item.id} className="projects-trend-value" x={x(labelledIndex)} y={top + (1 - value / maximum) * plotHeight - 8} textAnchor="middle" aria-hidden="true">{formatTick(value)}</text>]
         }) : null}
         {/* Stacked mode draws both totals as curves, one per unit, each centred on its own bar; other modes draw one curve per series. */}
         {(stacked ? !visible.length ? [] : [

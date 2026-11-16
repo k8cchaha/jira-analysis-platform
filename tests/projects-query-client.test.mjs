@@ -178,6 +178,46 @@ describe("local Projects topic tabs", () => {
     boxes(render())[1].props.onChange({ target: { checked: false } })
     assert.equal(first(render()).value, 0.5)
   })
+  it("opens per-team planned/completed/capacity bars under the 完成率 chart after clicking a Sprint", () => {
+    const h = projectsHarness()
+    h.groupStates["ent-android"] = { status: "success", members: [{ accountId: "a1" }, { accountId: "a2" }] }
+    h.groupStates["ent-web"] = { status: "success", members: [{ accountId: "b1" }] }
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a", points: 8, resolvedDate: "2026-05-01" }),
+      task(2, { assigneeAccountId: "a", points: 12, resolvedDate: null }),
+      task(3, { assigneeAccountId: "b", points: 5, resolvedDate: "2026-05-02" }),
+      task(4, { assigneeAccountId: "b", points: 5, resolvedDate: null }),
+    ], multiRequest, { status: "available", byAssignee: [{ accountId: "a", teamId: "ent-android" }, { accountId: "b", teamId: "ent-web" }] })
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const chart = chartNode(render(), "commitment"), draw = () => h.invoke(chart.type, chart.props)
+    // No panel until a Sprint is clicked in the chart.
+    assert.equal(nodes(render()).find((node) => node.type?.name === "ProjectsCommitmentDetail"), undefined)
+    assert.equal(nodes(draw()).filter((node) => node.props["data-line-value"] !== undefined).length, 0, "no value before a click")
+    target(draw(), 0).props.onClick()
+    // The clicked Sprint's rate is printed above its point on the 全團隊 curve.
+    // Aggregate of both teams for Sprint 58: (8 + 5) of (20 + 10) SP.
+    assert.deepEqual(plain(nodes(draw()).filter((node) => node.props["data-line-value"] !== undefined).map((node) => node.props.children)), ["43.3%"])
+    const detail = nodes(render()).find((node) => node.type?.name === "ProjectsCommitmentDetail")
+    assert.equal(detail.props.sprint.id, 6823)
+    const html = renderToStaticMarkup(detail.type(detail.props))
+    // Only teams with planned work, each carrying planned, completed and capacity plus the rate.
+    const rateOf = (team) => html.slice(html.indexOf(`data-commitment-team="${team}"`)).match(/data-commitment-rate="([^"]*)"/)?.[1]
+    assert.equal(rateOf("ent-android"), "40")
+    assert.equal(rateOf("ent-web"), "50")
+    // The counts are links now, so each one is its own element.
+    assert.match(html, /Android[\s\S]*?計畫 <a[^>]*>20<\/a> SP · 完成 <a[^>]*>8<\/a> SP · Capacity 40/)
+    assert.match(html, /Web[\s\S]*?計畫 <a[^>]*>10<\/a> SP · 完成 <a[^>]*>5<\/a> SP · Capacity 20/)
+    assert.match(html, /data-commitment-team="ent-android"[\s\S]*?data-commitment-rate="40"/)
+    assert.match(html, /data-commitment-bar="plan"/)
+    assert.match(html, /data-commitment-bar="capacity"/)
+    assert.doesNotMatch(html, /AndroidTV/, "teams without planned points are not listed")
+    // Planned and completed each open exactly their own issues in Jira, in a new tab.
+    const team = detail.props.teams.find((entry) => entry.teamId === "ent-android")
+    const jql = (href) => decodeURIComponent(new URL(href).searchParams.get("jql"))
+    assert.equal(jql(team.plannedHref), "id in (1, 2) ORDER BY key ASC", "planned = the whole team population")
+    assert.equal(jql(team.completedHref), "id in (1) ORDER BY key ASC", "completed = only the finished work")
+    assert.match(html, /計畫 <a href="https:\/\/jira\.example\.test[^"]*" target="_blank" rel="noopener noreferrer"/)
+  })
   it("drops the 全團隊／各團隊 switch for a single team and charts each member's completion rate", () => {
     const h = projectsHarness()
     h.groupStates["ent-android"] = { status: "success", members: [{ accountId: "a1", displayName: "Alice" }, { accountId: "a2", displayName: "Bob" }] }

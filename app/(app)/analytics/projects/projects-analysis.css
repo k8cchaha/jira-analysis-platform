@@ -26,6 +26,8 @@
 .projects-trend-grid line { stroke: var(--viz-grid); stroke-width: 1; }
 .projects-trend-grid text, .projects-trend-x-label, .projects-trend-end-label, .projects-trend-unit-title { fill: var(--viz-text); font-size: 11px; }
 .projects-trend-unit-title { font-weight: 600; }
+/* Values printed above a hovered/selected point or bar. */
+.projects-trend-value, .projects-stack-value { fill: var(--viz-focus); font-size: 11px; font-weight: 600; }
 /* Inline key for the two stacked-mode curves. */
 .projects-trend-legend-points { stroke: var(--viz-points); stroke-width: 2; stroke-linecap: round; }
 .projects-trend-legend-actual { stroke: var(--viz-actual); stroke-width: 2; stroke-linecap: round; }
@@ -60,7 +62,7 @@
   .projects-stack-pattern { stroke: CanvasText; forced-color-adjust: none; }
   .projects-stack-gap { fill: Canvas; forced-color-adjust: none; }
   .projects-stack-column.is-active { filter: none; }
-  .projects-trend-grid text, .projects-trend-x-label, .projects-trend-end-label, .projects-trend-unit-title { fill: CanvasText; forced-color-adjust: none; }
+  .projects-trend-grid text, .projects-trend-x-label, .projects-trend-end-label, .projects-trend-unit-title, .projects-trend-value, .projects-stack-value { fill: CanvasText; forced-color-adjust: none; }
   .projects-distribution-fill { background: repeating-linear-gradient(45deg, CanvasText 0, CanvasText 1px, Canvas 1px, Canvas 4px); forced-color-adjust: none; }
   .projects-trend-series.is-context, .projects-distribution-row.is-context { opacity: 1; }
   .projects-analysis th, .projects-analysis td { border-color: CanvasText; }

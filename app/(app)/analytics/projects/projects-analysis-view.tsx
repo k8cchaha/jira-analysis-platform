@@ -7,7 +7,7 @@ import { DASHBOARD_TEAMS, DashboardFilterError } from "@/lib/jira-dashboard-filt
 import { useTeamMembers } from "@/components/team-members-provider"
 import { memberCapacity, teamCapacities } from "@/lib/projects-capacity"
 import { isBlockedParentStatus } from "@/lib/blocked-parent"
-import { ProjectsSprintDetail, sprintTeamBreakdown } from "./projects-sprint-detail"
+import { ProjectsCommitmentDetail, ProjectsSprintDetail, sprintTeamBreakdown, type CommitmentTeamRow } from "./projects-sprint-detail"
 import { jiraIssueHref, jiraSearchHref } from "@/lib/jira-url"
 import { filterProjectsMetricTasks, projectsPointTotal, projectsRatio, ProjectsAnalysisValidationError, PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, selectProjectsTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsMetricFilter, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
 import { ProjectsTrendChart, type TrendDatum, type TrendSeries } from "./projects-trend-chart"
@@ -97,6 +97,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [commitmentView, setCommitmentView] = useState<OutputView>("all-teams")
   // Same rule as the dev-status page: a Dev-Task whose parent is blocked counts as completed (ticked by default).
   const [countBlockedParent, setCountBlockedParent] = useState(true)
+  // Sprint clicked in the 完成率 chart; its per-team bars render below the chart.
+  const [selectedCommitmentSprint, setSelectedCommitmentSprint] = useState<number | null>(null)
   const toggleMember = (id: string) => { setHiddenMembers((previous) => previous.includes(id) ? previous.filter((member) => member !== id) : [...previous, id]); clearOutputDetail() }
   const [outputView, setOutputView] = useState<OutputView>("all-teams")
   const [includeQa, setIncludeQa] = useState(true)
@@ -311,6 +313,17 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
       return { id: `commitment-member-${accountId}`, label: names.get(accountId) ?? accountId, color: memberColors[index % memberColors.length], values }
     }).filter((series) => series.values.some((datum) => datum.value !== null || datum.partial))
   })() : []
+  // Per-team rows for the clicked Sprint: planned SP (population), completed SP, capacity, and the resulting rate.
+  const commitmentSprint = selectedCommitmentSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedCommitmentSprint) ?? null
+  const commitmentTeamRows: CommitmentTeamRow[] = commitmentSprint ? visibleCommitmentTeams.map((team) => {
+    const population = selectProjectsTeamIssues(result.tasks, commitmentSprint, attribution ?? { status: "unavailable", reason: "not_provided" }, [team.id], { kind: "commitment-population" }, outputFilter)
+    const ratio = commitmentOf(commitmentSprint.id, population)
+    // Planned = the whole population; completed = the same window/blocked rule, so both link their exact issues.
+    const done = population.filter((task) =>
+      (task.resolvedDate !== null && task.resolvedDate >= commitmentSprint.startDate && task.resolvedDate <= commitmentSprint.endDate)
+      || isBlockedParentStatus(task.parentStatus, countBlockedParent))
+    return { teamId: team.id, label: team.label, color: team.color, planned: ratio.denominator, completed: ratio.numerator, capacity: teamCapacityRows.find((entry) => entry.teamId === team.id)?.capacity ?? null, rate: ratio.value, plannedHref: searchLink(population).href, completedHref: searchLink(done).href }
+  }) : []
   const commitmentSeries: TrendSeries[] = commitmentByMember
     ? commitmentMemberSeries
     : commitmentView === "all-teams"
@@ -368,15 +381,16 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     <div className="min-w-0">
     {topicPanel("output", <Panel title={multi ? "總產出趨勢" : "Sprint 總產出"} controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* 全團隊總覽 always charts both units (two bars, two curves), so the unit switch only applies to 各團隊產出. */}{outputView === "by-team" || !hasAttribution ? <Units<Unit> name="總產出" value={outputUnit} onChange={(unit) => { if (unit !== "count" && unit !== outputUnit) { setOutputUnit(unit); clearOutputDetail() } }} choices={["sp", "actualSp"]} labels={outputUnitLabels} compact /> : null}<Units name="總產出顯示" value={outputView} onChange={(view) => { if (view !== outputView) { setOutputView(view); clearOutputDetail() } }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? outputMemberViewLabels : outputViewLabels} disabled={!hasAttribution} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => { setIncludeQa(event.target.checked); clearOutputDetail() }} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label></div>}>
       {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全範圍總產出。</p>}
-      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialOutputSprint} />
+      <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialOutputSprint} labelPointValues={outputView === "all-teams" || !hasAttribution} />
       {sprintDetailSprint && <ProjectsSprintDetail sprint={sprintDetailSprint} teams={sprintBreakdown} />}
     </Panel>)}
     {topicPanel("commitment", <Panel title="Sprint 完成率" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Two or more teams: 全團隊／各團隊. One team has no aggregate to switch to — its members are charted instead. */}{commitmentByMember ? null : <Units name="完成率範圍" value={commitmentView} onChange={(view) => { if (view !== commitmentView) setCommitmentView(view) }} choices={["all-teams", "by-team"] as const} labels={commitmentViewLabels} disabled={!hasAttribution} compact />}<label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => setIncludeQa(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={countBlockedParent} onChange={(event) => setCountBlockedParent(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />受阻母票計為已完成</label></div>}>
         {commitmentByMember
-          ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} emptyMessage={commitmentSeries.length ? undefined : "此團隊在此 Sprint 沒有可計算完成率的工作單。"} />
+          ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} emptyMessage={commitmentSeries.length ? undefined : "此團隊在此 Sprint 沒有可計算完成率的工作單。"} onSprintSelect={(index) => setSelectedCommitmentSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={selectedCommitmentSprint} />
           : (multi || commitmentView === "by-team")
-            ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} legendToggle={commitmentView === "by-team" && hasAttribution ? { visibleIds: visibleCommitmentTeams.map((team) => team.id), onToggle: toggleTeam } : undefined} emptyMessage={commitmentView === "by-team" && !commitmentSeries.length ? "沒有可見團隊。" : undefined} />
+            ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} legendToggle={commitmentView === "by-team" && hasAttribution ? { visibleIds: visibleCommitmentTeams.map((team) => team.id), onToggle: toggleTeam } : undefined} emptyMessage={commitmentView === "by-team" && !commitmentSeries.length ? "沒有可見團隊。" : undefined} onSprintSelect={(index) => setSelectedCommitmentSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={selectedCommitmentSprint} labelPointValues={commitmentView === "all-teams"} />
             : <p className="text-sm">{percent(commitmentRatioFor(first.sprint.id, null))}（{number(commitmentRatioFor(first.sprint.id, null).numerator ?? 0)}／{number(commitmentRatioFor(first.sprint.id, null).denominator ?? 0)} SP）</p>}
+      {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={commitmentTeamRows} />}
     </Panel>)}
     {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總產出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">
       <Units name="完成的任務類型" value={typeUnit} onChange={setTypeUnit} />
