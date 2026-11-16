@@ -192,7 +192,7 @@ function DateInput({ id, label, value, today, describedBy, onCommit }: {
  * 取得今天後若 `value` 仍是空區間，會以 `defaultPreset` 的區間補上並回報上層一次，
  * 讓首次載入就有一個可查的預設視窗（且只補一次，不會覆蓋使用者之後的選擇）。
  */
-export function DateRangeField({ value, onChange, onCommit, shortcuts = DEFAULT_DATE_RANGE_SHORTCUTS, defaultPreset = "last7", helpText, idPrefix }: {
+export function DateRangeField({ value, onChange, onCommit, shortcuts = DEFAULT_DATE_RANGE_SHORTCUTS, defaultPreset = "last7", helpText, idPrefix, required = false }: {
   value: DateRange
   onChange: (range: DateRange) => void
   /** 完成一次區間選取（快捷鍵、輸入框確認、月曆選滿）時呼叫；供上層即時套用。 */
@@ -204,6 +204,8 @@ export function DateRangeField({ value, onChange, onCommit, shortcuts = DEFAULT_
   /** 顯示於輸入框下方的說明；未提供時不佔高度。 */
   helpText?: string
   idPrefix?: string
+  /** Marks the label with the same required asterisk the dropdowns use. */
+  required?: boolean
 }) {
   const generated = useId()
   const base = idPrefix ?? generated
@@ -293,7 +295,7 @@ export function DateRangeField({ value, onChange, onCommit, shortcuts = DEFAULT_
   return (
     <div ref={wrapper} className="relative min-w-0">
       <span className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-        分析區間
+        分析區間{required ? <><span aria-hidden="true" className="ml-1 text-rose-600 dark:text-rose-400">*</span><span className="sr-only">（必選）</span></> : null}
         {days !== null && <span className="ml-1 font-normal tabular-nums">（共 {days} 天）</span>}
       </span>
       <div className="flex min-w-0 flex-wrap items-center gap-2">

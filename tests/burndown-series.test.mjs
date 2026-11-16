@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { computeBurndownSeries } from "../lib/burndown-series.ts"
+import { computeBurndownSeries, burndownLastDate } from "../lib/burndown-series.ts"
 
 const SPRINT = { startDate: "2026-10-13", endDate: "2026-10-25" }
 const TODAY = "2026-10-19"
@@ -203,52 +203,47 @@ describe("computeBurndownSeries", () => {
     assert.equal(onlyPre.days[0].idealPoints, 0)
   })
 
-  it("does not draw the actual line or today's blocked bar before the first streamed day", () => {
-    const input = {
+  it("calculates the complete curve through today in one pass", () => {
+    const complete = computeBurndownSeries({
       ...SPRINT, today: TODAY,
-      tasks: [
-        task("T-PRE", 3, null, "u-a", null, true),
-        task("T-BLOCKED", 5, null, "u-a", null, false, "Pending"),
-        task("T-DONE", 2, "2026-10-15", "u-a"),
-        task("T-OPEN", 4, null, "u-a"),
-      ],
-      unestimated: [], accountIds: null,
-      blockedParentStatuses: new Set(["Pending"]),
+      tasks: [task("T-PRE", 3, null, "u-a", null, true), task("T-BLOCKED", 5, null, "u-a", null, false, "Pending"), task("T-DONE", 2, "2026-10-15", "u-a"), task("T-OPEN", 4, null, "u-a")],
+      unestimated: [], accountIds: null, blockedParentStatuses: new Set(["Pending"]),
+    })
+    assert.equal(complete.totalPoints, 14)
+    assert.equal(complete.days[0].idealPoints, 11)
+    assert.equal(complete.days[0].remainingPoints, 11)
+    assert.equal(complete.days.at(-1).idealPoints, 0)
+    for (const day of complete.days) {
+      assert.equal(day.remainingPoints === null, day.date > TODAY)
+      assert.equal(day.blockedPoints, day.date === TODAY ? 5 : undefined)
     }
-    const base = computeBurndownSeries({ ...input, throughDate: null })
-    assert.equal(base.totalPoints, 14)
-    assert.equal(base.days[0].idealPoints, 11)
-    assert.equal(base.days.at(-1).idealPoints, 0)
-    assert.equal(base.days[0].donePoints, 3, "known pre-Sprint completion remains visible")
-    assert.ok(base.days.every((day) => day.remainingPoints === null))
-    assert.ok(base.days.every((day) => day.blockedPoints === undefined))
-
-    const firstDay = computeBurndownSeries({ ...input, throughDate: "2026-10-13" })
-    assert.equal(firstDay.days[0].remainingPoints, 11)
-    assert.equal(firstDay.days[1].remainingPoints, 6, "blocked points stay on the scanned frontier")
-    assert.ok(firstDay.days.slice(2).every((day) => day.remainingPoints === null))
-    assert.equal(firstDay.days[1].blockedPoints, 5)
-
-    const nextDay = computeBurndownSeries({ ...input, throughDate: "2026-10-14" })
-    assert.equal(nextDay.days[1].remainingPoints, 11)
-    assert.equal(nextDay.days[2].remainingPoints, 6)
-    assert.ok(nextDay.days.slice(3).every((day) => day.remainingPoints === null))
-    assert.deepEqual(nextDay.days.map((day) => day.idealPoints), base.days.map((day) => day.idealPoints))
-
-    // Omitting throughDate still supports existing non-stream calculations through today.
-    const complete = computeBurndownSeries(input)
     assert.equal(complete.days.find((day) => day.date === TODAY).remainingPoints, 4)
   })
 
-  it("keeps the initial actual line hidden even when all points were completed before Sprint start", () => {
-    const input = { ...SPRINT, today: TODAY, tasks: [task("T-PRE", 2, null, "u-a", null, true)], unestimated: [], accountIds: null }
-    const base = computeBurndownSeries({ ...input, throughDate: null })
-    assert.ok(base.days.every((day) => day.remainingPoints === null))
-    assert.equal(base.days[0].donePoints, 2)
-    const scanned = computeBurndownSeries({ ...input, throughDate: SPRINT.startDate })
-    assert.equal(scanned.days[0].remainingPoints, 0)
-    assert.equal(scanned.days[1].remainingPoints, 0)
-    assert.ok(scanned.days.slice(2).every((day) => day.remainingPoints === null))
+  it("shows the complete elapsed zero line when all work was resolved before Sprint", () => {
+    const complete = computeBurndownSeries({ ...SPRINT, today: TODAY, tasks: [task("T-PRE", 2, null, "u-a", null, true)], unestimated: [], accountIds: null })
+    for (const day of complete.days) assert.equal(day.remainingPoints, day.date <= TODAY ? 0 : null)
+    assert.equal(complete.days[0].donePoints, 2)
+  })
+
+  it("keeps a static final visible date for historical, future and capped Sprints", () => {
+    assert.equal(burndownLastDate(SPRINT.startDate, SPRINT.endDate, TODAY), TODAY)
+    assert.equal(burndownLastDate(SPRINT.startDate, SPRINT.endDate, "2026-11-10"), SPRINT.endDate)
+    assert.equal(burndownLastDate(SPRINT.startDate, SPRINT.endDate, "2026-10-12"), null)
+    assert.equal(burndownLastDate("2026-01-01", "2026-04-01", "2026-04-01"), "2026-03-01")
+    assert.throws(() => burndownLastDate("2026-10-13", "2026-10-12", TODAY))
+    const input = { ...SPRINT, tasks: [task("T-DONE", 2, "2026-10-15", "u-a"), task("T-BLOCKED", 5, null, "u-a", null, false, "Pending")], unestimated: [], accountIds: null, blockedParentStatuses: new Set(["Pending"]) }
+    const historic = computeBurndownSeries({ ...input, today: "2026-11-10" })
+    assert.equal(historic.days.at(-1).date, SPRINT.endDate)
+    assert.equal(historic.days.at(-1).blockedPoints, 5)
+    assert.equal(historic.days.at(-1).remainingPoints, 0)
+    assert.ok(historic.days.slice(0, -1).every((day) => day.blockedPoints === undefined))
+    const future = computeBurndownSeries({ ...input, today: "2026-10-12" })
+    assert.ok(future.days.every((day) => day.remainingPoints === null && day.blockedPoints === undefined))
+    const capped = computeBurndownSeries({ ...input, startDate: "2026-01-01", endDate: "2026-04-01", today: "2026-04-01", tasks: [task("T-DONE", 2, "2026-02-01", "u-a"), input.tasks[1]] })
+    assert.equal(capped.days.length, 61)
+    assert.equal(capped.days.at(-1).blockedPoints, 5)
+    assert.equal(capped.days.at(-1).remainingPoints, 0)
   })
 
   it("re-scopes sprint-start-before Done points by the selected members", () => {

@@ -57,7 +57,7 @@ export interface BurndownStatusInput {
     points: number
     actualPoints: number | null
     doneDate: string | null
-    /** 在 sprint 開始日之前就已 Done（空起點格的綠色長條也視為已完成）。 */
+    /** 依 Jira 現行 Resolved 在 sprint 開始日之前已完成（空起點格的綠色長條）。 */
     doneBeforeStart: boolean
     /** 母票目前狀態名稱（如 "Request Info"）；無母票或未知為 null。 */
     parentStatus: string | null
@@ -104,8 +104,8 @@ export function computeBurndownStatus(input: BurndownStatusInput): TeamStatus[] 
       byAssignee.set(key, status)
     }
     status.totalTasks += 1
-    // 已完成：sprint 開始前就已 Done（doneBeforeStart，doneDate 為 null）、
-    // doneDate 在今天以前（含）、或母票受阻視為完成（blockedParentStatuses）。
+    // 已完成：Resolved 的 sprint 開局完成標記（doneBeforeStart）、
+    // doneDate 在今天以前（含）；母票受阻為獨立覆寫（blockedParentStatuses）。
     const done =
       task.doneBeforeStart ||
       (task.doneDate !== null && task.doneDate <= today) ||

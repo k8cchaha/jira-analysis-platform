@@ -1,4 +1,5 @@
-import { ComingSoon } from "@/components/coming-soon"
+import { PageHeader } from "@/components/page-header"
+
 export default function Page() {
-  return <ComingSoon title="系統設定" description="檢視與管理此工作區的系統設定。" />
+  return <PageHeader title="系統設定" />
 }

@@ -6,9 +6,6 @@ export type AppRoute =
   | "/analytics/workload"
   | "/analytics/story-points"
   | "/analytics/projects"
-  | "/analytics/trends"
-  | "/analytics/comparison"
-  | "/analytics/members"
   | "/reports/saved/list"
   | "/reports/exports/list"
   | "/settings/jira"
@@ -21,6 +18,7 @@ export type NavigationIcon =
   | "workload"
   | "points"
   | "trends"
+  | "history"
   | "members"
   | "person"
   | "projects"
@@ -53,18 +51,19 @@ export type NavigationCategory = Readonly<{
 /** 擁有全部頁面權限的管理員 email 清單。非管理員僅能看到儀表板（其餘類別一律隱藏）。 */
 export const ADMIN_EMAILS = ["alexwcwang@kkcompany.com", "kennylin@kkcompany.com", "nickchen@kkcompany.com"]
 
+/** 共用既有管理員 email 政策；呼叫端仍須以可信 server session 驗證身分。 */
+export function isAdminEmail(email: unknown): boolean {
+  return typeof email === "string" && ADMIN_EMAILS.some(
+    (adminEmail) => adminEmail.toLowerCase() === email.trim().toLowerCase()
+  )
+}
+
 /** 依使用者權限回傳應顯示的導覽類別：在管理員清單內看全部，其餘一律不顯示任何類別（只剩儀表板）。 */
 export function visibleNavigationCategories(
   categories: readonly NavigationCategory[],
   email: string | undefined
 ): readonly NavigationCategory[] {
-  const isAdmin =
-    email !== undefined &&
-    ADMIN_EMAILS.some(
-      (adminEmail) => adminEmail.toLowerCase() === email.trim().toLowerCase()
-    )
-  if (isAdmin) return categories
-  return []
+  return isAdminEmail(email) ? categories : []
 }
 
 export const dashboardNavigation = {
@@ -110,33 +109,15 @@ export const navigationCategories = [
       },
       {
         id: "projects",
-        label: "專案分析",
-        icon: "projects",
-        routes: [{ href: "/analytics/projects", label: "專案分析" }],
+        label: "專案回顧與趨勢",
+        icon: "history",
+        routes: [{ href: "/analytics/projects", label: "專案回顧與趨勢" }],
       },
       {
         id: "story-points",
         label: "團隊分析",
         icon: "members",
         routes: [{ href: "/analytics/story-points", label: "團隊分析" }],
-      },
-      {
-        id: "members",
-        label: "成員分析",
-        icon: "person",
-        routes: [{ href: "/analytics/members", label: "成員分析" }],
-      },
-      {
-        id: "trends",
-        label: "趨勢分析",
-        icon: "trends",
-        routes: [{ href: "/analytics/trends", label: "趨勢分析" }],
-      },
-      {
-        id: "comparison",
-        label: "比較分析",
-        icon: "comparison",
-        routes: [{ href: "/analytics/comparison", label: "比較分析" }],
       },
     ],
   },

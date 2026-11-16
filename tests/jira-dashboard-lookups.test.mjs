@@ -180,6 +180,90 @@ describe("dashboard scope identity resolution", () => {
   })
 })
 
+describe("shared complete multi-group loader", () => {
+  it("validates every group and rejects duplicates/oversize before any I/O or cache hit", async (t) => {
+    const h = harness(t)
+    for (const groups of [["ent-web", "unknown"], ["ent-web", "ent-web"], ["ent-web", "ent-fpm"], Array(14).fill("ent-web"), [null], "ent-web", null]) {
+      await assert.rejects(() => h.service.loadDashboardGroupMembers(groups, credentials, { useSharedCache: true }))
+      assert.equal(h.calls.length, 0)
+    }
+    assert.deepEqual(plain(await h.service.loadDashboardGroupMembers([], credentials)), {})
+  })
+  it("returns complete individual rosters without union/empty eligibility checks", async (t) => {
+    const h = harness(t, { response: ({ params }) => {
+      const group = params.get("groupname"), startAt = Number(params.get("startAt"))
+      if (group === "ent-qa1") return { values: [], total: 0, isLast: true }
+      return { values: Array.from({ length: 50 }, (_, i) => user(`${group}-${startAt + i}`)), startAt, total: 550, isLast: startAt === 500 }
+    } })
+    const members = await h.service.loadDashboardGroupMembers(["ent-web", "ent-be1", "ent-qa1"], credentials)
+    assert.equal(members["ent-web"].length, 550); assert.equal(members["ent-be1"].length, 550)
+    assert.deepEqual(plain(members["ent-qa1"]), [])
+    assert.equal(h.calls.length, 23)
+  })
+  it("uses four workers and preserves each group's complete pagination", async (t) => {
+    let active = 0, peak = 0
+    const h = harness(t, { response: async ({ params }) => {
+      active++; peak = Math.max(peak, active)
+      await new Promise((resolve) => setImmediate(resolve))
+      active--
+      const startAt = Number(params.get("startAt"))
+      return { values: [user(`${params.get("groupname")}-${startAt}`)], startAt, total: 2, isLast: startAt === 1 }
+    } })
+    const groups = h.filter.DASHBOARD_TEAMS.map((team) => team.group)
+    const members = await h.service.loadDashboardGroupMembers(groups, credentials)
+    assert.equal(peak, 4); assert.equal(h.calls.length, 26)
+    for (const group of groups) assert.equal(members[group].length, 2)
+  })
+  it("failure stops later scheduling and concurrent cache credential failures are not hidden", async (t) => {
+    const h = harness(t, { response: () => ({ values: null }) })
+    const currentCredentials = { ...credentials }
+    let checks = 0
+    await assert.rejects(() => h.service.loadDashboardGroupMembers(h.filter.DASHBOARD_TEAMS.map((team) => team.group), currentCredentials, { useSharedCache: true, check: () => { if (++checks === 3) currentCredentials.expiresAt = 0 } }), (error) => error instanceof h.JiraAuthorizationError)
+    assert.equal(h.calls.length, 1)
+  })
+  it("runs boundary checks before scheduling, after loads and inside failure handling", async (t) => {
+    const h = harness(t)
+    const boundary = new Error("Caller-local cancellation")
+    await assert.rejects(() => h.service.loadDashboardGroupMembers(["ent-web"], credentials, { check: () => { throw boundary } }), (error) => error === boundary)
+    assert.equal(h.calls.length, 0)
+    let stopped = false, checks = 0
+    const active = harness(t, { response: () => { stopped = true; return { values: null } } })
+    await assert.rejects(() => active.service.loadDashboardGroupMembers(active.filter.DASHBOARD_TEAMS.map((team) => team.group), credentials, { check: () => { checks++; if (stopped) throw boundary } }), (error) => error === boundary)
+    assert.equal(active.calls.length, 1)
+    assert.ok(checks >= 6)
+  })
+  it("keeps viewer-isolated cache copies and reuses the existing scope cache", async (t) => {
+    const h = harness(t)
+    const options = { useSharedCache: true }
+    const first = await h.service.loadDashboardGroupMembers(["ent-web"], credentials, options)
+    first["ent-web"][0].displayName = "Caller mutation"; first["ent-web"].push({ accountId: "extra", displayName: "Extra" })
+    const second = await h.service.loadDashboardGroupMembers(["ent-web"], credentials, options)
+    assert.deepEqual(plain(second["ent-web"]), [{ accountId: "user-1", displayName: "Fixture user-1" }])
+    const scope = await h.service.resolveDashboardScope(teamFilter(), credentials, options)
+    assert.deepEqual(plain(scope.accountIds), ["user-1"])
+    assert.equal(h.calls.length, 1)
+    await h.service.loadDashboardGroupMembers(["ent-web"], { ...credentials, viewerId: "another-viewer" }, options)
+    assert.equal(h.calls.length, 2)
+    await assert.rejects(() => h.service.loadDashboardGroupMembers(["ent-web", "unknown"], credentials, options))
+    assert.equal(h.calls.length, 2)
+  })
+  it("caller cancellation never aborts another consumer's shared in-flight transport", async (t) => {
+    let finish
+    const gate = new Promise((resolve) => { finish = resolve })
+    const h = harness(t, { response: async () => { await gate; return { values: [user()], total: 1, isLast: true } } })
+    let cancelled = false
+    const first = h.service.loadDashboardGroupMembers(["ent-web"], credentials, { useSharedCache: true, check: () => { if (cancelled) throw new Error("Caller stopped") } })
+    const rejected = assert.rejects(first, /Caller stopped/)
+    const second = h.service.loadDashboardGroupMembers(["ent-web"], credentials, { useSharedCache: true })
+    await new Promise((resolve) => setImmediate(resolve))
+    cancelled = true; finish()
+    await rejected
+    assert.deepEqual(plain((await second)["ent-web"].map((row) => row.accountId)), ["user-1"])
+    assert.equal(h.calls.length, 1)
+    assert.equal(h.calls[0].init.signal.aborted, false)
+  })
+})
+
 describe("bounded safe user search", () => {
   it("encodes and trims the search while returning only accountId/displayName DTOs", async (t) => {
     const h = harness(t, { response: () => [user("valid"), user("valid"), user("inactive", { active: false }), user("app", { accountType: "app" }), user("customer", { accountType: "customer" })] })

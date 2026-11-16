@@ -32,6 +32,8 @@ export function NavigationIconGlyph({ name, className = "h-5 w-5" }: IconProps) 
       return <svg {...common}><path d="m12 3 3 6 6 .9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.9 9 9Z" /></svg>
     case "trends":
       return <svg {...common}><path d="m3 17 6-6 4 4 8-9" /><path d="M15 6h6v6" /></svg>
+    case "history":
+      return <svg {...common}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></svg>
     case "comparison":
       return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16M5 10h4m-2-2 2 2-2 2M19 14h-4m2-2-2 2 2 2" /></svg>
     case "projects":

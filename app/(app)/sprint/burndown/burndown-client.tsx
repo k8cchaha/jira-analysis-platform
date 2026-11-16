@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
+import { BLOCKED_PARENT_STATUSES } from "@/lib/blocked-parent"
 import { computeBurndownSeries } from "@/lib/burndown-series"
+import { burndownHref, parseProjectKey, parseSprintId } from "@/lib/burndown-params"
 import type { BurndownTask, BurndownUnestimated } from "@/lib/jira-burndown"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import type { SprintProjectKey } from "@/lib/jira-jql"
@@ -13,6 +15,7 @@ import { UnestimatedButton } from "@/app/(app)/sprint/burndown/unestimated-butto
 import { DayTasksDialog } from "@/app/(app)/sprint/burndown/day-tasks-dialog"
 import { DevelopmentStatus } from "@/app/(app)/sprint/burndown/development-status"
 import { TeamSelect } from "@/components/team-select"
+import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
 
 type StreamPhase =
   | { status: "idle" }
@@ -20,13 +23,6 @@ type StreamPhase =
   | { status: "streaming" }
   | { status: "complete" }
   | { status: "error"; message: string }
-
-/** 母票處於這些狀態時，其 Dev-Task 在勾選「受阻母票計為已完成」後視為 Done。 */
-const BLOCKED_PARENT_STATUSES: ReadonlySet<string> = new Set([
-  "Request Info",
-  "Pending",
-  "Reproduce",
-])
 
 interface BasePayload {
   today: string
@@ -36,19 +32,11 @@ interface BasePayload {
   unestimated: BurndownUnestimated[]
 }
 
-interface DayPayload {
-  date: string
-  keys: string[]
-}
-
 /**
  * Burn Down 的站內檢視。持有團隊選擇 state，並以 `EventSource` 訂閱
- * `/api/sprint/burndown/stream`，把 server 漸進送回的 Dev-Task 資料依所選
- * 團隊成員在站內重算（不重發 JQL）。
- *
- * 串流順序：`base`（畫出骨架：總點數、理想線）→ `day` × N（逐日把實際線/
- * 長條「長」上去）→ `done`。任一天收到 `error` ＝ 串流中止：已畫的部分保留，
- * 顯示錯誤 banner，不偽裝成功。
+ * `/api/sprint/burndown/stream`，完整資料 `base → done` 成功後一次顯示。
+ * 完成 markers 由 server 依 resolutiondate 投影，client 只按團隊重算。
+ * 載入或連線失敗不顯示部分圖表，可重試。
  */
 export function BurndownClient({
   project,
@@ -56,6 +44,7 @@ export function BurndownClient({
   selectedSprintId,
   sprint,
   endpoint,
+  filterError = null,
   jiraBaseUrl,
 }: {
   project: SprintProjectKey | null
@@ -65,11 +54,12 @@ export function BurndownClient({
   sprint: SprintRecord | null
   /** SSE 端點（server 依 project＋sprint 產生的開流 URL）；無 sprint 時為 null。 */
   endpoint: string | null
+  filterError?: string | null
   jiraBaseUrl: string | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [groups, setGroups] = useState<string[]>([])
+  const [groups, setGroups] = useDefaultTeamGroups(!filterError)
   const [memberIds, setMemberIds] = useState<ReadonlySet<string> | null>(null)
   /** accountId → 團隊 label 映射（由團隊選單載入，供下方開發狀況分組）。 */
   const [teamOf, setTeamOf] = useState<Record<string, string>>({})
@@ -80,23 +70,26 @@ export function BurndownClient({
   /** 預留另一種圖表模式；目前僅停用原有顯示選項，不改變圖表或查詢。 */
   const [showMidSprintIssues, setShowMidSprintIssues] = useState(false)
   /** 被點擊的長條（一般日完成／開局前已完成／受阻母票）；null 表示未開啟彈窗。 */
-  const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean; blocked?: boolean } | null>(null)
+  const [clickedDay, setClickedDay] = useState<{ date: string; beforeStart?: boolean; blocked?: boolean; endpoint: string | null; retry: number } | null>(null)
 
-  // 串流資料（由 `base`／`day` 事件驅動）。
+  // 完整資料（base 收齊，done 確認成功後才顯示）。
   const [phase, setPhase] = useState<StreamPhase>({ status: "idle" })
   const [today, setToday] = useState<string | null>(null)
   const [empty, setEmpty] = useState(false)
   const [tasks, setTasks] = useState<BurndownTask[]>([])
   const [unestimated, setUnestimated] = useState<BurndownUnestimated[]>([])
-  /** 已接收的天數（供串流進度顯示）。 */
-  const [daysReceived, setDaysReceived] = useState(0)
-  /** 串流已逐日掃描到的最新日期（含空天）；收到第一個 day 前為 null。 */
-  const [lastStreamedDate, setLastStreamedDate] = useState<string | null>(null)
   /** 手動「重新載入」用的 nonce，bump 會觸發 effect 重開串流。 */
   const [retryNonce, setRetryNonce] = useState(0)
+  /** 資料與 endpoint＋retry 綁定，props 更新到 effect cleanup 之間也不混用舊 markers。 */
+  const [streamScope, setStreamScope] = useState<{ endpoint: string; retry: number } | null>(null)
+  const scopeReady = streamScope?.endpoint === endpoint && streamScope?.retry === retryNonce
 
   function navigate(path: string) {
-    startTransition(() => router.push(path))
+    // 共用 selector 只送 project/sprint；重新驗證後產生不含舊旗標的 URL。
+    const query = new URLSearchParams(path.split("?")[1] ?? "")
+    const nextProject = parseProjectKey(query.get("project") ?? undefined)
+    const nextSprint = parseSprintId(query.get("sprint") ?? undefined)
+    startTransition(() => router.push(burndownHref(nextProject, nextSprint), { scroll: false }))
   }
 
   function onGroupsChange(nextGroups: string[], accountIds: string[], ready: boolean) {
@@ -106,7 +99,7 @@ export function BurndownClient({
   }
 
   // 開啟／重開串流。endpoint 改變（切 sprint／專案）或手動重試時關舊開新；
-  // 每次開流帶 nonce，並停用 EventSource 自動重連（避免重送回 base 造成雙算天數）。
+  // 每次開流帶 nonce，並停用 EventSource 自動重連（避免重送 base 覆蓋本次結果）。
   useEffect(() => {
     if (!endpoint) {
       setPhase({ status: "idle" })
@@ -114,18 +107,15 @@ export function BurndownClient({
       setTasks([])
       setUnestimated([])
       setEmpty(false)
-      setDaysReceived(0)
-      setLastStreamedDate(null)
       return
     }
     let active = true
+    setStreamScope({ endpoint, retry: retryNonce })
     setPhase({ status: "loading" })
     setToday(null)
     setTasks([])
     setUnestimated([])
     setEmpty(false)
-    setDaysReceived(0)
-    setLastStreamedDate(null)
     setClickedDay(null)
 
     const url = `${endpoint}${endpoint.includes("?") ? "&" : "?"}t=${Date.now()}`
@@ -156,27 +146,11 @@ export function BurndownClient({
       }
     })
 
-    es.addEventListener("day", (event) => {
-      if (!active) return
-      try {
-        const payload = JSON.parse((event as MessageEvent).data) as DayPayload
-        const stamp = new Set(payload.keys)
-        setTasks((prev) =>
-          prev.length > 0 && stamp.size > 0
-            ? prev.map((task) =>
-                stamp.has(task.key) ? { ...task, doneDate: payload.date } : task
-              )
-            : prev
-        )
-        setLastStreamedDate(payload.date)
-        setDaysReceived((count) => count + 1)
-      } catch {
-        setPhase({ status: "error", message: "串流資料無法辨識，請重新整理頁面。" })
-      }
-    })
-
     es.addEventListener("done", () => {
-      if (active) setPhase({ status: "complete" })
+      if (active) setPhase((prev) => prev.status === "streaming"
+        ? { status: "complete" }
+        : prev.status === "error" ? prev : { status: "error", message: "串流資料不完整，請重新載入。" })
+      es.close()
     })
 
     // Server 明確送的 `event: error` frame（帶 JSON data）。未送 close 的連線中斷
@@ -201,18 +175,17 @@ export function BurndownClient({
   }, [endpoint, retryNonce])
 
   const filtered = useMemo(() => {
-    if (!sprint || !today) return null
+    if (!sprint || !today || !scopeReady || phase.status !== "complete") return null
     return computeBurndownSeries({
       startDate: sprint.startDate,
       endDate: sprint.endDate,
       today,
-      throughDate: lastStreamedDate,
       tasks,
       unestimated,
       accountIds: memberIds,
       blockedParentStatuses: countParentBlocked ? BLOCKED_PARENT_STATUSES : null,
     })
-  }, [sprint, today, lastStreamedDate, tasks, unestimated, memberIds, countParentBlocked])
+  }, [sprint, today, scopeReady, phase.status, tasks, unestimated, memberIds, countParentBlocked])
 
   return (
     <div className="relative">
@@ -229,14 +202,14 @@ export function BurndownClient({
       />
     }
         trailing={
-          filtered ? (
-            <UnestimatedButton issues={filtered.unestimated} jiraBaseUrl={jiraBaseUrl} />
-          ) : undefined
+          filtered ? <UnestimatedButton issues={filtered.unestimated} jiraBaseUrl={jiraBaseUrl} /> : undefined
         }
       />
 
       <div className="mt-8">
-        {!project ? (
+        {filterError ? (
+          <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">{filterError}</p>
+        ) : !project ? (
           <EmptyState
             title="請先選擇專案"
             body="從上方選擇專案後，將顯示該專案的燃盡圖。"
@@ -292,7 +265,7 @@ export function BurndownClient({
                       受阻母票計為已完成
                     </label>
                   </fieldset>
-                  <label className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
+                  <label hidden className="hidden cursor-pointer items-center gap-1.5 text-sm text-slate-800 dark:text-slate-200">
                     <input
                       type="checkbox"
                       checked={showMidSprintIssues}
@@ -331,27 +304,11 @@ export function BurndownClient({
                     totalPoints={filtered.totalPoints}
                     showLine={showLine}
                     showBar={showBar}
-                    onBarClick={(date, beforeStart, blocked) => setClickedDay({ date, beforeStart, blocked })}
+                    onBarClick={(date, beforeStart, blocked) => setClickedDay({ date, beforeStart, blocked, endpoint, retry: retryNonce })}
                   />
-                  {phase.status === "streaming" && (
-                    <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                      串流中… 已接收 {daysReceived} 天
-                    </p>
-                  )}
-                  {phase.status === "error" && (
-                    <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-rose-600 dark:text-rose-400">
-                      <span>{phase.message}</span>
-                      <button
-                        type="button"
-                        onClick={() => setRetryNonce((n) => n + 1)}
-                        className="rounded border border-slate-300 px-2 py-0.5 hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
-                      >
-                        重新載入
-                      </button>
-                    </p>
-                  )}
-                  {clickedDay !== null && (
+                  {clickedDay !== null && clickedDay.endpoint === endpoint && clickedDay.retry === retryNonce && (
                     <DayTasksDialog
+                      key={`${endpoint}:${retryNonce}`}
                       date={clickedDay.date}
                       beforeStart={clickedDay.beforeStart}
                       blocked={clickedDay.blocked}
@@ -367,6 +324,7 @@ export function BurndownClient({
 
             <div className="mt-6">
               <DevelopmentStatus
+                key={`${endpoint}:${retryNonce}`}
                 teamOf={teamOf}
                 teamOrder={DASHBOARD_TEAMS.map((team) => team.label)}
                 tasks={filtered.tasks}
@@ -376,7 +334,7 @@ export function BurndownClient({
               />
             </div>
           </>
-        ) : phase.status === "error" ? (
+        ) : scopeReady && phase.status === "error" ? (
           <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
             <p className="text-sm text-rose-600 dark:text-rose-400">{phase.message}</p>
             <button

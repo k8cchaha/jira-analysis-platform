@@ -4,6 +4,8 @@ import { useEffect, useId, useRef, useState, useTransition, type FormEvent, type
 import { useTeamMembers } from "@/components/team-members-provider"
 import { FILTER_SELECT_WIDTH_CLASS, type FilterSelectKind } from "@/components/filter-dropdown"
 import { SearchButton } from "@/components/search-button"
+import { currentFilterParams, useFilterDefaults, useInitialFilterDefaults } from "@/components/filter-defaults-provider"
+import { absentDefaultCondition, defaultDashboardProjects } from "@/lib/filter-defaults"
 import {
   DASHBOARD_PROJECTS,
   DASHBOARD_TEAMS,
@@ -99,6 +101,14 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   const personSequence = useRef(0)
   const personController = useRef<AbortController | null>(null)
   const storageKey = `jira-dashboard-filter:${viewerId}`
+  const restoredDraft = useRef(false)
+  const { ready: defaultsReady } = useFilterDefaults()
+  const markDefaultsEdited = useInitialFilterDefaults((defaults) => {
+    const params = currentFilterParams()
+    if (!params || filter === null || appliedFilter?.mode === "team-project" || restoredDraft.current || edited.current) return
+    if (absentDefaultCondition(params, "project")) setProjects(defaultDashboardProjects(defaults))
+    if (absentDefaultCondition(params, "team")) { setGroups([...defaults.groups]); setExclusions({}) }
+  }, true, !storageReady)
 
   useEffect(() => {
     mounted.current = true
@@ -108,6 +118,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
       try {
         const raw = localStorage.getItem(storageKey)
         const saved = raw && raw.length <= 100_000 ? rememberedDraft(JSON.parse(raw)) : null
+        restoredDraft.current = Boolean(saved)
         if (saved && !edited.current) {
           // Remember inactive drafts only. The URL's active scope always wins; mode is never persisted.
           if (appliedFilter?.mode !== "team-project") {
@@ -128,10 +139,11 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   }, [appliedFilter, storageKey])
 
   useEffect(() => {
-    if (!storageReady) return
+    // Do not turn an unresolved preference seed into a deliberately empty remembered draft.
+    if (!storageReady || !defaultsReady) return
     try { localStorage.setItem(storageKey, JSON.stringify({ groups, exclusions, projects })) }
     catch { /* Remembering a draft is optional, never required for a query. */ }
-  }, [storageReady, storageKey, groups, exclusions, projects])
+  }, [storageReady, defaultsReady, storageKey, groups, exclusions, projects])
 
   useEffect(() => {
     if (mode !== "team-project") return
@@ -149,6 +161,7 @@ export function DashboardFilter({ filter, viewerId, onApply }: DashboardFilterPr
   }, [mode, groups, loadGroup])
 
   function editDraft() {
+    markDefaultsEdited()
     edited.current = true
     personSequence.current += 1
     personController.current?.abort()

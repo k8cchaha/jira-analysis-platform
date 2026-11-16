@@ -38,6 +38,19 @@ function harness() {
   return load("components/app-shell/navigation.ts")
 }
 
+describe("shared admin email policy", () => {
+  it("normalizes trusted email identically to navigation and rejects non-string values", () => {
+    const nav = harness()
+    for (const email of nav.ADMIN_EMAILS) {
+      assert.equal(nav.isAdminEmail(`  ${email.toUpperCase()}  `), true)
+      assert.equal(nav.visibleNavigationCategories(nav.navigationCategories, email), nav.navigationCategories)
+    }
+    for (const value of [undefined, null, false, 1, {}, [], "", "someone@example.com"]) {
+      assert.equal(nav.isAdminEmail(value), false)
+    }
+  })
+})
+
 describe("Sprint Capacity navigation", () => {
   it("adds one final Capacity item while preserving existing Sprint entries", () => {
     const nav = harness()
@@ -66,7 +79,6 @@ describe("Analysis navigation", () => {
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
     assert.deepEqual(Array.from(analytics.features, (feature) => feature.routes[0].href), [
       "/analytics/workload", "/analytics/projects", "/analytics/story-points",
-      "/analytics/members", "/analytics/trends", "/analytics/comparison",
     ])
     for (const feature of analytics.features) {
       assert.equal(feature.routes.length, 1)
@@ -76,54 +88,107 @@ describe("Analysis navigation", () => {
       })
     }
   })
-  it("orders project before team analysis and comparison directly after trends", () => {
+  it("consolidates project, trends and comparison before team analysis without changing visibility", () => {
     const nav = harness()
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
-    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案分析", "團隊分析", "成員分析", "趨勢分析", "比較分析"])
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案回顧與趨勢", "團隊分析"])
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.id), ["workload", "projects", "story-points"])
+    assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState("/analytics/members"))), { title: "Jira Analysis", categoryId: null })
+    const routeType = readFileSync(new URL("components/app-shell/navigation.ts", root), "utf8").split("export type NavigationIcon")[0]
+    assert.doesNotMatch(routeType, /"\/analytics\/members"/)
     const team = analytics.features[2]
     assert.equal(team.icon, "members")
     assert.equal(team.routes[0].href, "/analytics/story-points")
     const project = analytics.features[1]
-    assert.equal(analytics.features[3].icon, "person")
-    assert.equal(project.icon, "projects")
-    assert.equal(project.routes[0].href, "/analytics/projects")
-    const comparison = analytics.features.at(-1)
-    assert.equal(comparison.icon, "comparison")
-    assert.deepEqual(JSON.parse(JSON.stringify(comparison.routes)), [{ href: "/analytics/comparison", label: "比較分析" }])
-    assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(comparison.routes[0].href))), { title: "比較分析", categoryId: "analytics" })
+    assert.equal(project.icon, "history")
+    assert.notEqual(project.icon, analytics.features[0].icon)
+    assert.deepEqual(JSON.parse(JSON.stringify(project.routes)), [{ href: "/analytics/projects", label: "專案回顧與趨勢" }])
     const adminCategories = nav.visibleNavigationCategories(nav.navigationCategories, nav.ADMIN_EMAILS[0])
-    assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "comparison"))
+    assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "projects"))
     assert.equal(nav.visibleNavigationCategories(nav.navigationCategories, "someone@example.com").length, 0)
-    for (const [path, title] of [[team.routes[0].href, "團隊分析"], [project.routes[0].href, "專案分析"]]) {
+    for (const [path, title] of [[team.routes[0].href, "團隊分析"], [project.routes[0].href, "專案回顧與趨勢"]]) {
       assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(path))), { title, categoryId: "analytics" })
     }
   })
 
-  it("keeps renamed team and new project destinations honest ComingSoon pages", () => {
+  it("keeps exactly 11 main destinations and no retired member entry", () => {
+    const nav = harness()
+    const routes = [nav.dashboardNavigation.href, ...Array.from(nav.navigationCategories).flatMap((category) => Array.from(category.features).flatMap((feature) => Array.from(feature.routes, (route) => route.href)))]
+    assert.equal(routes.length, 11)
+    assert.equal(new Set(routes).size, 11)
+    assert.equal(routes.includes("/analytics/members"), false)
+    assert.equal(routes.includes("/settings/jira"), false)
+  })
+
+  it("keeps the implemented Projects page and Team ComingSoon page on their async filter contracts", async () => {
     for (const [path, title] of [
       ["app/(app)/analytics/story-points/page.tsx", "團隊分析"],
-      ["app/(app)/analytics/projects/page.tsx", "專案分析"],
-      ["app/(app)/analytics/comparison/page.tsx", "比較分析"],
+      ["app/(app)/analytics/projects/page.tsx", "專案回顧與趨勢"],
     ]) {
       const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
         fileName: path,
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
       }).outputText
       const ComingSoon = () => null
+      const PageHeader = () => null
+      const Filter = () => null
+      const isProjects = path.includes("/projects/")
+      const params = isProjects
+        ? { project: "SUN", sprint: ["7518", "6823"] }
+        : { project: "SUN", from: "2026-10-01", to: "2026-10-31" }
+      const validFilter = isProjects
+        ? { project: "SUN", selectedSprintIds: [6823, 7518], sprints: [], error: null, dateMigrationHref: null }
+        : { project: "SUN", dateRange: { from: "2026-10-01", to: "2026-10-31" }, error: null }
+      let filter = validFilter
+      let parserCalls = 0
       const mod = { exports: {} }
       const fixtureRequire = (name) => {
         if (name === "react/jsx-runtime") return require(name)
         if (name === "@/components/coming-soon") return { ComingSoon }
+        if (isProjects && name === "@/components/page-header") return { PageHeader }
+        if (name === (isProjects ? "./projects-query-client" : "./team-analysis-filter")) {
+          return isProjects ? { ProjectsQueryClient: Filter } : { TeamAnalysisFilter: Filter }
+        }
+        if (name === (isProjects ? "@/lib/projects-filter" : "@/lib/team-analysis-filter")) {
+          const parse = (input) => {
+            assert.equal(input, params, "await the async searchParams without rewriting them")
+            parserCalls++
+            return filter
+          }
+          return isProjects ? { projectsFilterResult: parse } : { teamAnalysisFilterResult: parse }
+        }
         throw new Error(`Unexpected page import: ${name}`)
       }
       vm.runInNewContext(`(function(require,module,exports){${code}\n})`, {}, { filename: path })(fixtureRequire, mod, mod.exports)
-      const page = mod.exports.default()
-      assert.equal(page.type, ComingSoon)
-      assert.equal(page.props.title, title)
+      for (const result of [validFilter, isProjects
+        ? { ...validFilter, error: "日期篩選已搬移", dateMigrationHref: "/analytics/story-points?project=SUN&from=2026-10-01&to=2026-10-31" }
+        : { project: null, dateRange: null, error: "無效分析區間" }, isProjects
+        ? { project: null, selectedSprintIds: [], sprints: [], error: null, dateMigrationHref: null }
+        : { project: null, dateRange: null, error: null }]) {
+        filter = result
+        parserCalls = 0
+        const page = await mod.exports.default({ searchParams: Promise.resolve(params) })
+        let controls
+        if (isProjects) {
+          assert.equal(page.type, "div")
+          const header = page.props.children.find((child) => child.type === PageHeader)
+          assert.equal(header.props.title, title)
+          controls = page.props.children.find((child) => child.type === Filter)
+        } else {
+          assert.equal(page.type, ComingSoon)
+          assert.equal(page.props.title, title)
+          assert.equal(page.props.showDescription, false)
+          controls = page.props.filters
+        }
+        assert.equal(parserCalls, 1)
+        assert.equal(controls.type, Filter)
+        assert.equal(controls.key, null)
+        assert.deepEqual(JSON.parse(JSON.stringify(controls.props)), result)
+      }
     }
   })
 
-  it("renders people and project folder icons instead of the former points star", () => {
+  it("renders people and the project History icon with shared navigation styling", () => {
     const path = "components/app-shell/icons.tsx"
     const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
       fileName: path,
@@ -136,12 +201,21 @@ describe("Analysis navigation", () => {
     }
     vm.runInNewContext(`(function(require,module,exports){${code}\n})`, {}, { filename: path })(fixtureRequire, mod, mod.exports)
     const people = mod.exports.NavigationIconGlyph({ name: "members" })
-    const project = mod.exports.NavigationIconGlyph({ name: "projects" })
+    const projectFeature = harness().navigationCategories.find((category) => category.id === "analytics").features.find((feature) => feature.id === "projects")
+    const project = mod.exports.NavigationIconGlyph({ name: projectFeature.icon })
     assert.equal(people.type, "svg")
     assert.equal(people.props.children[0].type, "circle")
     assert.equal(project.type, "svg")
     assert.equal(project.props["aria-hidden"], true)
+    assert.equal(project.props.className, "h-5 w-5")
+    assert.equal(project.props.stroke, "currentColor")
+    assert.equal(project.props.strokeWidth, 1.8)
     assert.equal(project.props.children[0].type, "path")
+    assert.equal(project.props.children.length, 3)
+    assert.equal(project.props.children[0].props.d, "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8")
+    assert.equal(project.props.children[1].props.d, "M3 3v5h5")
+    assert.equal(project.props.children[2].props.d, "M12 7v5l4 2")
+    assert.equal(mod.exports.NavigationIconGlyph({ name: projectFeature.icon, className: "h-6 w-6" }).props.className, "h-6 w-6")
     assert.notEqual(project.props.children[0].props.d, people.props.children[1].props.d)
     const person = mod.exports.NavigationIconGlyph({ name: "person" })
     assert.equal(person.type, "svg")

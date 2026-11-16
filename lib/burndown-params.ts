@@ -31,6 +31,30 @@ export function parseSprintId(value: string | undefined): number | null {
   return Number.isSafeInteger(id) && id > 0 ? id : null
 }
 
+/** 舊 `byResolved=1` 連結僅作相容驗證；所有查詢固定使用 Resolved，不能切換規則。 */
+export function isValidLegacyByResolved(value: string | string[] | undefined): boolean {
+  return value === undefined || value === "1"
+}
+
+/** Burn Down 專用 URL，只產生專案與 Sprint 條件。 */
+export function burndownQueryParams(project: SprintProjectKey | null, sprintId: number | null): string {
+  const params = new URLSearchParams()
+  if (project !== null) {
+    if (parseProjectKey(project) === null) throw new Error("Invalid project")
+    params.set("project", project)
+  }
+  if (sprintId !== null) {
+    if (project === null || !Number.isSafeInteger(sprintId) || sprintId <= 0) throw new Error("Invalid sprint")
+    params.set("sprint", String(sprintId))
+  }
+  return params.toString()
+}
+
+export function burndownHref(project: SprintProjectKey | null, sprintId: number | null): string {
+  const query = burndownQueryParams(project, sprintId)
+  return `/sprint/burndown${query ? `?${query}` : ""}`
+}
+
 /** Planning 頁面的分頁（Tab）；`assignment`＝任務分派狀況、`overview`＝任務規劃總覽。 */
 export type PlanningTab = "assignment" | "overview"
 

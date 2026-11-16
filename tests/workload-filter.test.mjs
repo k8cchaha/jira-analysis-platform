@@ -59,6 +59,15 @@ function harness(initialSnapshot = {}) {
       if (name === "react") return { ...require(name), ...hooks }
       if (name === "react/jsx-runtime") return require(name)
       if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
+      // Saved-default initialization is covered separately; keep existing no-default drafts.
+      if (name === "@/components/filter-defaults-provider") return {
+        currentFilterParams: () => null,
+        useInitialFilterDefaults: () => () => {},
+      }
+      if (name === "@/lib/filter-defaults") return {
+        absentDefaultCondition: (params, kind) => (kind === "project" ? ["project", "sprint"] : ["group", "exclude"]).every((key) => !params.has(key)),
+        defaultDashboardProjects: (defaults) => defaults.project ? [defaults.project.toLowerCase()] : [],
+      }
       if (name === "@/components/team-members-provider") return {
         useTeamMembers: () => ({ groupStates: snapshot, loadGroup: async () => {}, retryGroup: async () => {} }),
       }
@@ -364,16 +373,21 @@ describe("workload page and filter callbacks", () => {
       assert.equal(h.pushes.length, 0)
     }
   })
-  it("provides only four recent-month shortcuts and defaults to 近1月", () => {
+  it("offers 近3月 and 近6月 only and defaults to 近3月", () => {
     const h = harness({ "ent-web": success("a") })
     const field = named(h.form(formProps()), "DateRangeField")
-    assert.equal(field.props.defaultPreset, "last1Month")
-    assert.deepEqual(plain(field.props.shortcuts).map((option) => option.label), ["近1月", "近2月", "近3月", "近6月"])
+    assert.equal(field.props.defaultPreset, "last3Months")
+    assert.equal(field.props.required, true, "分析區間 is marked required")
+    assert.deepEqual(plain(field.props.shortcuts).map((option) => option.label), ["近3月", "近6月"])
     h.setToday("2026-11-03")
     const markup = h.component(field)
-    assert.deepEqual(elements(markup, (node) => node.type === "button" && "aria-pressed" in node.props).map(text), ["近1月", "近2月", "近3月", "近6月"])
+    assert.deepEqual(elements(markup, (node) => node.type === "button" && "aria-pressed" in node.props).map(text), ["近3月", "近6月"])
   })
-  it("initializes 近1月 only after browser today is known and highlights it", () => {
+  it("marks 團隊 as required", () => {
+    const h = harness({ "ent-web": success("a") })
+    assert.equal(named(h.form(formProps()), "TeamSelect").props.required, true)
+  })
+  it("initializes 近3月 only after browser today is known and highlights it", () => {
     const h = harness({ "ent-web": success("a") })
     let tree = h.form()
     h.component(named(tree, "DateRangeField"))
@@ -381,12 +395,12 @@ describe("workload page and filter callbacks", () => {
     h.setToday("2026-11-03")
     h.component(named(h.form(), "DateRangeField"))
     tree = h.form()
-    assert.deepEqual(plain(named(tree, "DateRangeField").props.value), { from: "2026-10-04", to: "2026-11-03" })
+    assert.deepEqual(plain(named(tree, "DateRangeField").props.value), { from: "2026-08-04", to: "2026-11-03" })
     const markup = h.component(named(tree, "DateRangeField"))
-    assert.deepEqual(elements(markup, (node) => node.type === "button" && node.props["aria-pressed"] === true).map(text), ["近1月"])
+    assert.deepEqual(elements(markup, (node) => node.type === "button" && node.props["aria-pressed"] === true).map(text), ["近3月"])
     assert.equal(h.pushes.length, 0)
   })
-  for (const [label, from] of [["近1月", "2026-10-04"], ["近2月", "2026-09-04"], ["近3月", "2026-08-04"], ["近6月", "2026-05-04"]]) {
+  for (const [label, from] of [["近3月", "2026-08-04"], ["近6月", "2026-05-04"]]) {
     it(`${label} updates the draft and submits its exact calendar-month range`, () => {
       const h = harness({ "ent-web": success("a") })
       h.setToday("2026-11-03")
@@ -416,11 +430,10 @@ describe("workload page and filter callbacks", () => {
     const button = h.component(named(tree, "SearchButton"))
     assert.equal(button.props.type, "submit")
     assert.match(button.props.className, /w-24 max-w-full min-w-0/)
-    // 第一排是分析區間，第二排才是團隊／專案／查詢；只有後者需要 flex-wrap 收窄。
-    const rows = one(tree, (node) => node.type === "form").props.children
-    assert.equal(elements(rows[0], (node) => node.type?.name === "DateRangeField").length, 1)
-    assert.equal(elements(rows[1], (node) => node.type?.name === "TeamSelect").length, 1)
-    assert.match(rows[1].props.className, /flex-wrap/)
+    // 分析區間、團隊、專案、查詢都在同一列；空間不足才以 flex-wrap 換行。
+    const row = one(tree, (node) => node.type === "form").props.children.find((child) => elements(child, (node) => node.type?.name === "TeamSelect").length)
+    for (const name of ["DateRangeField", "TeamSelect", "FilterDropdown", "SearchButton"]) assert.equal(elements(row, (node) => node.type?.name === name).length, 1, name)
+    assert.match(row.props.className, /flex-wrap/)
     assert.doesNotMatch(text(tree), /工作量資料尚未接上/)
     assert.equal(h.pushes.length, 0)
   })
@@ -489,15 +502,15 @@ describe("workload page and filter callbacks", () => {
     assert.equal(named(tree, "DateRangeField").props.value.from, "") // 尚未套用，等 effect 執行
     h.component(named(tree, "DateRangeField"))
     tree = h.form()
-    assert.equal(named(tree, "DateRangeField").props.value.from, "2026-09-20")
+    assert.equal(named(tree, "DateRangeField").props.value.from, "2026-07-20")
     assert.equal(named(tree, "DateRangeField").props.value.to, "2026-10-19")
     // 補值後即成為可查的草稿，未選擇提示消失。
     assert.doesNotMatch(text(tree), /尚未選擇分析區間/)
     submit(tree)
-    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-09-20&to=2026-10-19"])
+    assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-web&from=2026-07-20&to=2026-10-19"])
     // 只補一次：重繪不會再改動已套用的區間。
     h.component(named(h.form(), "DateRangeField"))
-    assert.equal(named(h.form(), "DateRangeField").props.value.from, "2026-09-20")
+    assert.equal(named(h.form(), "DateRangeField").props.value.from, "2026-07-20")
   })
   it("never lets the default override a range restored from the URL", () => {
     const h = harness({ "ent-web": success("a") })

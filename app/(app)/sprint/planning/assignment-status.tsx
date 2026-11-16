@@ -38,14 +38,13 @@ function percent(value: number | null): string {
   return value === null ? "—" : `${value}%`
 }
 
-/** 總分配比例的文字顏色：<50% 綠、50~70% 藍、70~90% 黃、90~110% 紅、>110% 紫；null 用中性。 */
+/** 總分派比例：<70% 藍、70~90% 綠、>90~100% 琥珀、>100% 紅；null 用中性。 */
 function ratioColor(value: number | null): string {
   if (value === null) return "text-slate-600 dark:text-slate-300"
-  if (value < 50) return "text-emerald-600 dark:text-emerald-400"
   if (value < 70) return "text-blue-600 dark:text-blue-400"
-  if (value < 90) return "text-amber-600 dark:text-amber-400"
-  if (value <= 110) return "text-red-600 dark:text-red-400"
-  return "text-purple-600 dark:text-purple-400"
+  if (value <= 90) return "text-green-700 dark:text-green-400"
+  if (value <= 100) return "text-amber-700 dark:text-amber-400"
+  return "text-red-700 dark:text-red-400"
 }
 
 /**

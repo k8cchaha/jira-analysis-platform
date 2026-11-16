@@ -10,6 +10,51 @@ export const SPRINT_PROJECTS = [
 ] as const
 export type SprintProjectKey = (typeof SPRINT_PROJECTS)[number]["key"]
 
+/** Sprint review parents, explicitly intersected with the selected project. */
+export function projectsAnalysisParentIssuesJql(project: SprintProjectKey, sprintId: number): string {
+  if (!SPRINT_PROJECTS.some((option) => option.key === project) || !Number.isSafeInteger(sprintId) || sprintId < 1) throw new DashboardFilterError()
+  return `project = ${project} AND sprint = ${sprintId} AND issuetype in (story, task, bug) ORDER BY key ASC`
+}
+
+/** Exact locally selected issue set for Jira navigation; no extra scope or population predicates. */
+export function projectsAnalysisIssueIdsJql(ids: readonly string[]): string | null {
+  if (!Array.isArray(ids)) throw new DashboardFilterError("Issue ID 無效。")
+  for (const id of ids) {
+    if (typeof id !== "string" || !/^[1-9]\d{0,29}$/.test(id)) throw new DashboardFilterError("Issue ID 無效。")
+  }
+  if (!ids.length) return null
+  const jql = `id in (${[...new Set(ids)].sort().join(", ")}) ORDER BY key ASC`
+  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("分析查詢過大，請縮小範圍。")
+  return jql
+}
+
+/** All Dev+QA children; no completion/created window and no implicit self scope. */
+export function projectsAnalysisChildQueries(
+  parentIds: readonly string[],
+  issueTypeIds: readonly string[],
+  accountIdsOrNull: readonly string[] | null,
+): string[] {
+  const numericIds = (ids: readonly string[]) => Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && /^[1-9]\d{0,29}$/.test(id))
+  if (!numericIds(parentIds) || parentIds.length > 2_000 || !numericIds(issueTypeIds) || issueTypeIds.length !== 2 || new Set(issueTypeIds).size !== 2) throw new DashboardFilterError()
+  if (accountIdsOrNull !== null && (!Array.isArray(accountIdsOrNull) || !accountIdsOrNull.length || accountIdsOrNull.length > DASHBOARD_MEMBER_LIMIT || accountIdsOrNull.some((id) => !isDashboardAccountId(id)))) throw new DashboardFilterError()
+  const types = [...issueTypeIds].sort().join(", ")
+  const assignee = accountIdsOrNull === null ? "" : ` AND assignee in (${[...new Set(accountIdsOrNull)].sort().map((id) => `"${id}"`).join(", ")})`
+  const suffix = `) AND issuetype in (${types})${assignee} ORDER BY key ASC`
+  const prefix = "parent in ("
+  const queries: string[] = []
+  let batch: string[] = []
+  for (const id of [...new Set(parentIds)].sort()) {
+    if (prefix.length + id.length + suffix.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("所選成員產生的查詢過大，請縮小團隊範圍。")
+    if (batch.length >= 100 || prefix.length + [...batch, id].join(", ").length + suffix.length > DASHBOARD_JQL_LIMIT) {
+      queries.push(`${prefix}${batch.join(", ")}${suffix}`)
+      batch = []
+    }
+    batch.push(id)
+  }
+  if (batch.length) queries.push(`${prefix}${batch.join(", ")}${suffix}`)
+  return queries
+}
+
 /**
  * 燃盡圖的查詢（Dev-Task Story Points、以母票的 Sprint 為準）。
  *
@@ -114,26 +159,6 @@ export function sprintChildTasksUnassignedJql(parentKeys: readonly string[]): st
   return `${sprintChildTasksJql(parentKeys)} AND assignee is empty`
 }
 
-/** 某組母票之下、在某一天切到 Done 的 Dev-Task（每日完成度）。
- *  對應真實 JQL：`parent in (<keyA>, <keyB>, …) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "<date>"` */
-export function sprintDevTasksDoneOnJql(
-  parentKeys: readonly string[],
-  date: string
-): string {
-  const keys = enforcedSortedKeys(parentKeys)
-  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" ON "${date}"`
-}
-
-/** 某組母票之下、在 `beforeDate` 之前就已切到 Done 的 Dev-Task（空起點格的綠色已完成量）。
- *  對應真實 JQL：`parent in (<keyA>, <keyB>, …) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "<beforeDate>"` */
-export function sprintDevTasksDoneBeforeJql(
-  parentKeys: readonly string[],
-  beforeDate: string
-): string {
-  const keys = enforcedSortedKeys(parentKeys)
-  return `parent in (${keys}) AND issuetype = "Dev-Task" AND status CHANGED TO "Done" BEFORE "${beforeDate}"`
-}
-
 /**
  * 儀表板下方的任務看板（跨專案）全部 active 開發單（Dev-Task + QA-Task）：套用上方
  * Dashboard scope 的 assignee（self→currentUser()；person→`=`；team→`in (...)`＋有選 project
@@ -201,6 +226,10 @@ function enforcedSortedKeys(parentKeys: readonly string[]): string {
   return unique.sort().join(", ")
 }
 
+/** 「自己」模式的固定起算日：儀表板六類警示與缺失資料只納入此日之後建立的工作單。
+ *  對應真實 JQL：`created >= "2026-01-01"` */
+export const SELF_SCOPE_CREATED_SINCE = "2026-01-01"
+
 /** 近期指派給我（currentUser）且最近 30 天建立的全部分母（Scope 片段）。
  *  對應真實 JQL：`assignee = currentUser() AND created >= -30d` */
 export const RECENT_ASSIGNED_ISSUES_SCOPE_JQL =
@@ -231,11 +260,11 @@ const missingPointsPredicate = `((status = Done and ${actualStoryPointsJql} in (
  *    ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0)))
  *    and assignee = currentUser()` */
 export const MISSING_POINTS_JQL =
-  `${POINTS_SCOPE_JQL} and ${missingPointsPredicate} and assignee = currentUser()`
+  `${POINTS_SCOPE_JQL} and ${missingPointsPredicate} and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** Expanded Points READ population only; original supplementation eligibility remains unchanged. */
 export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
-  `issuetype in (DEV-Task, QA-Task) and ${missingPointsPredicate} and assignee = currentUser()`
+  `issuetype in (DEV-Task, QA-Task) and ${missingPointsPredicate} and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** 指派給我的 Defect（Bug）中，「Defect Cause」未填者。限定 SUN／TKK／jiratry 專案（僅這些專案有此欄位）。
  *  對應真實 JQL（defectCause 欄位在 Jira 中為 `"Defect Cause[Select List (multiple choices)]"`）：
@@ -243,11 +272,11 @@ export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
  *    statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and
  *    resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY` */
 export const MISSING_DEFECT_CAUSE_JQL =
-  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
+  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** SUN 的 Story／Task／Bug，Impact Scope 未填（不限狀態）；self 可依 Jira 權限補填。 */
 export const MISSING_IMPACT_SCOPE_JQL =
-  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser()`
+  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {
@@ -278,7 +307,10 @@ export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboa
   dashboardDays(String(scope.days))
   if (!scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT || scope.accountIds.some((id) => !isDashboardAccountId(id)) || scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))) throw new DashboardFilterError()
   const assignees = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`).join(", ")
-  const base = selfQuery.replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+  // Person/team keep only their rolling -Nd window: the self fixed start date must not be inherited.
+  const base = selfQuery
+    .replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+    .replace(new RegExp(` and created >= "${SELF_SCOPE_CREATED_SINCE}"`, "gi"), "")
   const date = `created >= -${scope.days}d`
   const projects = scope.projects.length ? ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})` : ""
   const jql = `${base} AND ${date}${projects}`
@@ -341,7 +373,8 @@ export function dashboardAlertJql(key: DashboardAlertKey, scope: ResolvedDashboa
   if (!Object.hasOwn(DASHBOARD_ALERT_JQL, key)) throw new DashboardFilterError()
   let assignee = "assignee = currentUser()"
   let projects = ""
-  let date = ""
+  // Self mode is bounded by a fixed start date; person/team keep their rolling -Nd window.
+  let date = scope.mode === "self" ? ` AND created >= "${SELF_SCOPE_CREATED_SINCE}"` : ""
   if (scope.mode !== "self") {
     dashboardDays(String(scope.days))
     date = ` AND created >= -${scope.days}d`

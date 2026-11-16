@@ -12,7 +12,7 @@ const team = { mode: "team-project", groups: ["ent-web", "ent-be1"], projects: [
 const user = (accountId) => ({ accountId, displayName: accountId })
 
 describe("unexpected closed Points read option", () => {
-  const expanded = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser()'
+  const expanded = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() and created >= "2026-01-01"'
   for (const filter of [{ mode: "self" }, person, team]) it(`round trips the shared checkbox in ${filter.mode}`, () => {
     const checked = { ...filter, includeUnexpectedClosed: true }
     const query = serializeDashboardFilter(checked)
@@ -47,7 +47,8 @@ describe("unexpected closed Points read option", () => {
   for (const mode of ["person", "team-project"]) it(`retains validated assignees, projects and created window in ${mode}`, () => {
     const scope = { mode, accountIds: ["b", "a", "a"], projects: ["tkk", "sun"], days: 7 }
     const actual = missingDataReadJql("points", scope, { includeUnexpectedClosed: true })
-    assert.equal(actual, expanded.replace("assignee = currentUser()", 'assignee in ("a", "b")') + " AND created >= -7d AND project in (sun, tkk)")
+    const personBase = expanded.replace("assignee = currentUser()", 'assignee in ("a", "b")').replace(' and created >= "2026-01-01"', "")
+    assert.equal(actual, personBase + " AND created >= -7d AND project in (sun, tkk)")
     for (const kind of ["defect-cause", "impact-scope"]) assert.equal(missingDataReadJql(kind, scope, { includeUnexpectedClosed: true }), missingDataReadJql(kind, scope))
   })
   it("still fails closed on invalid expanded scopes", () => {
@@ -135,7 +136,7 @@ describe("scoped missing-data JQL", () => {
     assert.equal(self, missingDataJql("impact-scope"))
     assert.ok(self.includes(releaseWindow))
     assert.doesNotMatch(self, /status|created >= -/)
-    assert.ok(self.endsWith(') and cf[13476] is not EMPTY and assignee = currentUser()'))
+    assert.ok(self.endsWith(') and cf[13476] is not EMPTY and assignee = currentUser() and created >= "2026-01-01"'))
     const person = missingDataReadJql("impact-scope", { mode: "person", accountIds: ["a"], projects: [], days: 30 })
     assert.match(person, /^project = sun and issuetype in \(story, task, bug\) and cf\[14848\] is EMPTY/)
     assert.ok(person.includes(releaseWindow))

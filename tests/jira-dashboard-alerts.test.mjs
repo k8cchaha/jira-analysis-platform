@@ -20,8 +20,8 @@ describe("dashboard alert JQL contract", () => {
     assert.deepEqual(DASHBOARD_ALERT_KEYS, { bugs: ["s0s1", "s2"], pending: ["inReview", "requestInfo"], due: ["overdue", "upcoming"] })
   })
   for (const [key, base] of Object.entries(literalQueries)) {
-    it(`${key}: adds self assignee without extra date restrictions`, () => {
-      assert.equal(dashboardAlertJql(key, { mode: "self" }), `(${base}) AND assignee = currentUser() ORDER BY key ASC`)
+    it(`${key}: adds self assignee bounded by the fixed created start date`, () => {
+      assert.equal(dashboardAlertJql(key, { mode: "self" }), `(${base}) AND assignee = currentUser() AND created >= "2026-01-01" ORDER BY key ASC`)
     })
     it(`${key}: adds one verified account with the chosen days window`, () => {
       const scope = { mode: "person", accountIds: ["712020:fixture-user"], projects: [], days: 1 }

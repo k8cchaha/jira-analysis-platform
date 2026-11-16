@@ -24,6 +24,13 @@ const aliases = {
   trends: ["summary", "comparison", "detail"],
   comparison: ["summary"],
 }
+const canonicalFeatures = ["workload", "projects", "story-points"]
+const mergedFeatures = ["trends", "comparison"]
+const retiredFeatures = [...mergedFeatures, "members"]
+const featureDestination = (feature) => `/analytics/${feature === "members" ? "story-points" : mergedFeatures.includes(feature) ? "projects" : feature}`
+const mergedSources = mergedFeatures.flatMap((feature) => [
+  `/analytics/${feature}`, ...aliases[feature].map((view) => `/analytics/${feature}/${view}`),
+])
 const origin = "https://fixture.invalid"
 const responseFor = (path) => unstable_getResponseFromNextConfig({ url: `${origin}${path}`, nextConfig })
 
@@ -54,49 +61,124 @@ async function runtimeRedirect(path) {
   return new URL(format(result.parsedUrl), origin)
 }
 
-describe("flat analysis page routes and legacy compatibility", () => {
-  it("defines exactly 14 literal legacy redirects, never feature-root or wildcard redirects", async () => {
+function assertQueryPreserved(destination, query) {
+  const expected = new URLSearchParams(query)
+  assert.deepEqual([...new Set(destination.searchParams.keys())].sort(), [...new Set(expected.keys())].sort())
+  for (const key of new Set(expected.keys())) assert.deepEqual(destination.searchParams.getAll(key), expected.getAll(key))
+}
+
+describe("consolidated analysis page routes and legacy compatibility", () => {
+  it("defines exactly 17 literal redirects with single-hop destinations and no wildcard", async () => {
     const rules = await nextConfig.redirects()
-    assert.equal(rules.length, 14)
-    const expected = Object.entries(aliases).flatMap(([feature, views]) => views.map((view) => ({
-      source: `/analytics/${feature}/${view}`, destination: `/analytics/${feature}`, permanent: false,
-    })))
-    assert.deepEqual(rules, expected)
+    assert.equal(rules.length, 17)
+    const expected = [
+      ...Object.entries(aliases).flatMap(([feature, views]) => views.map((view) => ({
+        source: `/analytics/${feature}/${view}`, destination: featureDestination(feature), permanent: false,
+      }))),
+      ...retiredFeatures.map((feature) => ({ source: `/analytics/${feature}`, destination: featureDestination(feature), permanent: false })),
+    ]
+    const bySource = (left, right) => left.source.localeCompare(right.source)
+    assert.deepEqual([...rules].sort(bySource), expected.sort(bySource))
+    for (const rule of rules) assert.doesNotMatch(rule.source, /[:*?()[\]{}]/)
+    assert.equal(new Set(rules.map((rule) => rule.source)).size, rules.length)
+    for (const rule of rules) assert.equal(rules.some((next) => next.source === rule.destination), false)
   })
 
-  for (const [feature, views] of Object.entries(aliases)) {
+  for (const feature of canonicalFeatures) {
     it(`${feature} has one physical page and no view directories`, () => {
       const folder = new URL(`../app/(app)/analytics/${feature}/`, import.meta.url)
       assert.ok(existsSync(new URL("page.tsx", folder)))
       assert.equal(readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length, 0)
     })
+  }
+  for (const feature of retiredFeatures) {
+    it(`${feature} no longer has a separate physical page or view pages`, () => {
+      const folder = new URL(`../app/(app)/analytics/${feature}/`, import.meta.url)
+      assert.equal(existsSync(new URL("page.tsx", folder)), false)
+      for (const view of aliases[feature]) assert.equal(existsSync(new URL(`${view}/page.tsx`, folder)), false)
+    })
+    it(`redirects the former ${feature} root directly to its canonical entry with 307`, async () => {
+      const response = await responseFor(`/analytics/${feature}`)
+      assert.equal(response.status, 307)
+      assert.equal(getRedirectUrl(response), `${origin}${featureDestination(feature)}`)
+    })
+  }
+  for (const [feature, views] of Object.entries(aliases)) {
     for (const view of views) {
-      it(`redirects /analytics/${feature}/${view} directly to its flat entry with 307`, async () => {
+      it(`redirects /analytics/${feature}/${view} directly to its canonical entry with 307`, async () => {
         const response = await responseFor(`/analytics/${feature}/${view}`)
         assert.equal(response.status, 307)
-        assert.equal(getRedirectUrl(response), `${origin}/analytics/${feature}`)
+        assert.equal(getRedirectUrl(response), `${origin}${featureDestination(feature)}`)
       })
     }
   }
 
-  it("preserves repeated group/project/exclude values and dates without normalizing away invalid input", async () => {
+  it("preserves repeated workload groups/projects/exclusions and dates without normalizing invalid input", async () => {
     const query = "group=ent-web&group=ent-be1&project=sun&project=tkk&exclude=ent-web%7Ca&exclude=ent-be1%7Cb&from=2026-10-04&to=2026-11-03"
-    const expected = new URLSearchParams(query)
     for (const view of aliases.workload) {
       const destination = await runtimeRedirect(`/analytics/workload/${view}?${query}`)
       assert.equal(destination.pathname, "/analytics/workload")
-      for (const key of new Set(expected.keys())) assert.deepEqual(destination.searchParams.getAll(key), expected.getAll(key))
+      assertQueryPreserved(destination, query)
     }
-    const destination = await runtimeRedirect("/analytics/workload/summary?group=ent-web&from=2026-10-01&from=2026-10-02&to=2026-10-31&unknown=1")
-    const params = destination.searchParams
-    assert.deepEqual(params.getAll("from"), ["2026-10-01", "2026-10-02"])
-    assert.equal(params.get("unknown"), "1", "The target parser must still reject invalid query input")
+    const invalid = "group=ent-web&from=2026-10-01&from=2026-10-02&to=2026-10-31&unknown=1"
+    assertQueryPreserved(await runtimeRedirect(`/analytics/workload/summary?${invalid}`), invalid)
+  })
+
+  for (const query of [
+    "project=SUN&sprint=7518&sprint=6823&sprint=7518",
+    "project=SUN&mode=dates&from=2026-10-01&to=2026-10-31",
+    "project=SUN&project=TKK&sprint=7401&unknown=1&unknown=2",
+    "project=SUN&mode=dates&from=2026-10-01&from=2026-10-02&to=2026-10-31&sprint=7518",
+    "project=SUN&mode=invalid&from=not-a-date&to=&group=ent-web",
+  ]) {
+    it(`passes through consolidated legacy queries unchanged: ${query}`, async () => {
+      for (const source of [...mergedSources, "/analytics/projects/summary"]) {
+        const destination = await runtimeRedirect(`${source}?${query}`)
+        assert.equal(destination.pathname, "/analytics/projects")
+        assertQueryPreserved(destination, query)
+        assert.equal(getRedirectUrl(await responseFor(`${destination.pathname}${destination.search}`)), null, "no second redirect")
+      }
+    })
+  }
+
+  for (const query of [
+    "project=SUN&from=2026-10-01&to=2026-10-31",
+    "project=SUN&project=TKK&from=2026-10-01&from=2026-10-02&to=&unknown=1&unknown=2",
+    "mode=dates&sprint=7518&sprint=6823&group=ent-web&group=ent-be1&exclude=ent-web%7Ca&accountId=invalid&from=not-a-date",
+  ]) {
+    it(`passes member root and aliases directly to team analysis without validating queries: ${query}`, async () => {
+      for (const source of ["/analytics/members", ...aliases.members.map((view) => `/analytics/members/${view}`)]) {
+        const destination = await runtimeRedirect(`${source}?${query}`)
+        assert.equal(destination.pathname, "/analytics/story-points")
+        assertQueryPreserved(destination, query)
+        assert.equal(getRedirectUrl(await responseFor(`${destination.pathname}${destination.search}`)), null, "no second redirect")
+      }
+    })
+  }
+
+  it("has exactly 12 physical product pages, including only three analysis entries", () => {
+    function pagePaths(folder, prefix = "") {
+      return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+        const path = `${prefix}/${entry.name}`
+        if (entry.isDirectory()) return pagePaths(new URL(`${entry.name}/`, folder), path)
+        return entry.name === "page.tsx" ? [path.slice(0, -"/page.tsx".length)] : []
+      })
+    }
+    const pages = pagePaths(new URL("../app/(app)/", import.meta.url))
+    assert.equal(pages.length, 12)
+    assert.deepEqual(pages.filter((path) => path.startsWith("/analytics/")).sort(), canonicalFeatures.map((feature) => `/analytics/${feature}`).sort())
+    assert.ok(pages.includes("/settings/jira"))
   })
 
   for (const path of [
-    ...Object.keys(aliases).map((feature) => `/analytics/${feature}`),
+    ...canonicalFeatures.map((feature) => `/analytics/${feature}`),
+    "/analytics/story-points?project=SUN&from=invalid&unknown=1",
+    "/analytics/members/unknown", "/analytics/members/summary/extra",
     "/analytics/workload/unknown", "/analytics/members/comparison/extra", "/analytics/unknown/summary",
-    "/api/analytics/workload/heatmap/stream", "/sprint/planning", "/reports/saved/list",
+    "/analytics/projects/unknown", "/analytics/trends/unknown", "/analytics/trends/detail/extra",
+    "/analytics/comparison/detail", "/analytics/comparison/summary/extra",
+    "/api/analytics/workload/heatmap/stream", "/api/analytics/trends", "/api/analytics/comparison",
+    "/sprint/planning", "/reports/saved/list",
   ]) {
     it(`does not redirect ${path}`, async () => {
       const response = await responseFor(path)

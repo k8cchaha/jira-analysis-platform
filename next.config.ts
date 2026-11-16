@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   // 容器部署（deploy.sh / Dockerfile）只帶 .next/standalone，不在 image 內安裝 node_modules。
   output: "standalone",
   redirects() {
-    // 精確相容既有分析子頁；新入口不含 view segment，query values 由 Next 原樣傳遞。
+    // 精確相容既有分析網址；趨勢／比較直接轉入專案回顧與趨勢，query values 由 Next 原樣傳遞。
     return [
       { source: "/analytics/workload/summary", destination: "/analytics/workload", permanent: false },
       { source: "/analytics/workload/breakdown", destination: "/analytics/workload", permanent: false },
@@ -13,13 +13,16 @@ const nextConfig: NextConfig = {
       { source: "/analytics/story-points/summary", destination: "/analytics/story-points", permanent: false },
       { source: "/analytics/story-points/distribution", destination: "/analytics/story-points", permanent: false },
       { source: "/analytics/story-points/detail", destination: "/analytics/story-points", permanent: false },
-      { source: "/analytics/members/summary", destination: "/analytics/members", permanent: false },
-      { source: "/analytics/members/comparison", destination: "/analytics/members", permanent: false },
-      { source: "/analytics/members/detail", destination: "/analytics/members", permanent: false },
-      { source: "/analytics/trends/summary", destination: "/analytics/trends", permanent: false },
-      { source: "/analytics/trends/comparison", destination: "/analytics/trends", permanent: false },
-      { source: "/analytics/trends/detail", destination: "/analytics/trends", permanent: false },
-      { source: "/analytics/comparison/summary", destination: "/analytics/comparison", permanent: false },
+      { source: "/analytics/members/summary", destination: "/analytics/story-points", permanent: false },
+      { source: "/analytics/members/comparison", destination: "/analytics/story-points", permanent: false },
+      { source: "/analytics/members/detail", destination: "/analytics/story-points", permanent: false },
+      { source: "/analytics/trends/summary", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/trends/comparison", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/trends/detail", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/comparison/summary", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/trends", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/comparison", destination: "/analytics/projects", permanent: false },
+      { source: "/analytics/members", destination: "/analytics/story-points", permanent: false },
     ]
   },
 };

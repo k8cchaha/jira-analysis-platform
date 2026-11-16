@@ -46,6 +46,16 @@ function harness(fetcher = async () => success(), hookSnapshot, effects, reactOv
       if (name === "react" && effects) return { ...require(name), useEffect: (effect) => { effects.push(effect) } }
       if (["react", "react/jsx-runtime"].includes(name)) return require(name)
       if (name === "./actions") return { reauthorizeDashboardAction: () => { throw new Error("No server action in tests") } }
+      // Keep these Dashboard regressions independent of saved-default initialization.
+      if (name === "@/components/filter-defaults-provider") return {
+        useFilterDefaults: () => ({ ready: true }),
+        currentFilterParams: () => null,
+        useInitialFilterDefaults: () => () => {},
+      }
+      if (name === "@/lib/filter-defaults") return {
+        absentDefaultCondition: (params, kind) => (kind === "project" ? ["project", "sprint"] : ["group", "exclude"]).every((key) => !params.has(key)),
+        defaultDashboardProjects: (defaults) => defaults.project ? [defaults.project.toLowerCase()] : [],
+      }
       if (name === "@/lib/jira-jql") return { SPRINT_PROJECTS: [{ key: "SUN", label: "Fixture project" }] } // Rendering fixture only; no JQL execution.
       if (name === "@/components/team-members-provider" && hookSnapshot) {
         return { useTeamMembers: () => ({ groupStates: typeof hookSnapshot === "function" ? hookSnapshot() : hookSnapshot, loadGroup: () => Promise.resolve(), retryGroup: () => Promise.resolve() }) }

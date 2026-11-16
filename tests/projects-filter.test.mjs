@@ -1,777 +1,666 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { createRequire } from "node:module"
-import { dirname, normalize } from "node:path"
-import vm from "node:vm"
 import { describe, it } from "node:test"
-import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { harness, plain, PROJECT_FILTER as FILTER, TEAM_PAGE, SELECTOR, nodes, selectorOf, teamOf, sprintDropdown, dateField, queryButton, readyNotice, checkbox, render } from "./helpers/analysis-filter-harness.mjs"
 
-const require = createRequire(import.meta.url)
-const ts = require("typescript")
-const compiled = new Map()
-const plain = (value) => JSON.parse(JSON.stringify(value))
-const PAGE = "app/(app)/analytics/projects/page.tsx"
-const FILTER = "app/(app)/analytics/projects/projects-filter.tsx"
-const SELECTOR = "app/(app)/sprint/burndown/sprint-selector.tsx"
+const selectionProps = async (h, params) => nodes(await h.page(params)).find((node) => node.type?.name === "ProjectsQueryClient").props
+const sprintSelection = (project, selectedSprintIds = []) => ({ project, selectedSprintIds, error: null })
 
-function harness(today = "2026-10-21") {
-  const modules = new Map()
-  const pushes = []
-  let transitionCount = 0
-  let pending = false
-  let activeHooks = null
-  const hooksByComponent = new Map()
-  const layoutEffects = []
-  const effects = []
-  const snapshot = { "ent-web": { status: "success", members: [{ accountId: "a", displayName: "Fixture member" }] } }
-  const fail = (message) => { throw new Error(message) }
-  class FixedDate extends Date {
-    constructor(...args) { super(...(args.length ? args : [`${today}T12:00:00Z`])) }
-  }
-  const react = {
-    ...require("react"),
-    useState(initial) {
-      if (!activeHooks) return [typeof initial === "function" ? initial() : initial, () => {}]
-      const hooks = activeHooks
-      const index = hooks.cursor++
-      if (!(index in hooks.values)) hooks.values[index] = typeof initial === "function" ? initial() : initial
-      return [hooks.values[index], (value) => {
-        hooks.values[index] = typeof value === "function" ? value(hooks.values[index]) : value
-      }]
-    },
-    // Controlled optimistic lifecycle: retain intent during transitions, reconcile to
-    // committed page props on completion. This is not a real browser concurrency test.
-    useOptimistic(base) {
-      if (!activeHooks) return [base, () => {}]
-      const hooks = activeHooks
-      const index = hooks.cursor++
-      if (!pending) hooks.values[index] = undefined
-      return [hooks.values[index] ?? base, (value) => { hooks.values[index] = value }]
-    },
-    useTransition: () => [pending, (callback) => { transitionCount++; pending = true; callback() }],
-    useLayoutEffect: (effect) => { if (activeHooks) layoutEffects.push(effect) },
-    useEffect: (effect) => { if (activeHooks) effects.push(effect) },
-    useRef(current) {
-      if (!activeHooks) return { current }
-      const hooks = activeHooks
-      const index = hooks.cursor++
-      if (!(index in hooks.values)) hooks.values[index] = { current }
-      return hooks.values[index]
-    },
-    useId: () => "fixture-team",
-    useSyncExternalStore: (_subscribe, client, server) => activeHooks ? client() : server(),
-  }
-  const sandbox = vm.createContext({
-    Date: FixedDate, URLSearchParams, Error,
-    fetch: () => fail("Project filters must not request Planning or analytics data"),
-  })
-  const allowed = new Set([
-    PAGE, FILTER, SELECTOR,
-    ...["story-points", "members", "trends", "comparison"].map((feature) => `app/(app)/analytics/${feature}/page.tsx`),
-    "components/coming-soon.tsx", "components/page-header.tsx",
-    "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx", "components/search-button.tsx",
-    "lib/projects-filter.ts", "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
-    "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-missing-data.ts",
-  ])
-  function load(path) {
-    if (modules.has(path)) return modules.get(path).exports
-    if (!allowed.has(path)) return fail(`Unexpected module: ${path}`)
-    const mod = { exports: {} }
-    modules.set(path, mod)
-    if (!compiled.has(path)) {
-      compiled.set(path, ts.transpileModule(readFileSync(new URL(`../${path}`, import.meta.url), "utf8"), {
-        fileName: path,
-        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
-      }).outputText)
-    }
-    const fixtureRequire = (name) => {
-      if (name === "react") return react
-      if (name === "react/jsx-runtime") return require(name)
-      if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href) }) }
-      if (name === "@/components/navigation-blocker") return { GuardedLink: ({ children, ...props }) => createElement("a", props, children) }
-      if (name === "@/components/team-members-provider") return {
-        useTeamMembers: () => ({ groupStates: snapshot, loadGroup: () => fail("Unexpected group load"), retryGroup: () => fail("Unexpected group retry") }),
-      }
-      const base = name.startsWith("@/") ? name.slice(2) : name.startsWith("./")
-        ? normalize(`${dirname(path)}/${name}`) : fail(`Unexpected import: ${name}`)
-      const resolved = [...allowed].find((file) => file === `${base}.ts` || file === `${base}.tsx`)
-      return load(resolved ?? base)
-    }
-    vm.runInContext(`(function(require,module,exports){${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, mod, mod.exports)
-    return mod.exports
-  }
-  function invoke(Component, props) {
-    const hooks = hooksByComponent.get(Component) ?? { values: [], cursor: 0 }
-    hooksByComponent.set(Component, hooks)
-    hooks.cursor = 0
-    activeHooks = hooks
-    try { return Component(props) } finally {
-      activeHooks = null
-      while (layoutEffects.length) layoutEffects.shift()()
-    }
-  }
-  return {
-    load, invoke, pushes,
-    setPending: (value) => { pending = value },
-    flushEffects: () => { while (effects.length) effects.shift()() },
-    get transitionCount() { return transitionCount },
-    page: async (params = {}) => load(PAGE).default({ searchParams: Promise.resolve(params) }),
-  }
-}
-
-function nodes(tree) {
-  if (Array.isArray(tree)) return tree.flatMap(nodes)
-  if (!tree || typeof tree !== "object" || !tree.props) return []
-  return [tree, ...nodes(tree.props.children)]
-}
-function selectorOf(tree) { return nodes(tree).find((node) => node.type?.name === "ProjectSelector") }
-function teamOf(tree) { return nodes(tree).find((node) => node.type?.name === "TeamSelect") }
-function sprintDropdown(tree) { return nodes(tree).find((node) => node.props.id === "projects-sprints") }
-function dateField(tree) { return nodes(tree).find((node) => node.type?.name === "DateRangeField") }
-function modeRadio(tree, mode) { return nodes(tree).find((node) => node.type === "input" && node.props.type === "radio" && node.props.value === mode) }
-function queryButton(tree) { return nodes(tree).find((node) => node.type?.name === "SearchButton") }
-const sprintSelection = (project, selectedSprintIds = []) => ({ project, mode: "sprints", selectedSprintIds, error: null })
-function checkbox(tree, name) {
-  const label = nodes(sprintDropdown(tree)).find((node) => node.type === "label" && nodes(node).some((child) => child.type === "span" && child.props.children === name))
-  return nodes(label).find((node) => node.type === "input")
-}
-function render(Component, props) { return renderToStaticMarkup(createElement(Component, props)) }
-
-const selectionProps = async (h, params) => (await h.page(params)).props.filters.props
-
-describe("project analysis all-Sprints parameters", () => {
+describe("project analysis configured-Sprint URL parameters", () => {
   it("starts without a project, options or automatic Sprint selection", async () => {
-    const h = harness()
+    const h = harness("2026-11-12")
     const tree = await h.page()
-    assert.equal(tree.props.filters.type, h.load(FILTER).ProjectsFilter)
-    assert.equal(tree.props.filters.key, null)
-    assert.deepEqual(plain(tree.props.filters.props), { project: null, sprints: [], mode: "sprints", selectedSprintIds: [], error: null })
+    const client = nodes(tree).find((node) => node.type?.name === "ProjectsQueryClient")
+    assert.equal(client.key, null)
+    assert.deepEqual(plain(client.props), { project: null, sprints: [], selectedSprintIds: [], error: null, dateMigrationHref: null })
   })
-  for (const project of ["SUN", "TKK", "PRIDE"]) {
-    it(`${project} includes every configured historical/current/future Sprint, with none selected by default`, async () => {
-      const h = harness()
-      const props = await selectionProps(h, { project })
-      assert.deepEqual(plain(props.sprints), plain(h.load("lib/jira-sprint-data.ts").getProjectSprints(project)))
-      assert.deepEqual(plain(props.selectedSprintIds), [])
-      assert.equal(props.error, null)
-      assert.ok(props.sprints.some((sprint) => sprint.endDate < "2026-10-21"))
-    })
-  }
-  it("is date independent and accepts ended Sprints", async () => {
-    const h = harness("2027-02-01")
-    const props = await selectionProps(h, { project: "TKK", sprint: "6619" })
-    assert.ok(props.sprints.length > 0)
-    assert.deepEqual(plain(props.selectedSprintIds), [6619])
+  for (const project of ["SUN", "TKK", "PRIDE"]) it(`${project} provides configured Sprints; the browser preselects the newest ones`, async () => {
+    const h = harness("2026-11-12")
+    const props = await selectionProps(h, { project })
+    assert.deepEqual(plain(props.sprints), plain(h.load("lib/jira-sprint-data.ts").getProjectSprints(project)))
+    assert.deepEqual(plain(props.selectedSprintIds), [])
     assert.equal(props.error, null)
+    assert.ok(props.sprints.some((sprint) => sprint.endDate < "2026-10-21"))
   })
-  it("accepts single-value legacy URLs and canonical repeated selections", async () => {
-    const h = harness()
-    assert.deepEqual(plain((await selectionProps(h, { project: "SUN", sprint: "6823" })).selectedSprintIds), [6823])
+  it("accepts ended Sprints independent of today, singleton and sorted/deduped repeated IDs", async () => {
+    const h = harness("2027-02-01")
+    assert.deepEqual(plain((await selectionProps(h, { project: "TKK", sprint: "6619" })).selectedSprintIds), [6619])
+    const { projectsFilterHref, projectsFilterResult } = h.load("lib/projects-filter.ts")
     const props = await selectionProps(h, { project: "SUN", sprint: ["7518", "6823", "7518"] })
     assert.deepEqual(plain(props.selectedSprintIds), [6823, 7518])
-    const { projectsFilterHref } = h.load("lib/projects-filter.ts")
     assert.equal(projectsFilterHref(sprintSelection("SUN", [7518, 6823, 7518])), "/analytics/projects?project=SUN&sprint=6823&sprint=7518")
     assert.equal(projectsFilterHref(sprintSelection("SUN")), "/analytics/projects?project=SUN")
+    assert.equal(projectsFilterHref(projectsFilterResult({ project: "SUN", mode: "sprints", sprint: "6823" })), "/analytics/projects?project=SUN&sprint=6823")
   })
-  it("rejects malformed, foreign, unknown or incomplete scope instead of dropping clauses", async () => {
-    const h = harness()
+  it("rejects malformed, foreign, unknown or incomplete scope rather than dropping clauses", async () => {
+    const h = harness("2026-11-12")
     for (const params of [
       { project: "sun" }, { project: "UNKNOWN" }, { project: ["SUN", "TKK"] }, { sprint: "6823" },
       { project: "SUN", sprint: "0" }, { project: "SUN", sprint: "999999" },
       { project: "SUN", sprint: ["6823", "7401"] }, { project: "SUN", sprint: ["6823", "invalid"] },
       { project: "SUN", sprint: "9007199254740992" }, { project: "SUN", sprint: "1 OR 1=1" },
       { project: "SUN", unknown: "1" }, { project: "SUN", sprint: Array(129).fill("6823") },
-      { project: "SUN", sprint: "1".repeat(16_385) },
+      { project: "SUN", sprint: "1".repeat(16_385) }, { project: "SUN", mode: ["sprints"] }, { project: "SUN", mode: "unknown" },
     ]) {
       const props = await selectionProps(h, params)
       assert.match(props.error, /篩選條件無效/)
       assert.deepEqual(plain(props.selectedSprintIds), [])
     }
     const { projectsFilterHref } = h.load("lib/projects-filter.ts")
-    for (const [project, ids] of [["UNKNOWN", []], ["SUN", [7401]], ["SUN", [0]], ["SUN", [NaN]], ["SUN", Array(129).fill(6823)]]) {
-      assert.throws(() => projectsFilterHref(sprintSelection(project, ids)), /篩選條件無效/)
+    for (const selection of [sprintSelection("UNKNOWN"), sprintSelection("SUN", [7401]), sprintSelection("SUN", [0]), sprintSelection("SUN", [NaN]), sprintSelection("SUN", Array(129).fill(6823)), { ...sprintSelection("SUN"), mode: "dates" }, { ...sprintSelection("SUN"), dateRange: {} }]) {
+      assert.throws(() => projectsFilterHref(selection), /篩選條件無效/)
     }
   })
 })
 
-describe("project exclusive interval parameters", () => {
-  it("round trips dates with inclusive bounds and omits inactive Sprint parameters", async () => {
-    const h = harness()
-    const range = { from: "2026-10-01", to: "2026-10-21" }
-    const selection = { project: "SUN", mode: "dates", dateRange: range, error: null }
-    const { projectsFilterHref, projectsFilterResult } = h.load("lib/projects-filter.ts")
-    const href = projectsFilterHref(selection)
-    assert.equal(href, "/analytics/projects?project=SUN&mode=dates&from=2026-10-01&to=2026-10-21")
-    const parsed = projectsFilterResult(Object.fromEntries(new URLSearchParams(href.split("?")[1])))
-    assert.deepEqual(plain(parsed.dateRange), range)
-    assert.equal(parsed.mode, "dates")
-    assert.equal(parsed.error, null)
-    assert.equal("selectedSprintIds" in parsed, false)
-    assert.equal(projectsFilterHref(projectsFilterResult({ project: "SUN", mode: "sprints", sprint: "6823" })), "/analytics/projects?project=SUN&sprint=6823")
-    assert.equal(projectsFilterResult({ project: "SUN", mode: "dates", from: "2024-02-29", to: "2024-02-29" }).error, null)
+describe("ended Sprint display eligibility", () => {
+  const { filterEndedSprints, getProjectSprints } = harness().load("lib/jira-sprint-data.ts")
+  const sprint = (id, endDate) => ({ id, name: `Sprint ${id}`, startDate: "2026-10-01", endDate })
+  it("uses strict endDate < today, excluding today, current, future and invalid end dates", () => {
+    const options = [
+      sprint(1, "2026-11-11"), sprint(2, "2026-11-12"), sprint(3, "2026-11-13"),
+      sprint(4, "2026-11-23"), sprint(5, "2026-12-01"), sprint(6, "bad"), sprint(7, "2026-02-30"),
+    ]
+    const before = plain(options)
+    assert.deepEqual(plain(filterEndedSprints(options, "2026-11-12")).map((option) => option.id), [1])
+    assert.deepEqual(plain(options), before)
+    assert.deepEqual(plain(filterEndedSprints(options, "invalid")), [])
+    assert.deepEqual(plain(filterEndedSprints([], "2026-11-12")), [])
   })
-  for (const params of [
-    { mode: "unknown" }, { mode: ["dates", "sprints"] }, { mode: ["dates"] },
-    { from: "2026-10-01", to: "2026-10-21" },
-    { mode: "sprints", from: "2026-10-01", to: "2026-10-21" },
-    { mode: "dates", from: "2026-10-01", to: "2026-10-21", sprint: "6823" },
-    { mode: "dates" }, { mode: "dates", from: "2026-10-01" }, { mode: "dates", to: "2026-10-21" },
-    { mode: "dates", from: ["2026-10-01"], to: "2026-10-21" },
-    { mode: "dates", from: "2026-10-01", to: ["2026-10-21", "2026-10-22"] },
-    { mode: "dates", from: "2026-02-29", to: "2026-10-21" },
-    { mode: "dates", from: "2026-10-22", to: "2026-10-21" },
-    { mode: "dates", from: "2026-10-1", to: "2026-10-21" },
-    { mode: "dates", from: "2000-01-01", to: "2026-10-21" },
-    { mode: "dates", from: "1".repeat(16_385), to: "2026-10-21" },
-  ]) {
-    it(`rejects invalid or mixed interval ${JSON.stringify(params).slice(0, 180)}`, async () => {
-      const props = await selectionProps(harness(), { project: "SUN", ...params })
-      assert.equal(props.project, "SUN")
-      assert.match(props.error, /篩選條件無效/)
-      if (props.mode === "dates") assert.equal(props.dateRange, null)
-      else assert.deepEqual(plain(props.selectedSprintIds), [])
+  it("normalizes existing unpadded dates before comparing month/day boundaries", () => {
+    const options = [sprint(1, "2026-11-2"), sprint(2, "2026-9-30"), sprint(3, "2026-11-12")]
+    assert.deepEqual(plain(filterEndedSprints(options, "2026-11-12")).map((option) => option.id), [1, 2])
+    assert.deepEqual(plain(filterEndedSprints(options, "2026-11-02")).map((option) => option.id), [2])
+    assert.deepEqual(plain(filterEndedSprints(options, "2026-11-03")).map((option) => option.id), [1, 2])
+  })
+  for (const [project, lastId] of [["SUN", 7518], ["TKK", 7401], ["PRIDE", 7750]]) {
+    it(`${project} exposes only ended configured Sprints on 2026-11-12`, () => {
+      const options = getProjectSprints(project)
+      const before = plain(options)
+      const ended = filterEndedSprints(options, "2026-11-12")
+      assert.equal(ended.at(-1)?.id, lastId)
+      assert.deepEqual(plain(options), before)
     })
   }
-  it("requires a project for dates and rejects malformed serializer selections", async () => {
-    const h = harness()
-    assert.match((await selectionProps(h, { mode: "dates", from: "2026-10-01", to: "2026-10-21" })).error, /篩選條件無效/)
-    const { projectsFilterHref } = h.load("lib/projects-filter.ts")
-    const dates = { project: "SUN", mode: "dates", dateRange: { from: "2026-10-01", to: "2026-10-21" }, error: null }
-    for (const selection of [
-      { ...dates, selectedSprintIds: [] }, { ...dates, mode: "unknown" }, { ...dates, dateRange: null },
-      { ...dates, project: null }, { ...dates, error: "invalid" },
-      { ...dates, dateRange: { from: "2026-02-30", to: "2026-10-21" } },
-      { ...sprintSelection("SUN"), dateRange: dates.dateRange },
-    ]) assert.throws(() => projectsFilterHref(selection), /篩選條件無效/)
+})
+
+describe("closest Sprint for dropdown scrolling", () => {
+  const { closestSprint, getProjectSprints } = harness().load("lib/jira-sprint-data.ts")
+  for (const [project, today, id] of [
+    ["SUN", "2026-10-21", 7517], ["SUN", "2026-10-13", 7517], ["SUN", "2026-10-25", 7517],
+    ["SUN", "2026-10-26", 7518], ["TKK", "2026-10-21", 7401],
+    ["SUN", "2025-01-01", 6823], ["SUN", "2027-02-01", 7522],
+    ["PRIDE", "2026-08-10", 7565], ["PRIDE", "2026-08-12", 7598],
+    ["PRIDE", "2026-11-02", 7750], ["PRIDE", "2026-11-12", 7750],
+  ]) it(`${project} on ${today} locates ${id} without mutating options`, () => {
+    const sprints = getProjectSprints(project)
+    const before = plain(sprints)
+    assert.equal(closestSprint(sprints, today)?.id, id)
+    assert.deepEqual(plain(sprints), before)
+  })
+  it("uses interval distance, not just start dates, with deterministic ties", () => {
+    const sprint = (id, startDate, endDate) => ({ id, name: `Sprint ${id}`, startDate, endDate })
+    const past = sprint(1, "2026-01-01", "2026-02-10")
+    const future = sprint(2, "2026-02-14", "2026-02-28")
+    assert.equal(closestSprint([future, past], "2026-02-11")?.id, 1)
+    assert.equal(closestSprint([future, past], "2026-02-12")?.id, 1)
+    assert.equal(closestSprint([future, past], "2026-02-13")?.id, 2)
+    const overlapping = sprint(3, "2026-02-01", "2026-02-20")
+    assert.equal(closestSprint([overlapping, past], "2026-02-10")?.id, 1)
+    assert.equal(closestSprint([sprint(4, past.startDate, past.endDate), past], "2026-02-10")?.id, 1)
+  })
+  it("handles empty and invalid ranges without picking an unrelated Sprint", () => {
+    assert.equal(closestSprint([], "2026-10-21"), null)
+    assert.equal(closestSprint(getProjectSprints("SUN"), "not-a-date"), null)
+    for (const [startDate, endDate] of [["bad", "2026-10-31"], ["2026-10-01", "bad"], ["2026-02-30", "2026-03-01"], ["2026-10-31", "2026-10-01"]]) {
+      assert.equal(closestSprint([{ id: 1, name: "Invalid", startDate, endDate }], "2026-10-21"), null)
+    }
   })
 })
 
-describe("project exclusive interval UI", () => {
-  for (const [params, enabled] of [
-    [{}, false], [{ project: "SUN" }, false],
-    [{ project: "SUN", sprint: "6823" }, true],
-    [{ project: "SUN", sprint: ["6823", "7518"] }, true],
-    [{ project: "SUN", sprint: "7401" }, false],
-    [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, true],
-    [{ project: "SUN", mode: "dates", from: "2026-10-21", to: "2026-10-21" }, true],
-    [{ project: "SUN", mode: "dates", from: "invalid", to: "2026-10-21" }, false],
-    [{ project: "SUN", mode: "dates", from: "2026-10-22", to: "2026-10-21" }, false],
-    [{ project: "SUN", mode: "dates", from: "2000-01-01", to: "2026-10-21" }, false],
-  ]) it(`places the shared Query action at the right with enabled=${enabled} for ${JSON.stringify(params)}`, async () => {
-    const h = harness()
+describe("moved project date URLs", () => {
+  for (const [params, href] of [
+    [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, "/analytics/story-points?project=SUN&from=2026-10-01&to=2026-10-21"],
+    ...[
+      { project: "SUN", from: "2026-10-01", to: "2026-10-21" },
+      { project: "SUN", mode: "dates", from: "2026-10-01" },
+      { project: "SUN", mode: "dates", from: "2026-02-29", to: "2026-10-21" },
+      { project: "SUN", mode: "dates", from: "2026-10-22", to: "2026-10-21" },
+      { project: "SUN", mode: "dates", from: "2000-01-01", to: "2026-10-21" },
+      { project: "SUN", mode: "dates", from: "2026-10-01", to: ["2026-10-21"] },
+      { project: ["SUN"], mode: "dates", from: "2026-10-01", to: "2026-10-21" },
+      { project: "SUN", mode: ["dates", "sprints"], from: "2026-10-01", to: "2026-10-21" },
+      { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21", unknown: "1" },
+      { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21", sprint: "6823" },
+    ].map((params) => [params, "/analytics/story-points"]),
+  ]) it(`blocks Query and offers only the validated migration link: ${JSON.stringify(params)}`, async () => {
+    const h = harness("2026-11-12")
     const props = await selectionProps(h, params)
-    const { SearchButton } = h.load("components/search-button.tsx")
+    assert.ok(props.error)
+    assert.equal(props.dateMigrationHref, href)
     const tree = h.invoke(h.load(FILTER).ProjectsFilter, props)
-    assert.equal(tree.type, "form")
-    const interval = tree.props.children[1]
-    assert.equal(interval.type, "fieldset")
-    assert.equal(interval.props.disabled, props.project === null)
-    const row = interval.props.children[1]
-    assert.match(row.props.className, /\bflex\b/)
-    assert.match(row.props.className, /\bflex-wrap\b/)
-    assert.match(row.props.className, /\bmin-w-0\b/)
-    assert.ok(nodes(row.props.children[0]).includes(sprintDropdown(tree)))
-    assert.ok(nodes(row.props.children[1]).includes(modeRadio(tree, "dates")))
-    const action = row.props.children[2]
-    assert.match(action.props.className, /\bml-auto\b/)
-    assert.match(action.props.className, /\bmax-w-full\b/)
-    assert.match(action.props.className, /\bmin-w-0\b/)
-    assert.match(action.props.className, /\bpt-5\b/, "align with controls below their headings")
-    assert.equal(action.props.children.type, SearchButton)
-    assert.equal(nodes(tree).filter((node) => node.type === SearchButton).length, 1)
-    assert.equal(action.props.children.props.disabled, !enabled)
-    assert.equal(action.props.children.props.className, undefined)
-    assert.equal(action.props.children.props.style, undefined)
-    for (const panel of nodes(interval).filter((node) => "inert" in node.props)) {
-      assert.equal(nodes(panel).some((node) => node.type === SearchButton), false)
-    }
-    const helpId = action.props.children.props["aria-describedby"]
-    assert.match(nodes(tree).find((node) => node.props.id === helpId).props.children, /尚未開放/)
-    const button = h.invoke(SearchButton, action.props.children.props)
-    assert.equal(button.props.type, "submit")
-    assert.equal(button.props.disabled, !enabled)
-    assert.equal(button.props.children, "查詢")
-    assert.match(button.props.className, /\bw-24\b/)
-    assert.match(button.props.className, /\bmax-w-full\b/)
-    assert.match(button.props.className, /\bmin-w-0\b/)
-    let prevented = false
-    tree.props.onSubmit({ preventDefault() { prevented = true } })
-    assert.equal(prevented, true, "prevent Enter/native submission from navigating the placeholder form")
-    assert.deepEqual(h.pushes, [])
-    assert.equal(h.transitionCount, 0)
-    const markup = renderToStaticMarkup(createElement("div", null, tree))
-    assert.equal((markup.match(/>查詢<\/button>/g) ?? []).length, 1)
-    const submitMarkup = markup.match(/<button[^>]*type="submit"[^>]*>查詢<\/button>/)?.[0]
-    assert.ok(submitMarkup)
-    assert.equal(submitMarkup.includes('disabled=""'), !enabled)
-    assert.match(markup, /id="projects-query-help"/)
-    const submitted = h.invoke(h.load(FILTER).ProjectsFilter, props)
-    assert.equal(nodes(submitted).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children)), enabled)
-  })
-  it("recomputes Query readiness from the active mode across checkbox, project and history changes", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    let props = await selectionProps(h, { project: "SUN" })
-    let tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, true, "valid inactive dates do not satisfy Sprints mode")
-    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, false)
-    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: false } })
-    tree = h.invoke(ProjectsFilter, props)
     assert.equal(queryButton(tree).props.disabled, true)
-    modeRadio(tree, "dates").props.onChange()
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, false, "default month range enables dates without Sprint selection")
-    modeRadio(tree, "sprints").props.onChange()
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, true)
-    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
-    tree = h.invoke(ProjectsFilter, props)
-    const staleSubmit = tree.props.onSubmit
-    selectorOf(tree).props.onProjectChange("TKK")
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, true, "project changes clear checked Sprints")
-    staleSubmit({ preventDefault() {} })
-    assert.equal(nodes(h.invoke(ProjectsFilter, props)).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children)), false)
-    h.setPending(false)
-    for (const [params, disabled] of [
-      [{ project: "SUN", sprint: "6823" }, false],
-      [{ project: "SUN" }, true],
-      [{ project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" }, false],
-      [{}, true],
-    ]) {
-      props = await selectionProps(h, params)
-      tree = h.invoke(ProjectsFilter, props)
-      assert.equal(queryButton(tree).props.disabled, disabled)
-    }
-  })
-  it("validates date drafts and clears submitted placeholder feedback when the interval changes", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const props = await selectionProps(h, { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" })
-    let tree = h.invoke(ProjectsFilter, props)
-    const notice = (tree) => nodes(tree).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children))
-    const submit = tree.props.onSubmit
-    dateField(tree).props.onChange({ from: "2026-09-01", to: "2026-09-30" })
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(queryButton(tree).props.disabled, false)
-    submit({ preventDefault() {} })
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(notice(tree), true)
-    dateField(tree).props.onChange({ from: "2026-09-02", to: "2026-09-30" })
-    assert.equal(notice(h.invoke(ProjectsFilter, props)), false)
-    assert.deepEqual(h.pushes, [], "readiness and placeholder submit do not query or navigate")
-    for (const dateRange of [null, { from: "", to: "" }, { from: "2026-02-30", to: "2026-10-21" }, { from: "2026-10-22", to: "2026-10-21" }]) {
-      const fresh = harness()
-      const invalid = { ...props, dateRange }
-      const rendered = fresh.invoke(fresh.load(FILTER).ProjectsFilter, invalid)
-      assert.equal(queryButton(rendered).props.disabled, true)
-      rendered.props.onSubmit({ preventDefault() {} })
-      assert.equal(notice(fresh.invoke(fresh.load(FILTER).ProjectsFilter, invalid)), false)
-      assert.deepEqual(fresh.pushes, [])
-    }
-  })
-  it("places named radios directly beside their controls without duplicate visible headings or nested interactive labels", async () => {
-    for (const mode of ["sprints", "dates"]) {
-      const h = harness()
-      const props = await selectionProps(h, mode === "sprints"
-        ? { project: "SUN" }
-        : { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" })
-      const tree = h.invoke(h.load(FILTER).ProjectsFilter, props)
-      for (const [value, name, control] of [
-        ["sprints", "Sprints", sprintDropdown(tree)],
-        ["dates", "分析區間", dateField(tree)],
-      ]) {
-        const radio = modeRadio(tree, value)
-        const block = nodes(tree).find((node) => node.props.children?.[0] === radio)
-        assert.equal(block.type, "div")
-        assert.match(block.props.className, /\bflex\b/)
-        assert.match(block.props.className, /\bmin-w-0\b/)
-        assert.match(radio.props.className, /\bshrink-0\b/)
-        assert.equal(radio.props["aria-label"], name)
-        assert.notEqual(radio.props.disabled, true, "inactive radios must remain operable")
-        assert.equal(radio.props.checked, value === mode)
-        const panel = block.props.children[1]
-        assert.equal(panel.props.inert, value !== mode)
-        assert.ok(nodes(panel).includes(control))
-        assert.match(panel.props.className, /\bmin-w-0\b/)
-        assert.equal(nodes(tree).some((node) => ["label", "button"].includes(node.type) && nodes(node).includes(radio)), false)
-      }
-      // Render the initialized client tree, including the real controls' headings.
-      const markup = renderToStaticMarkup(createElement("div", null, tree))
-      assert.equal((markup.match(/>Sprints</g) ?? []).length, 1)
-      assert.equal((markup.match(/>分析區間</g) ?? []).length, 1)
-      assert.deepEqual(h.pushes, [])
-    }
-  })
-  it("uses two native same-name radios outside their inactive inert panels without initializing navigation", async () => {
-    const h = harness()
-    const props = await selectionProps(h, { project: "SUN", sprint: "6823" })
-    const tree = h.invoke(h.load(FILTER).ProjectsFilter, props)
-    const sprintRadio = modeRadio(tree, "sprints")
-    const datesRadio = modeRadio(tree, "dates")
-    assert.equal(sprintRadio.props.name, datesRadio.props.name)
-    assert.equal(sprintRadio.props.checked, true)
-    assert.equal(datesRadio.props.checked, false)
-    const panels = nodes(tree.props.children[1]).filter((node) => "inert" in node.props)
-    assert.equal(panels.length, 2)
-    assert.equal(panels[0].props.inert, false)
-    assert.equal(panels[1].props.inert, true)
-    assert.equal(panels[1].props["aria-disabled"], true)
-    assert.equal(panels.flatMap(nodes).some((node) => node.props.type === "radio"), false)
-    assert.deepEqual(plain(dateField(tree).props.value), { from: "2026-09-22", to: "2026-10-21" })
-    const field = dateField(tree)
-    const fieldTree = h.invoke(field.type, field.props)
-    h.flushEffects()
-    assert.deepEqual(h.pushes, [])
-    const shortcutGroup = nodes(fieldTree).find((node) => node.props["aria-label"] === "時間區間快捷鍵")
-    const shortcutButtons = nodes(shortcutGroup).filter((node) => node.type === "button")
-    assert.deepEqual(shortcutButtons.map((node) => node.props.children), ["近1月", "近2月", "近3月", "近6月"])
-    assert.deepEqual(shortcutButtons.map((node) => node.props["aria-pressed"]), [true, false, false, false])
-    dateField(tree).props.onCommit({ from: "2026-09-01", to: "2026-10-01" })
-    dateField(tree).props.onChange({ from: "2026-09-01", to: "2026-10-01" })
+    assert.equal(dateField(tree), undefined)
+    assert.equal(nodes(tree).some((node) => node.props.type === "radio"), false)
+    assert.match(renderToStaticMarkup(tree), /分析區間已移至團隊分析/)
+    assert.equal(nodes(tree).find((node) => node.props.href)?.props.href, href)
+    tree.props.onSubmit({ preventDefault() {} })
+    assert.equal(readyNotice(h.invoke(h.load(FILTER).ProjectsFilter, props)), false)
     assert.deepEqual(h.pushes, [])
   })
-  it("applies each month shortcut through the existing date commit and exclusive URL", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const props = await selectionProps(h, { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" })
-    const expected = [
-      ["近1月", "2026-09-22"], ["近2月", "2026-08-22"],
-      ["近3月", "2026-07-22"], ["近6月", "2026-04-22"],
-    ]
-    for (const [label, from] of expected) {
-      const field = dateField(h.invoke(ProjectsFilter, props))
-      const tree = h.invoke(field.type, field.props)
-      h.flushEffects()
-      const button = nodes(tree).find((node) => node.type === "button" && node.props.children === label)
-      button.props.onClick()
-      assert.equal(h.pushes.at(-1), `/analytics/projects?project=SUN&mode=dates&from=${from}&to=2026-10-21`)
-      const updated = dateField(h.invoke(ProjectsFilter, props))
-      assert.deepEqual(plain(updated.props.value), { from, to: "2026-10-21" })
-    }
-    assert.equal(h.pushes.length, 4)
-  })
-  it("closes Sprint panel, restores inactive drafts and handles rapid mode/date/project events", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const props = await selectionProps(h, { project: "SUN", sprint: "6823" })
-    let tree = h.invoke(ProjectsFilter, props)
-    sprintDropdown(tree).props.onOpenChange(true)
-    tree = h.invoke(ProjectsFilter, props)
-    const oldTree = tree
-    modeRadio(tree, "dates").props.onChange()
-    checkbox(oldTree, "Sprint 71").props.onChange({ target: { checked: true } })
-    sprintDropdown(oldTree).props.onOpenChange(true)
-    assert.equal(h.pushes.length, 1)
-    assert.equal(h.pushes[0], "/analytics/projects?project=SUN&mode=dates&from=2026-09-22&to=2026-10-21")
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(sprintDropdown(tree).props.open, false)
-    assert.equal(modeRadio(tree, "sprints").props.checked, false)
-    assert.equal(modeRadio(tree, "dates").props.checked, true)
-    assert.notEqual(dateField(tree).key, dateField(oldTree).key)
-    const selectedRange = { from: "2026-09-01", to: "2026-09-30" }
-    dateField(tree).props.onChange(selectedRange)
-    assert.equal(h.pushes.length, 1)
-    dateField(tree).props.onCommit(selectedRange)
-    dateField(tree).props.onCommit(selectedRange)
-    assert.equal(h.pushes.length, 2)
-    // No render between mode switches: the latest intent and drafts must win.
-    modeRadio(tree, "sprints").props.onChange()
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN&sprint=6823")
-    dateField(tree).props.onCommit({ from: "2026-01-01", to: "2026-01-31" })
-    assert.equal(h.pushes.length, 3)
-    modeRadio(oldTree, "dates").props.onChange()
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN&mode=dates&from=2026-09-01&to=2026-09-30")
-    selectorOf(tree).props.onProjectChange("TKK")
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&mode=dates&from=2026-09-01&to=2026-09-30")
-    modeRadio(tree, "sprints").props.onChange()
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK")
-  })
-  it("preserves an uncommitted date draft across a project change and ignores callbacks from the old calendar", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const props = await selectionProps(h, { project: "SUN", mode: "dates", from: "2026-09-01", to: "2026-09-30" })
-    const tree = h.invoke(ProjectsFilter, props)
-    const range = { from: "2026-10-01", to: "2026-10-21" }
-    dateField(tree).props.onChange(range)
-    selectorOf(tree).props.onProjectChange("TKK")
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&mode=dates&from=2026-10-01&to=2026-10-21")
-    dateField(tree).props.onCommit({ from: "2026-08-01", to: "2026-08-31" })
-    assert.equal(h.pushes.length, 1)
-    const next = h.invoke(ProjectsFilter, props)
-    assert.notEqual(dateField(tree).key, dateField(next).key)
-    modeRadio(next, "sprints").props.onChange()
-    modeRadio(next, "dates").props.onChange()
-    dateField(next).props.onChange({ from: "2026-01-01", to: "2026-01-31" })
-    dateField(next).props.onCommit({ from: "2026-01-01", to: "2026-01-31" })
-    assert.equal(h.pushes.length, 3)
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&mode=dates&from=2026-10-01&to=2026-10-21")
-  })
-  it("restores active date history, preserves Team and does not revive previous date edits", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const params = { project: "SUN", mode: "dates", from: "2026-09-01", to: "2026-09-30" }
-    let props = await selectionProps(h, params)
-    let tree = h.invoke(ProjectsFilter, props)
-    teamOf(tree).props.onGroupsChange(["ent-web"])
-    dateField(tree).props.onChange({ from: "2026-10-01", to: "2026-10-21" })
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(dateField(tree).props.value.from, "2026-10-01")
-    dateField(tree).props.onCommit({ from: "2026-10-01", to: "2026-10-21" })
-    h.setPending(false)
-    props = await selectionProps(h, params)
-    tree = h.invoke(ProjectsFilter, props)
-    assert.deepEqual(plain(dateField(tree).props.value), { from: "2026-09-01", to: "2026-09-30" })
-    assert.deepEqual(plain(teamOf(tree).props.groups), ["ent-web"])
-    assert.equal(modeRadio(tree, "dates").props.checked, true)
-    modeRadio(tree, "sprints").props.onChange()
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN")
-    modeRadio(tree, "dates").props.onChange()
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN&mode=dates&from=2026-09-01&to=2026-09-30")
-  })
-  it("disables every non-project filter before selection and ignores their callbacks without changing drafts", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    const props = await selectionProps(h)
-    let tree = h.invoke(ProjectsFilter, props)
-    const assertDisabled = (tree) => {
-      const projectWrapper = tree.props.children[0].props.children[0]
-      assert.notEqual(projectWrapper.props.inert, true)
-      const teamWrapper = tree.props.children[0].props.children[1]
-      assert.equal(teamWrapper.props.inert, true)
-      assert.equal(teamWrapper.props["aria-disabled"], true)
-      assert.match(teamWrapper.props.className, /opacity-50/)
-      const intervals = tree.props.children[1]
-      assert.equal(intervals.props.disabled, true)
-      for (const mode of ["sprints", "dates"]) assert.equal(modeRadio(tree, mode).props.disabled, true)
-      const panels = nodes(intervals).filter((node) => "inert" in node.props)
-      assert.equal(panels.length, 2)
-      for (const panel of panels) {
-        assert.equal(panel.props.inert, true)
-        assert.equal(panel.props["aria-disabled"], true)
-        assert.match(panel.props.className, /opacity-50/)
-      }
-      assert.equal(sprintDropdown(tree).props.open, false)
-    }
-    assertDisabled(tree)
-    const markup = render(ProjectsFilter, props)
-    assert.match(markup, /<fieldset disabled="" aria-disabled="true"/)
-    assert.match(markup, /請先選擇專案/)
-    const seeded = plain(dateField(tree).props.value)
-    const teamKey = teamOf(tree).key
-    modeRadio(tree, "dates").props.onChange()
-    modeRadio(tree, "sprints").props.onChange()
-    sprintDropdown(tree).props.onOpenChange(true)
-    teamOf(tree).props.onGroupsChange(["ent-web"])
-    const range = { from: "2026-10-01", to: "2026-10-10" }
-    dateField(tree).props.onChange(range)
-    dateField(tree).props.onCommit(range)
-    tree = h.invoke(ProjectsFilter, props)
-    assertDisabled(tree)
-    assert.equal(modeRadio(tree, "sprints").props.checked, true)
-    assert.deepEqual(plain(teamOf(tree).props.groups), [])
-    assert.deepEqual(plain(dateField(tree).props.value), seeded)
-    assert.deepEqual(h.pushes, [])
-    selectorOf(tree).props.onProjectChange("SUN")
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN")
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(tree.props.children[0].props.children[1].props.inert, false)
-    assert.notEqual(teamOf(tree).key, teamKey, "reset the disabled team's private dropdown on activation")
-    assert.equal(tree.props.children[1].props.disabled, false)
-    assert.equal(modeRadio(tree, "sprints").props.disabled, false)
-    assert.equal(modeRadio(tree, "dates").props.disabled, false)
-    teamOf(tree).props.onGroupsChange(["ent-web"])
-    sprintDropdown(tree).props.onOpenChange(true)
-    tree = h.invoke(ProjectsFilter, props)
-    assert.deepEqual(plain(teamOf(tree).props.groups), ["ent-web"])
-    assert.equal(sprintDropdown(tree).props.open, true)
-    modeRadio(tree, "dates").props.onChange()
-    tree = h.invoke(ProjectsFilter, props)
-    dateField(tree).props.onCommit(range)
-    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN&mode=dates&from=2026-10-01&to=2026-10-10")
-  })
-  it("disables filters again on no-project history and rejects stale mode, team, date and dropdown callbacks", async () => {
-    const h = harness()
-    const { ProjectsFilter } = h.load(FILTER)
-    let props = await selectionProps(h, { project: "SUN", mode: "dates", from: "2026-10-01", to: "2026-10-21" })
-    let tree = h.invoke(ProjectsFilter, props)
-    teamOf(tree).props.onGroupsChange(["ent-web"])
-    tree = h.invoke(ProjectsFilter, props)
-    const oldTree = tree
-    props = await selectionProps(h)
-    tree = h.invoke(ProjectsFilter, props)
-    assert.notEqual(teamOf(tree).key, teamOf(oldTree).key)
-    assert.notEqual(dateField(tree).key, dateField(oldTree).key)
-    for (const candidate of [oldTree, tree]) {
-      modeRadio(candidate, "dates").props.onChange()
-      modeRadio(candidate, "sprints").props.onChange()
-      teamOf(candidate).props.onGroupsChange(["ent-be1"])
-      sprintDropdown(candidate).props.onOpenChange(true)
-      dateField(candidate).props.onChange({ from: "2026-01-01", to: "2026-01-31" })
-      dateField(candidate).props.onCommit({ from: "2026-01-01", to: "2026-01-31" })
-    }
-    tree = h.invoke(ProjectsFilter, props)
-    assert.equal(tree.props.children[1].props.disabled, true)
-    assert.equal(tree.props.children[0].props.children[1].props.inert, true)
-    assert.equal(modeRadio(tree, "sprints").props.checked, true)
-    assert.equal(sprintDropdown(tree).props.open, false)
-    assert.deepEqual(plain(teamOf(tree).props.groups), ["ent-web"])
-    assert.deepEqual(plain(dateField(tree).props.value), { from: "2026-10-01", to: "2026-10-21" })
-    assert.deepEqual(h.pushes, [])
-  })
-  it("does not mount an empty date field during SSR or auto-correct an invalid dates URL", async () => {
-    const h = harness()
+})
+
+describe("project Sprint-only UI and navigation", () => {
+  it("renders only ended options and keeps today-ending/current/future Sprints hidden", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
     const props = await selectionProps(h, { project: "SUN" })
-    assert.match(render(ProjectsFilter, props), /正在準備分析區間/)
-    const invalid = await selectionProps(h, { project: "SUN", mode: "dates", from: "invalid", to: "2026-10-21" })
-    const tree = h.invoke(ProjectsFilter, invalid)
-    assert.equal(modeRadio(tree, "dates").props.checked, true)
-    assert.ok(nodes(tree).some((node) => node.props.role === "alert"))
+    const fixture = { ...props, sprints: [
+      { id: 6823, name: "Ended yesterday", startDate: "2026-10-01", endDate: "2026-11-11" },
+      { id: 6824, name: "Ends today", startDate: "2026-10-01", endDate: "2026-11-12" },
+      { id: 6825, name: "Ends tomorrow", startDate: "2026-10-01", endDate: "2026-11-13" },
+      { id: 7323, name: "Current", startDate: "2026-11-10", endDate: "2026-11-23" },
+      { id: 7324, name: "Future", startDate: "2026-12-01", endDate: "2026-12-14" },
+    ] }
+    let tree = h.invoke(ProjectsFilter, fixture)
+    assert.deepEqual(nodes(sprintDropdown(tree)).filter((node) => node.type === "label").map((node) => node.props["data-sprint-id"]), [6823])
+    assert.equal(queryButton(tree).props.disabled, true)
     assert.deepEqual(h.pushes, [])
-    dateField(tree).props.onCommit({ from: "2026-10-22", to: "2026-10-21" })
-    dateField(tree).props.onCommit({ from: "2000-01-01", to: "2026-10-21" })
-    assert.deepEqual(h.pushes, [])
-    assert.doesNotThrow(() => render(ProjectsFilter, invalid))
+    tree = h.invoke(ProjectsFilter, { ...fixture, sprints: fixture.sprints.slice(1) })
+    assert.equal(nodes(sprintDropdown(tree)).some((node) => node.type === "input"), false)
+    assert.match(renderToStaticMarkup(tree), /此專案暫無可檢視的 Sprints/)
+    assert.equal(queryButton(tree).props.disabled, true)
   })
-})
-
-describe("project Sprints multi-selection and navigation", () => {
-  it("preserves whole-team selection across same-page props and resets only on fresh instance", async () => {
-    const h = harness()
+  for (const [instant, timezoneOffset, visible] of [
+    ["2026-11-11T16:30:00Z", -480, true],
+    ["2026-11-12T07:30:00Z", 480, false],
+  ]) it(`uses browser-local today at the UTC boundary ${instant} / offset ${timezoneOffset}`, async () => {
+    const h = harness("2026-11-12", { instant, timezoneOffset })
+    const props = await selectionProps(h, { project: "SUN" })
+    const tree = h.invoke(h.load(FILTER).ProjectsFilter, { ...props, sprints: [
+      { id: 6823, name: "Boundary", startDate: "2026-10-01", endDate: "2026-11-11" },
+    ] })
+    assert.equal(Boolean(checkbox(tree, "Boundary")), visible)
+  })
+  it("waits for browser date hydration without rendering server-time options or changing the URL", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
-    let props = await selectionProps(h, { project: "SUN" })
+    const props = await selectionProps(h, { project: "SUN", sprint: "6823" })
+    const serverMarkup = render(ProjectsFilter, props)
+    assert.match(serverMarkup, /正在載入 Sprints/)
+    assert.doesNotMatch(serverMarkup, /data-sprint-id=/)
+    const tree = h.invoke(ProjectsFilter, props)
+    assert.ok(checkbox(tree, "Sprint 58"))
+    assert.equal(checkbox(tree, "Sprint 72"), undefined)
+    assert.equal(queryButton(tree).props.disabled, false)
+    assert.deepEqual(h.pushes, [])
+  })
+  for (const selected of [[7519], [6823, 7519]]) it(`does not query or silently rewrite hidden URL Sprint selections ${selected}`, async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, { project: "SUN", sprint: selected.map(String) })
     let tree = h.invoke(ProjectsFilter, props)
-    const team = teamOf(tree)
-    assert.equal(team.props.perMember, false)
-    team.props.onGroupsChange(["ent-web", "ent-be1"], ["a"], true)
+    assert.equal(queryButton(tree).props.disabled, true)
+    assert.equal(sprintDropdown(tree).props.value, "請重新選擇 Sprints")
+    assert.equal(checkbox(tree, "Sprint 72"), undefined)
+    assert.match(nodes(tree).find((node) => node.props.role === "alert").props.children, /尚未結束/)
+    tree.props.onSubmit({ preventDefault() {} })
+    assert.equal(readyNotice(h.invoke(ProjectsFilter, props)), false)
+    assert.deepEqual(h.pushes, [])
+    assert.deepEqual(plain(props.selectedSprintIds), [...selected].sort((a, b) => a - b))
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, props)
+    assert.deepEqual(h.pushes, ["/analytics/projects?project=SUN&sprint=6823"])
+    assert.equal(queryButton(tree).props.disabled, false)
+    assert.equal(nodes(tree).some((node) => node.props.role === "alert"), false)
+  })
+  for (const [params, enabled] of [[{}, false], [{ project: "SUN" }, false], [{ project: "SUN", sprint: "6823" }, true], [{ project: "SUN", sprint: ["6823", "7518"] }, true], [{ project: "SUN", sprint: "7401" }, false]]) it(`shared Query readiness ${JSON.stringify(params)}`, async () => {
+    const h = harness("2026-11-12")
+    const props = await selectionProps(h, params)
+    const { ProjectsFilter } = h.load(FILTER)
+    const tree = h.invoke(ProjectsFilter, props)
+    const button = queryButton(tree)
+    assert.equal(button.props.disabled, !enabled)
+    assert.equal(button.props.style, undefined)
+    assert.equal(button.props.className, undefined)
+    const markup = renderToStaticMarkup(tree)
+    assert.equal((markup.match(/>查詢<\/button>/g) ?? []).length, 1)
+    assert.doesNotMatch(markup, /type="radio"|近1月|近2月|分析區間/)
+    tree.props.onSubmit({ preventDefault() {} })
+    assert.equal(readyNotice(h.invoke(ProjectsFilter, props)), enabled)
+    assert.deepEqual(h.pushes, [])
+  })
+  it("disables every non-project control initially and after empty history", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    let props = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, props)
+    assert.equal(nodes(tree).find((node) => node.type === "fieldset").props.disabled, true)
+    assert.equal(nodes(tree).find((node) => node.props.children === teamOf(tree)).props.inert, true)
+    sprintDropdown(tree).props.onOpenChange(true)
+    teamOf(tree).props.onGroupsChange(["ent-web"])
+    assert.deepEqual(h.pushes, [])
+    assert.deepEqual(plain(teamOf(h.invoke(ProjectsFilter, props)).props.groups), [])
+    selectorOf(tree).props.onProjectChange("SUN")
+    assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN")
+    h.setPending(false)
+    props = await selectionProps(h, { project: "SUN", sprint: "6823" })
+    tree = h.invoke(ProjectsFilter, props)
+    teamOf(tree).props.onGroupsChange(["ent-web"])
+    const oldTree = tree
+    props = await selectionProps(h, {})
+    tree = h.invoke(ProjectsFilter, props)
+    teamOf(oldTree).props.onGroupsChange(["ent-be1"])
+    sprintDropdown(oldTree).props.onOpenChange(true)
+    checkbox(oldTree, "Sprint 71").props.onChange({ target: { checked: true } })
+    assert.equal(nodes(tree).find((node) => node.type === "fieldset").props.disabled, true)
+    assert.deepEqual(plain(teamOf(h.invoke(ProjectsFilter, props)).props.groups), ["ent-web"])
+    assert.equal(h.pushes.length, 1)
+  })
+  it("enables Sprints and Team only after Project selection, and Query only with a Sprint", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, props)
+    const assertControls = (tree, projectSelected, queryEnabled) => {
+      const [, sprints, latest, team] = tree.props.children[0].props.children
+      assert.equal(sprints.props.disabled, !projectSelected)
+      assert.equal(sprints.props["aria-disabled"], !projectSelected)
+      // The shortcut sits beside the Sprints filter and is never pressed without an exact recent selection.
+      assert.equal(latest.props.type, "button")
+      if (!projectSelected) assert.equal(latest.props["aria-pressed"], false)
+      assert.equal(team.props.inert, !projectSelected)
+      assert.equal(team.props["aria-disabled"], !projectSelected)
+      assert.equal(queryButton(tree).props.disabled, !queryEnabled)
+    }
+    assertControls(tree, false, false)
+    selectorOf(tree).props.onProjectChange("SUN")
+    tree = h.invoke(ProjectsFilter, props)
+    assertControls(tree, true, false)
+    h.setPending(false)
+    const projectProps = await selectionProps(h, { project: "SUN" })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    assert.deepEqual(plain(teamOf(tree).props.groups), [])
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, true)
+    assert.deepEqual(plain(teamOf(tree).props.groups), [])
+    checkbox(tree, "Sprint 58").props.onChange({ target: { checked: false } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    checkbox(tree, "Sprint 71").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, true)
+    selectorOf(tree).props.onProjectChange("TKK")
+    tree = h.invoke(ProjectsFilter, projectProps)
+    assertControls(tree, true, false)
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, props)
+    assertControls(tree, false, false)
+  })
+  it("preserves whole-Team state across page props and clears readiness on Team changes", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    let props = await selectionProps(h, { project: "SUN", sprint: "6823" })
+    let tree = h.invoke(ProjectsFilter, props)
+    assert.equal(teamOf(tree).props.perMember, false)
+    tree.props.onSubmit({ preventDefault() {} })
+    assert.equal(readyNotice(h.invoke(ProjectsFilter, props)), true)
+    teamOf(tree).props.onGroupsChange(["ent-web", "ent-be1"])
+    assert.equal(readyNotice(h.invoke(ProjectsFilter, props)), false)
     props = await selectionProps(h, { project: "TKK", sprint: "7403" })
     tree = h.invoke(ProjectsFilter, props)
     assert.deepEqual(plain(teamOf(tree).props.groups), ["ent-web", "ent-be1"])
-    assert.deepEqual(h.pushes, [])
     const fresh = harness()
     assert.deepEqual(plain(teamOf(fresh.invoke(fresh.load(FILTER).ProjectsFilter, props)).props.groups), [])
   })
-  it("keeps the dropdown open and preserves rapid add/add/remove intent before server props arrive", async () => {
-    const h = harness()
+  it("retains rapid add/add/remove intent and open panel while server props lag", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
     const props = await selectionProps(h, { project: "SUN" })
     let tree = h.invoke(ProjectsFilter, props)
     sprintDropdown(tree).props.onOpenChange(true)
     tree = h.invoke(ProjectsFilter, props)
-    assert.equal(sprintDropdown(tree).props.open, true)
-    // Same rendered callbacks: no render or RSC update between these events.
     checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
     checkbox(tree, "Sprint 71").props.onChange({ target: { checked: true } })
     checkbox(tree, "Sprint 58").props.onChange({ target: { checked: false } })
-    assert.deepEqual(h.pushes, [
-      "/analytics/projects?project=SUN&sprint=6823",
-      "/analytics/projects?project=SUN&sprint=6823&sprint=7518",
-      "/analytics/projects?project=SUN&sprint=7518",
-    ])
+    assert.deepEqual(h.pushes, ["/analytics/projects?project=SUN&sprint=6823", "/analytics/projects?project=SUN&sprint=6823&sprint=7518", "/analytics/projects?project=SUN&sprint=7518"])
     tree = h.invoke(ProjectsFilter, props)
     assert.equal(sprintDropdown(tree).props.open, true)
     assert.equal(checkbox(tree, "Sprint 58").props.checked, false)
-    assert.equal(checkbox(tree, "Sprint 71").props.checked, true)
     const stale = await selectionProps(h, { project: "SUN", sprint: "6823" })
     assert.equal(checkbox(h.invoke(ProjectsFilter, stale), "Sprint 71").props.checked, true)
-    const final = await selectionProps(h, { project: "SUN", sprint: "7518" })
     h.setPending(false)
-    tree = h.invoke(ProjectsFilter, final)
+    tree = h.invoke(ProjectsFilter, await selectionProps(h, { project: "SUN", sprint: "7518" }))
     checkbox(tree, "Sprint 71").props.onChange({ target: { checked: false } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN")
-    assert.equal(sprintDropdown(h.invoke(ProjectsFilter, final)).props.value, "選擇 Sprints")
   })
-  it("restores committed history props without reviving previous optimistic selections", async () => {
-    const h = harness()
+  it("restores history without old optimistic selections and recalculates readiness", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
     let props = await selectionProps(h, { project: "SUN", sprint: ["6823", "7518"] })
     let tree = h.invoke(ProjectsFilter, props)
     assert.equal(checkbox(tree, "Sprint 58").props.checked, true)
     props = await selectionProps(h, { project: "SUN", sprint: "7518" })
-    h.setPending(false)
     tree = h.invoke(ProjectsFilter, props)
     assert.equal(checkbox(tree, "Sprint 58").props.checked, false)
     checkbox(tree, "Sprint 59").props.onChange({ target: { checked: true } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=SUN&sprint=6824&sprint=7518")
   })
-  it("project changes clear Sprints and prevent old project checkbox events during transition", async () => {
-    const h = harness()
+  it("clears Sprints on Project change and ignores old checkboxes and late submit", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
     const props = await selectionProps(h, { project: "SUN", sprint: "7518" })
     const tree = h.invoke(ProjectsFilter, props)
-    const selector = selectorOf(tree)
-    const selectorTree = h.invoke(selector.type, selector.props)
-    const projectButtons = nodes(selectorTree).filter((node) => node.props.role === "radio")
-    projectButtons[0].props.onClick()
+    selectorOf(tree).props.onProjectChange("SUN")
     assert.equal(h.pushes.length, 0)
-    projectButtons[1].props.onClick()
-    assert.equal(h.pushes[0], "/analytics/projects?project=TKK")
+    selectorOf(tree).props.onProjectChange("TKK")
     checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
+    tree.props.onSubmit({ preventDefault() {} })
     assert.equal(h.pushes.length, 1)
-    const pendingTree = h.invoke(ProjectsFilter, props)
-    assert.equal(selectorOf(pendingTree).props.project, "TKK")
-    assert.equal(sprintDropdown(pendingTree).props.open, false)
-    assert.equal(nodes(sprintDropdown(pendingTree)).filter((node) => node.type === "input").length, 0)
+    const pending = h.invoke(ProjectsFilter, props)
+    assert.equal(selectorOf(pending).props.project, "TKK")
+    assert.equal(sprintDropdown(pending).props.open, false)
+    assert.equal(nodes(sprintDropdown(pending)).filter((node) => node.type === "input").length, 0)
+    assert.equal(readyNotice(pending), false)
     h.setPending(false)
-    const nextProps = await selectionProps(h, { project: "TKK" })
-    const committed = h.invoke(ProjectsFilter, nextProps)
-    checkbox(committed, "S128").props.onChange({ target: { checked: true } })
+    const next = h.invoke(ProjectsFilter, await selectionProps(h, { project: "TKK" }))
+    checkbox(next, "S128").props.onChange({ target: { checked: true } })
     assert.equal(h.pushes.at(-1), "/analytics/projects?project=TKK&sprint=6619")
   })
-  it("marks only Project required, renders full native labels, and uses central bounded widths", async () => {
-    const h = harness()
+  it("selecting a project preselects exactly the 近 5 Sprints set, so that shortcut starts pressed", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
     const props = await selectionProps(h, { project: "SUN" })
-    const markup = render(ProjectsFilter, props)
+    h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    // The effect navigates to the same five Sprints the shortcut would pick.
+    const five = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 5).map((sprint) => sprint.id).sort((a, b) => a - b)
+    assert.equal(h.pushes.at(-1), `/analytics/projects?project=SUN&` + five.map((id) => `sprint=${id}`).join("&"))
+    // Once that URL is applied the shortcut shows as pressed, with no manual ticking (fresh harness = fresh render).
+    const fresh = harness("2026-11-12"), FreshFilter = fresh.load(FILTER).ProjectsFilter
+    const applied = await selectionProps(fresh, { project: "SUN", sprint: five.map(String) })
+    const shortcut = nodes(fresh.invoke(FreshFilter, applied)).find((node) => node.type === "button" && Array.isArray(node.props.children) && node.props.children[1] === 5)
+    assert.equal(shortcut.props["aria-pressed"], true)
+  })
+  it("近 5 Sprints picks the five newest ended Sprints and stays pressed only for that exact selection", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const latestOf = (tree) => nodes(tree).find((node) => node.type === "button" && Array.isArray(node.props.children) && node.props.children[1] === 5 && "aria-pressed" in node.props)
+    const props = await selectionProps(h, { project: "SUN" })
+    let tree = h.invoke(ProjectsFilter, props)
+    const newest = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate)).slice(0, 5)
+    const expectedIds = newest.map((sprint) => sprint.id).sort((a, b) => a - b)
+    assert.equal(newest.length, 5)
+    assert.equal(latestOf(tree).props["aria-pressed"], false, JSON.stringify({ ids: props.selectedSprintIds, expected: expectedIds }))
+    latestOf(tree).props.onClick()
+    assert.equal(h.pushes.at(-1), `/analytics/projects?project=SUN&sprint=${expectedIds.join("&sprint=")}`)
+    // A manual selection of exactly those five Sprints shows the same pressed state.
+    const manual = await selectionProps(h, { project: "SUN", sprint: expectedIds.map(String) })
+    tree = h.invoke(ProjectsFilter, manual)
+    assert.equal(latestOf(tree).props["aria-pressed"], true)
+    // Dropping one of the five (keeping four newest plus the next older sprint) leaves the shortcut unpressed.
+    // A fresh harness models a real navigation, which discards the optimistic selection made above.
+    const fresh = harness("2026-11-12"), FreshFilter = fresh.load(FILTER).ProjectsFilter
+    const ended = [...props.sprints].filter((sprint) => sprint.endDate < "2026-11-12").sort((a, b) => b.startDate.localeCompare(a.startDate))
+    const swapped = [...expectedIds.slice(1), ended[5].id]
+    const fewer = nodes(await fresh.page({ project: "SUN", sprint: swapped.map(String) })).find((node) => node.type?.name === "ProjectsQueryClient").props
+    tree = fresh.invoke(FreshFilter, fewer)
+    assert.equal(latestOf(tree).props["aria-pressed"], false)
+  })
+  it("keeps Project, Sprints, Team and Query in one wrapping row with central widths", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
     const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
-    assert.ok(markup.indexOf('id="projects-project-label"') < markup.indexOf('id="fixture-team-label"'))
-    assert.ok(markup.indexOf('id="fixture-team-label"') < markup.indexOf('id="projects-sprints-label"'))
-    const projectLabel = markup.match(/<span id="projects-project-label"[\s\S]*?<\/span><\/span>/)?.[0]
-    assert.match(projectLabel, /aria-hidden="true"[^>]*>\*<\/span>/)
-    assert.match(projectLabel, /sr-only[^>]*>（必選）/)
+    for (const params of [{}, { project: "SUN", sprint: ["6823", "7518"] }]) {
+      const tree = h.invoke(ProjectsFilter, await selectionProps(h, params))
+      const row = tree.props.children[0]
+      const [project, sprints, latest, team, query] = row.props.children
+      assert.equal(row.props.children.length, 5)
+      assert.match(row.props.className, /flex-wrap/)
+      assert.match(row.props.className, /items-end/)
+      assert.match(row.props.className, /min-w-0/)
+      assert.equal(project.props.children, selectorOf(tree))
+      assert.equal(team.props.children, teamOf(tree))
+      assert.equal(sprints.type, "fieldset")
+      assert.ok(nodes(sprints).includes(sprintDropdown(tree)))
+      assert.deepEqual(plain(latest.props.children), ["近 ", 5, " Sprints"])
+      assert.equal(query.props.children, queryButton(tree))
+      assert.equal(nodes(sprints).includes(queryButton(tree)), false)
+      assert.equal(sprints.props.disabled, !params.project)
+      assert.equal(project.props.className, FILTER_SELECT_WIDTH_CLASS.project)
+      assert.ok(team.props.className.startsWith(FILTER_SELECT_WIDTH_CLASS.team))
+      assert.equal(sprints.props.className, FILTER_SELECT_WIDTH_CLASS.sprint)
+      assert.match(query.props.className, /ml-auto/)
+      for (const control of [project, sprints, team, query]) {
+        assert.match(control.props.className, /max-w-full/)
+        assert.match(control.props.className, /min-w-0/)
+        assert.doesNotMatch(control.props.className, /mt-4|pt-5/)
+        assert.equal(control.props.style, undefined)
+      }
+      const dropdown = sprintDropdown(tree)
+      const native = h.invoke(dropdown.type, dropdown.props)
+      assert.equal(native.props.className, `relative ${FILTER_SELECT_WIDTH_CLASS.sprint}`)
+      const panel = nodes(native).find((node) => node.props.id === "projects-sprints-options")
+      assert.match(panel.props.className, /w-full min-w-0/)
+      const search = queryButton(tree)
+      assert.equal(search.props.className, undefined)
+      assert.equal(search.props.style, undefined)
+      assert.match(h.invoke(search.type, search.props).props.className, /w-24 max-w-full/)
+    }
+  })
+  it("marks Project and Sprints required but leaves Team optional, retaining labels and central widths", async () => {
+    const h = harness("2026-11-12")
+    const props = await selectionProps(h, { project: "SUN" })
+    const markup = render(h.load(FILTER).ProjectsFilter, props)
+    for (const params of [{}, { project: "SUN" }, { project: "SUN", sprint: "6823" }]) {
+      const tree = h.invoke(h.load(FILTER).ProjectsFilter, await selectionProps(h, params))
+      assert.equal(selectorOf(tree).props.required, true)
+      assert.equal(sprintDropdown(tree).props.required, true)
+      const html = renderToStaticMarkup(tree)
+      assert.equal((html.match(/sr-only[^>]*>（必選）/g) ?? []).length, 2)
+      for (const label of ["專案", "Sprints"]) assert.ok(html.includes(`${label}<span aria-hidden="true" class="ml-1 text-rose-600 dark:text-rose-400">*</span><span class="sr-only">（必選）</span>`))
+      assert.doesNotMatch(renderToStaticMarkup(teamOf(tree)), /（必選）/)
+    }
     assert.doesNotMatch(markup, /aria-required|展開 Web 成員|Fixture member/)
-    assert.equal((markup.match(/type="submit"/g) ?? []).length, 1)
-    assert.match(markup, /<button[^>]*type="submit"[^>]*disabled=""[^>]*>查詢<\/button>/)
-    assert.equal((markup.match(/type="checkbox"/g) ?? []).length, props.sprints.length + h.load("lib/jira-dashboard-filter.ts").DASHBOARD_TEAMS.length)
-    const tree = h.invoke(ProjectsFilter, props)
-    const labels = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")
-    assert.equal(labels.length, props.sprints.length)
-    assert.equal(labels[0].props.children[1].props.children, props.sprints.at(-1).name)
+    const { FILTER_SELECT_WIDTH_CLASS } = h.load("components/filter-dropdown.tsx")
     for (const kind of ["project", "sprint", "team"]) assert.ok(markup.includes(`class="relative ${FILTER_SELECT_WIDTH_CLASS[kind]}"`))
     assert.match(markup, /class="truncate"/)
+    const labels = nodes(sprintDropdown(h.invoke(h.load(FILTER).ProjectsFilter, props))).filter((node) => node.type === "label")
+    const ended = h.load("lib/jira-sprint-data.ts").filterEndedSprints(props.sprints, "2026-11-12")
+    assert.equal(labels.length, ended.length)
+    assert.equal(labels[0].props.children[1].props.children[0].props.children, ended.at(-1).name)
   })
-  it("shows pending, no-project, no-options and invalid-scope states distinctly", async () => {
-    const h = harness()
+  it("shows grey start/end dates below each Sprint name without increasing row spacing", async () => {
+    const h = harness("2026-11-12")
     const { ProjectsFilter } = h.load(FILTER)
-    let props = await selectionProps(h, {})
-    assert.match(render(ProjectsFilter, props), /請先選擇專案/)
-    assert.match(render(ProjectsFilter, { ...props, project: "SUN" }), /此專案暫無可檢視的 Sprints/)
-    props = await selectionProps(h, { project: "SUN", sprint: "7401" })
+    for (const project of ["SUN", "TKK", "PRIDE"]) {
+      const props = await selectionProps(h, { project })
+      const tree = h.invoke(ProjectsFilter, props)
+      const labels = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")
+      const ordered = [...h.load("lib/jira-sprint-data.ts").filterEndedSprints(props.sprints, "2026-11-12")].sort((a, b) => b.startDate.localeCompare(a.startDate))
+      assert.equal(labels.length, ordered.length)
+      labels.forEach((label, index) => {
+        const sprint = ordered[index]
+        assert.equal(label.props["data-sprint-id"], sprint.id)
+        const [name, dates] = label.props.children[1].props.children
+        assert.equal(name.props.children, sprint.name)
+        assert.match(name.props.className, /block.*leading-5/)
+        assert.equal(dates.props.children.join(""), `${sprint.startDate} - ${sprint.endDate}`)
+        assert.equal(dates.props.title, `${sprint.startDate} - ${sprint.endDate}`)
+        assert.match(dates.props.className, /block truncate text-xs leading-4/)
+        assert.match(dates.props.className, /text-slate-500 dark:text-slate-400/)
+        assert.match(label.props.className, /min-h-10/)
+        assert.match(label.props.className, /py-0/)
+        assert.doesNotMatch(label.props.className, /\b(?:my-|space-y-|gap-y-)/)
+      })
+      assert.equal(sprintDropdown(tree).props.value, "選擇 Sprints")
+    }
+  })
+  it("aligns the closest ended Sprint toward the top on each open without selecting it or resetting manual scrolling", async () => {
+    const h = harness("2026-10-21")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, { project: "SUN", sprint: "6823" })
     let tree = h.invoke(ProjectsFilter, props)
-    assert.match(sprintDropdown(tree).props.value, /重新選擇/)
-    assert.equal(tree.props.children[2].props.role, "alert")
+    const targets = []
+    const panel = { hidden: false, scrollTop: 0, clientTop: 1, clientHeight: 300, getBoundingClientRect: () => ({ top: 100 }) }
+    const fieldset = nodes(tree).find((node) => node.type === "fieldset")
+    fieldset.props.ref.current = { querySelector: (selector) => {
+      targets.push(selector)
+      return { parentElement: panel, offsetHeight: 40, getBoundingClientRect: () => ({ top: 501 - panel.scrollTop }) }
+    } }
+    h.flushEffects()
+    assert.deepEqual(targets, [])
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.deepEqual(targets, ['[data-sprint-id="7516"]'])
+    assert.equal(panel.scrollTop, 400)
+    assert.equal(checkbox(tree, "Sprint 58").props.checked, true)
+    assert.equal(checkbox(tree, "Sprint 69").props.checked, false)
+    assert.equal(checkbox(tree, "Sprint 70"), undefined)
+    assert.deepEqual(h.pushes, [])
+    panel.scrollTop = 120
+    checkbox(tree, "Sprint 68").props.onChange({ target: { checked: true } })
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, await selectionProps(h, { project: "SUN", sprint: ["6823", "7515"] }))
+    h.flushEffects()
+    assert.equal(panel.scrollTop, 120)
+    assert.equal(targets.length, 1)
+    sprintDropdown(tree).props.onOpenChange(false)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(targets.length, 1)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(targets.length, 2)
+    assert.equal(panel.scrollTop, 400)
+    assert.equal(sprintDropdown(tree).props.open, true)
+  })
+  it("targets the latest ended Sprint and clamps scrolling when the filtered list fits the panel", async () => {
+    for (const [project, expectedId] of [["SUN", 7518], ["TKK", 7401], ["PRIDE", 7750]]) {
+      const h = harness("2026-11-12")
+      const { ProjectsFilter } = h.load(FILTER)
+      const props = await selectionProps(h, { project })
+      let tree = h.invoke(ProjectsFilter, props)
+      const rows = nodes(sprintDropdown(tree)).filter((node) => node.type === "label")
+      const index = rows.findIndex((row) => row.props["data-sprint-id"] === expectedId)
+      assert.equal(index, 0)
+      const rowHeight = 40
+      const padding = 4
+      const contentHeight = rows.length * rowHeight + padding * 2
+      const viewportHeight = Math.min(300, contentHeight)
+      const maxScroll = contentHeight - viewportHeight
+      const optionTop = padding + index * rowHeight
+      assert.ok(optionTop - (viewportHeight - rowHeight) / 2 < 0)
+      let scrollTop = 0
+      const panel = {
+        hidden: false, clientTop: 1, clientHeight: viewportHeight,
+        get scrollTop() { return scrollTop },
+        set scrollTop(value) { scrollTop = Math.max(0, Math.min(maxScroll, value)) },
+        getBoundingClientRect: () => ({ top: 100 }),
+      }
+      nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+        assert.equal(selector, `[data-sprint-id="${expectedId}"]`)
+        return { parentElement: panel, offsetHeight: rowHeight, getBoundingClientRect: () => ({ top: 100 + panel.clientTop + optionTop - panel.scrollTop }) }
+      } }
+      h.flushEffects()
+      sprintDropdown(tree).props.onOpenChange(true)
+      tree = h.invoke(ProjectsFilter, props)
+      h.flushEffects()
+      assert.equal(panel.scrollTop, Math.min(optionTop, maxScroll))
+      assert.equal(panel.scrollTop > 0, maxScroll > 0)
+      // The only navigation is the newest-Sprints preselection (no analysis is triggered).
+      // Same rule as the filter: ended Sprints, newest first by start date, capped at one analysis run.
+      // A project preselects the same five newest Sprints as the 近 5 Sprints shortcut.
+      const newest = rows.map((row) => props.sprints.find((sprint) => sprint.id === row.props["data-sprint-id"])).slice(0, 5).map((sprint) => sprint.id).sort((a, b) => a - b)
+      assert.deepEqual(h.pushes, [`/analytics/projects?project=${project}&` + newest.map((id) => `sprint=${id}`).join("&")])
+    }
+  })
+  it("waits for new Project options before locating a pending open panel", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const props = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, props)
+    const targets = []
+    const panel = { hidden: false, scrollTop: 0, clientTop: 0, clientHeight: 300, getBoundingClientRect: () => ({ top: 100 }) }
+    nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+      targets.push(selector)
+      return { parentElement: panel, offsetHeight: 40, getBoundingClientRect: () => ({ top: 500 }) }
+    } }
+    h.flushEffects()
+    selectorOf(tree).props.onProjectChange("TKK")
+    tree = h.invoke(ProjectsFilter, props)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.equal(sprintDropdown(tree).props.open, false)
+    assert.deepEqual(targets, [])
+    h.setPending(false)
+    tree = h.invoke(ProjectsFilter, await selectionProps(h, { project: "TKK" }))
+    h.flushEffects()
+    assert.equal(sprintDropdown(tree).props.open, true)
+    assert.deepEqual(targets, ['[data-sprint-id="7401"]'])
+    assert.equal(panel.scrollTop, 400)
+  })
+  it("does not scroll a disabled, empty or hidden Sprint panel", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const empty = await selectionProps(h, {})
+    let tree = h.invoke(ProjectsFilter, empty)
+    const queries = []
+    nodes(tree).find((node) => node.type === "fieldset").props.ref.current = { querySelector: (selector) => {
+      queries.push(selector)
+      return { parentElement: { hidden: true, getBoundingClientRect() { assert.fail("Hidden panel must not scroll") } } }
+    } }
+    sprintDropdown(tree).props.onOpenChange(true)
+    h.invoke(ProjectsFilter, empty)
+    h.flushEffects()
+    assert.deepEqual(queries, [])
+    const props = { ...empty, project: "SUN" }
+    tree = h.invoke(ProjectsFilter, props)
+    sprintDropdown(tree).props.onOpenChange(true)
+    tree = h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    assert.deepEqual(queries, [])
+    sprintDropdown(tree).props.onOpenChange(false)
+    h.invoke(ProjectsFilter, props)
+    h.flushEffects()
+    const full = await selectionProps(h, { project: "SUN" })
+    tree = h.invoke(ProjectsFilter, full)
+    sprintDropdown(tree).props.onOpenChange(true)
+    h.invoke(ProjectsFilter, full)
+    h.flushEffects()
+    assert.deepEqual(queries, ['[data-sprint-id="7518"]'])
+  })
+  it("distinguishes pending, empty options and invalid scope", async () => {
+    const h = harness("2026-11-12")
+    const { ProjectsFilter } = h.load(FILTER)
+    const empty = await selectionProps(h, {})
+    assert.match(renderToStaticMarkup(h.invoke(ProjectsFilter, { ...empty, project: "SUN" })), /此專案暫無可檢視的 Sprints/)
+    const props = await selectionProps(h, { project: "SUN", sprint: "7401" })
+    let tree = h.invoke(ProjectsFilter, props)
+    assert.ok(nodes(tree).some((node) => node.props.role === "alert"))
     checkbox(tree, "Sprint 58").props.onChange({ target: { checked: true } })
     tree = h.invoke(ProjectsFilter, props)
-    assert.equal(tree.props.children[2], null)
+    assert.equal(nodes(tree).some((node) => node.props.role === "alert"), false)
     assert.equal(tree.props["aria-busy"], true)
-    assert.equal(tree.props.children[3].props.role, "status")
+    assert.ok(nodes(tree).some((node) => node.props.role === "status" && node.props.children === "正在更新篩選條件…"))
   })
-  it("leaves original single Sprint behavior intact for Planning, Burndown and Capacity", () => {
-    const h = harness()
+  it("keeps Planning/Burndown/Capacity single-Sprint behavior unchanged", () => {
+    const h = harness("2026-11-12")
     const { SprintSelector } = h.load(SELECTOR)
     const sprints = h.load("lib/jira-sprint-data.ts").getProjectSprints("SUN")
     for (const basePath of ["/sprint/planning", "/sprint/burndown", "/sprint/capacity"]) {
       const paths = []
       const props = { basePath, project: "SUN", sprints, selectedSprintId: 7518, onNavigate: (path) => paths.push(path) }
       const tree = h.invoke(SprintSelector, props)
-      const slot = tree.props.children[1].props.children
-      const dropdown = slot.props.children[0]
+      const dropdown = tree.props.children[1].props.children.props.children[0]
       assert.equal(dropdown.props.label, "Sprint")
-      assert.equal(dropdown.props.value, "Sprint 71")
       dropdown.props.onOpenChange(true)
       nodes(dropdown).find((node) => node.props.role === "option").props.onClick()
       assert.equal(paths[0], `${basePath}?project=SUN&sprint=7522`)
@@ -781,35 +670,32 @@ describe("project Sprints multi-selection and navigation", () => {
   })
 })
 
-describe("analysis subtitles and ComingSoon slot regressions", () => {
-  it("hides header subtitles on all placeholder analysis pages but preserves planned content", async () => {
-    const h = harness()
-    const pages = [await h.page(), ...["story-points", "members", "trends", "comparison"].map((feature) => h.load(`app/(app)/analytics/${feature}/page.tsx`).default())]
-    for (const tree of pages) {
+describe("analysis headers and query-client slots", () => {
+  it("Projects renders one subtitle-free header and explicit query client instead of ComingSoon", async () => {
+    const h = harness("2026-11-12"), tree = await h.page({ project: "SUN", sprint: "6823" })
+    const markup = renderToStaticMarkup(tree)
+    assert.equal((markup.match(/<h1\b/g) ?? []).length, 1)
+    assert.doesNotMatch(markup, /此功能正在準備中|分析尚未開放/)
+    assert.ok(markup.indexOf("</header>") < markup.indexOf("<form"))
+  })
+  it("renders async filters between one subtitle-free header and honest placeholder", async () => {
+    const h = harness("2026-11-12")
+    for (const tree of [await h.page({}, TEAM_PAGE)]) {
+      assert.equal(tree.props.showDescription, false)
       const markup = renderToStaticMarkup(tree)
       const header = markup.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0]
       assert.equal((header.match(/<h1\b/g) ?? []).length, 1)
       assert.doesNotMatch(header, /<p\b/)
       assert.ok(markup.includes(tree.props.description))
+      assert.ok(markup.indexOf("</header>") < markup.indexOf("<form"))
+      assert.ok(markup.indexOf("<form") < markup.indexOf("<section"))
+      assert.match(markup, /此功能正在準備中/)
     }
   })
-  it("renders one header, then filters, then placeholder", async () => {
-    const markup = renderToStaticMarkup(await harness().page())
-    assert.equal((markup.match(/<h1\b/g) ?? []).length, 1)
-    assert.ok(markup.indexOf("</header>") < markup.indexOf('id="projects-project-label"'))
-    assert.ok(markup.indexOf('id="projects-project-label"') < markup.indexOf("<section"))
-    assert.match(markup, /此功能正在準備中/)
-  })
-  it("preserves default subtitles and adds no filter container outside analytics", () => {
-    const h = harness()
-    const { ComingSoon } = h.load("components/coming-soon.tsx")
+  it("preserves default ComingSoon subtitles outside analytics", () => {
+    const { ComingSoon } = harness().load("components/coming-soon.tsx")
     const props = { title: "Other page", description: "Existing description" }
-    const markup = render(ComingSoon, props)
-    assert.equal(markup, render(ComingSoon, { ...props, filters: null }))
-    assert.match(markup, /<\/header><section/)
-    assert.match(markup.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0], /Existing description/)
-    const hidden = render(ComingSoon, { ...props, showDescription: false })
-    assert.doesNotMatch(hidden.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0], /Existing description/)
-    assert.match(hidden, /Existing description/)
+    assert.equal(render(ComingSoon, props), render(ComingSoon, { ...props, filters: null }))
+    assert.match(render(ComingSoon, props), /<\/header><section/)
   })
 })

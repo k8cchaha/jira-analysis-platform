@@ -5,7 +5,6 @@ import {
 } from "@/lib/jira-token"
 import {
   getBurndownBase,
-  iterateDoneDays,
   JiraBurndownError,
 } from "@/lib/jira-burndown"
 import { JiraDashboardError } from "@/lib/jira-dashboard"
@@ -13,6 +12,7 @@ import {
   getSprintById,
   parseProjectKey,
   parseSprintId,
+  isValidLegacyByResolved,
 } from "@/lib/burndown-params"
 import {
   streamBurndownEvents,
@@ -28,17 +28,11 @@ const SSE_HEADERS: Record<string, string> = {
   "X-Accel-Buffering": "no",
 }
 
+const EMPTY_DAYS = { async *[Symbol.asyncIterator]() {} }
+
 /**
- * Burn Down 圖的漸進式 SSE 路由。
- *
- * 送出順序：`event: base`（steps 1+2 → 畫出圖表骨架）→ `event: day` × N
- * （逐日 completed Dev-Task，client 逐日把實際線/長條「長」上去）→
- * `event: done`。任一天中途拋錯 → `event: error` ＋ close，不偽裝 done。
- *
- * **fail-fast 規則**：auth、參數、credential，以及 `getBurndownBase`
- * （steps 1+2）都在開流前完成，其錯誤能以正常 HTTP 狀態碼回；開流之後
- * （step 3）的錯誤只能以 SSE error event 傳達，因為 headers/status 在送
- * 第一個 frame 後即鎖死。
+ * 完整載入後一次送出 `base → done`，不再逐日查 Jira 或傳送 day。
+ * auth、參數、帳號時區與所有資料分頁都在開流前完成；失敗不送部分 base。
  */
 export async function GET(request: Request) {
   const baseHeaders = { ...SSE_HEADERS }
@@ -53,6 +47,10 @@ export async function GET(request: Request) {
     }
 
     const url = new URL(request.url)
+    const values = url.searchParams.getAll("byResolved")
+    if (!isValidLegacyByResolved(values.length === 0 ? undefined : values.length === 1 ? values[0] : values)) {
+      return fail({ code: "configuration", message: "舊版完成日期參數無效，請移除 byResolved 後重試。" }, 400)
+    }
     const project = parseProjectKey(url.searchParams.get("project") ?? undefined)
     const requestedSprintId = parseSprintId(
       url.searchParams.get("sprint") ?? undefined
@@ -87,16 +85,10 @@ export async function GET(request: Request) {
             }
           },
         }
-        const dayIterator = iterateDoneDays(
-          base.sprint,
-          today,
-          credentials,
-          base.parentKeys
-        )
         await streamBurndownEvents(
           sink,
           base,
-          dayIterator,
+          EMPTY_DAYS,
           mapBurndownStreamError
         )
       },
@@ -121,7 +113,7 @@ function mapBurndownStreamError(error: unknown): BurndownStreamError {
   if (error instanceof JiraBurndownError) {
     return { code: error.code, message: error.message }
   }
-  // step-3 逐日查詢的錯誤（jira-dashboard 的 fetch／分頁），沿用其 code。
+  // 完整 search 的 fetch／分頁錯誤，沿用其 code。
   if (error instanceof JiraDashboardError) {
     return { code: error.code, message: error.message }
   }

@@ -8,6 +8,8 @@ export function EditDialog({
   description,
   count,
   compact = false,
+  size = "large",
+  fitContent = false,
   iconClose = false,
   busy = false,
   onClose,
@@ -17,6 +19,9 @@ export function EditDialog({
   description: string
   count?: number | null
   compact?: boolean
+  size?: "small" | "large"
+  /** Opt in to content-height layout on mobile as well as desktop. */
+  fitContent?: boolean
   iconClose?: boolean
   busy?: boolean
   onClose: () => void
@@ -49,7 +54,7 @@ export function EditDialog({
       aria-labelledby={titleId}
       aria-describedby={descriptionId}
       onCancel={(event) => event.preventDefault()}
-      className="fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none flex-col overflow-hidden border-0 bg-white p-0 text-slate-950 shadow-2xl backdrop:bg-slate-950/60 open:flex md:m-auto md:h-auto md:max-h-[90dvh] md:w-[calc(100%-4rem)] md:max-w-6xl md:rounded-2xl dark:bg-slate-900 dark:text-white"
+      className={`fixed inset-0 ${fitContent ? "m-auto h-fit max-h-[90dvh] md:h-fit" : "m-0 h-dvh max-h-none md:h-auto"} w-full max-w-none flex-col overflow-hidden border-0 bg-white p-0 text-slate-950 shadow-2xl backdrop:bg-slate-950/60 open:flex md:m-auto md:max-h-[90dvh] md:w-[calc(100%-4rem)] ${size === "small" ? "md:max-w-lg" : "md:max-w-6xl"} md:rounded-2xl dark:bg-slate-900 dark:text-white`}
     >
       <header className={`flex shrink-0 justify-between gap-4 border-b border-slate-200 p-4 sm:px-6 dark:border-slate-800 ${compact ? "items-center sm:py-5" : "items-start sm:py-6"}`}>
         <div className="min-w-0">

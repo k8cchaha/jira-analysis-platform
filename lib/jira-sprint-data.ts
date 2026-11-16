@@ -1,4 +1,5 @@
-import { SPRINT_PROJECTS, type SprintProjectKey } from "./jira-jql"
+import { dateRangeValue } from "./date-range"
+import type { SprintProjectKey } from "./jira-jql"
 
 /**
  * Sprint 資料（手動填寫）。
@@ -38,11 +39,11 @@ export const SPRINT_DATA = {
     { id: 7515, name: "Sprint 68", startDate: "2026-09-15", endDate: "2026-09-28" },
     { id: 7516, name: "Sprint 69", startDate: "2026-09-29", endDate: "2026-10-12" },
     { id: 7517, name: "Sprint 70", startDate: "2026-10-13", endDate: "2026-10-25" },
-    { id: 7518, name: "Sprint 71", startDate: "2026-10-26", endDate: "2026-11-08" },
-    { id: 7519, name: "Sprint 72", startDate: "2026-11-09", endDate: "2026-11-22" },
-    { id: 7520, name: "Sprint 73", startDate: "2026-11-23", endDate: "2026-12-06" },
-    { id: 7521, name: "Sprint 74", startDate: "2026-12-07", endDate: "2026-12-20" },
-    { id: 7522, name: "Sprint 75", startDate: "2026-12-21", endDate: "2027-01-04" },
+    { id: 7518, name: "Sprint 71", startDate: "2026-10-26", endDate: "2026-11-09" },
+    { id: 7519, name: "Sprint 72", startDate: "2026-11-10", endDate: "2026-11-23" },
+    { id: 7520, name: "Sprint 73", startDate: "2026-11-24", endDate: "2026-12-07" },
+    { id: 7521, name: "Sprint 74", startDate: "2026-12-08", endDate: "2026-12-21" },
+    { id: 7522, name: "Sprint 75", startDate: "2026-12-22", endDate: "2027-01-04" },
   ],
   TKK: [
     { id: 6619, name: "S128", startDate: "2026-05-17", endDate: "2026-06-11" },
@@ -113,6 +114,50 @@ export function currentSprint(
     }
   }
   return match
+}
+
+// 既有人工資料可能省略月／日的前導零，僅在計算時正規化。
+export function normalizeSprintCalendarDate(date: string): string | null {
+  const normalized = date.replace(/^(\d{4})-(\d{1,2})-(\d{1,2})$/, (_, year, month, day) => `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`)
+  return dateRangeValue(normalized) === null ? null : normalized
+}
+function sprintCalendarValue(date: string): number | null {
+  const normalized = normalizeSprintCalendarDate(date)
+  return normalized === null ? null : dateRangeValue(normalized)
+}
+
+/** 專案回顧下拉只顯示已結束的 Sprint：endDate < 瀏覽器本地 today，不含今天結束者。 */
+export function filterEndedSprints(sprints: readonly SprintRecord[], today: string): readonly SprintRecord[] {
+  const day = dateRangeValue(today)
+  if (day === null) return []
+  return sprints.filter((sprint) => {
+    const end = sprintCalendarValue(sprint.endDate)
+    return end !== null && end < day
+  })
+}
+
+/**
+ * 下拉捲動定位：含 today 的區間優先，否則取距離區間最近的 Sprint。
+ * 同距離取較早開始、再取較小 id；不更改選取或既有預設 Sprint 規則。
+ */
+export function closestSprint(sprints: readonly SprintRecord[], today: string): SprintRecord | null {
+  const day = dateRangeValue(today)
+  if (day === null) return null
+  let closest: SprintRecord | null = null
+  let closestDistance = Infinity
+  let closestStart = Infinity
+  for (const sprint of sprints) {
+    const start = sprintCalendarValue(sprint.startDate)
+    const end = sprintCalendarValue(sprint.endDate)
+    if (start === null || end === null || end < start) continue
+    const distance = Math.max(start - day, day - end, 0)
+    if (!closest || distance < closestDistance || (distance === closestDistance && (start < closestStart || (start === closestStart && sprint.id < closest.id)))) {
+      closest = sprint
+      closestDistance = distance
+      closestStart = start
+    }
+  }
+  return closest
 }
 
 /**
