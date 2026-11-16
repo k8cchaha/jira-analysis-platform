@@ -26,6 +26,7 @@ export function TeamSelect({
   initialExclusions = {},
   onExclusionsChange,
   helpText = "團隊變更只過濾站內已載入的燃盡資料，不會重新查詢 Jira。",
+  required = false,
 }: {
   groups: readonly string[]
   onGroupsChange: (groups: string[], memberAccountIds: string[], ready: boolean) => void
@@ -34,6 +35,8 @@ export function TeamSelect({
   /** 回報所選團隊的逐組排除草稿，不改變既有三參數選取 callback。 */
   onExclusionsChange?: (exclusions: Record<string, string[]>) => void
   helpText?: string
+  /** Shows the required asterisk beside the label; validation itself stays with the caller. */
+  required?: boolean
   /** false 時只顯示團隊層級的複選，不展開逐人勾選/排除。 */
   perMember?: boolean
   /** 依已成功載入的完整團隊名單，逐次回報全量 accountId → label 對照；僅供顯示分組，不代表篩選已完整。 */
@@ -148,6 +151,7 @@ export function TeamSelect({
       id={id}
       kind="team"
       label="團隊"
+      required={required}
       value={label}
       open={open}
       onOpenChange={setOpen}

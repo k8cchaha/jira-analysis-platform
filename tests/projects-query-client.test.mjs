@@ -233,6 +233,25 @@ describe("local Projects topic tabs", () => {
     const chart = chartNode(tree, "commitment")
     assert.deepEqual(plain(chart.props.series.map((entry) => [entry.label, entry.values[0].display])), [["Alice", "40%"], ["Bob", "75%"]])
   })
+  it("lists that team's members in the commitment panel when only one team is visible", () => {
+    const h = projectsHarness()
+    h.groupStates["ent-android"] = { status: "success", members: [{ accountId: "a1", displayName: "Alice" }, { accountId: "a2", displayName: "Bob" }] }
+    const result = resultFixture(h.load(MODEL), [
+      task(1, { assigneeAccountId: "a1", assigneeDisplayName: "Alice", points: 8, resolvedDate: "2026-05-01" }),
+      task(2, { assigneeAccountId: "a1", assigneeDisplayName: "Alice", points: 12, resolvedDate: null }),
+      task(3, { assigneeAccountId: "a2", assigneeDisplayName: "Bob", points: 6, resolvedDate: "2026-05-02" }),
+    ], { ...multiRequest, groups: ["ent-android"] }, { status: "available", byAssignee: [{ accountId: "a1", teamId: "ent-android" }, { accountId: "a2", teamId: "ent-android" }] })
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const chart = chartNode(render(), "commitment"), draw = () => h.invoke(chart.type, chart.props)
+    target(draw(), 0).props.onClick()
+    const detail = nodes(render()).find((node) => node.type?.name === "ProjectsCommitmentDetail")
+    assert.equal(detail.props.kind, "member")
+    assert.deepEqual(plain(detail.props.teams.map((team) => [team.label, team.planned, team.completed, team.capacity])), [
+      ["Alice", 20, 8, 20],
+      ["Bob", 6, 6, 20],
+    ], "one row per member, each with their own planned, completed and per-member capacity")
+    assert.match(renderToStaticMarkup(detail.type(detail.props)), /各成員計畫、完成與 Capacity/)
+  })
   it("uses Sprint 完成率 for metric labels while retaining the internal metric identifiers", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], request)

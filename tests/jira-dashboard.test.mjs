@@ -32,7 +32,7 @@ const defectFields = [
 ]
 const plain = (value) => JSON.parse(JSON.stringify(value))
 const pointStatus = (name = "Done", key = "done") => ({ name, statusCategory: { key } })
-const pointsJql = 'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser()'
+const pointsJql = 'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() and created >= "2026-01-01"'
 const pointIssue = (id, storyPoints = null, actualStoryPoints = 0, projectId = "10", status = pointStatus()) => ({
   id: String(id), key: `TEST-${id}`,
   fields: { project: { id: projectId }, summary: `Fixture ${id}`, status, [SP]: storyPoints, [AP]: actualStoryPoints },
@@ -103,10 +103,12 @@ function harness(t, options = {}) {
             if (body.jql !== `${scope} ORDER BY key ASC`) return fail(`Unexpected or altered scoped query: ${body.jql}`)
           } else {
             if (body.jql !== `${scope} ORDER BY key ASC` && !body.jql.startsWith(`(${originalScope}) AND id in (`)) return fail(`Unexpected or altered query: ${body.jql}`)
-            // Impact Scope has an intentional fixed-date OR release base, not a self near-N window.
+            // Self populations are bounded by one fixed created start date; no rolling or clock-relative window.
+            // Impact Scope additionally keeps its own fixed-date OR release base.
+            const withoutFixedBound = body.jql.replace(' and created >= "2026-01-01"', "")
             const dateCheckedJql = options.kind === "impact-scope"
-              ? body.jql.replace('and (created >= "2026-11-01" or cf[13476] = "Sprint9") ', "")
-              : body.jql
+              ? withoutFixedBound.replace('and (created >= "2026-11-01" or cf[13476] = "Sprint9") ', "")
+              : withoutFixedBound
             if (/\b(created|updated|resolved|resolutiondate|startOfDay|now)\b|\b30d\b/i.test(dateCheckedJql)) return fail("An unexpected date restriction leaked into missing-data JQL")
           }
         }
@@ -207,7 +209,7 @@ const pagedSearch = (body) => body.nextPageToken
 
 describe("unexpected closed Points read-only expansion", () => {
   const checked = { mode: "self", includeUnexpectedClosed: true }
-  const expandedJql = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() ORDER BY key ASC'
+  const expandedJql = 'issuetype in (DEV-Task, QA-Task) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() and created >= "2026-01-01" ORDER BY key ASC'
   const issues = [pointIssue(1), pointIssue(2, null, null, "10", pointStatus("Closed", "done"))]
   const expandedSearch = (body) => ({ issues: body.jql.startsWith("(") ? [issues[0]] : issues, isLast: true })
   it("shares count/detail JQL while independently checking original editing eligibility", async (t) => {
@@ -513,7 +515,7 @@ describe("Impact Scope runtime select metadata and safe writes", () => {
       assert.deepEqual(result, { succeededIssueIds: ["1"], failures: [] })
       assert.deepEqual(puts(h), [{ path: "/rest/api/3/issue/1", method: "PUT", body: { fields: { [IMPACT]: expected } } }])
       const eligibility = h.calls.filter((call) => call.body?.jql).at(-1).body.jql
-      assert.equal(eligibility, '(project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()) AND id in (1)')
+      assert.equal(eligibility, '(project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser() and created >= "2026-01-01") AND id in (1)')
       assert.deepEqual(h.tokenCalls, [undefined, true])
       assert.ok(liveReads(h).every((call) => new URLSearchParams(call.path.split("?")[1]).get("expand") === "editmeta"))
     })
@@ -798,7 +800,7 @@ describe("exact missing-data summary against fixture Jira", () => {
     const h = harness(t, { kind: "defect-cause", fields: defectFields, issues })
     assert.deepEqual(plain(await h.service.getMissingDataSummary("defect-cause")), {
       kind: "defect-cause", total: 2, storyPointsMissing: 0, actualStoryPointsMissing: 0,
-      jql: 'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY ORDER BY key ASC',
+      jql: 'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY and created >= "2026-01-01" ORDER BY key ASC',
       jiraBaseUrl: "https://fixture.example.invalid",
     })
   })
@@ -1132,7 +1134,9 @@ describe("scoped missing-data reads", () => {
     assert.equal(page.issues[0].storyPointsEditable, true)
     assert.equal(page.issues[0].actualStoryPointsEditable, true)
     assert.equal(new URLSearchParams(liveReads(h)[0].path.split("?")[1]).get("expand"), "editmeta")
-    assert.doesNotMatch(h.calls.find((call) => call.method === "POST").body.jql, /30d|created|updated|resolved/i)
+    // Self write scope is bounded by the same fixed created start date; no rolling window may appear.
+    const writeJql = h.calls.find((call) => call.method === "POST").body.jql
+    assert.doesNotMatch(writeJql.replace(' and created >= "2026-01-01"', ""), /\b30d\b|created|updated|resolved/i)
   })
 })
 
@@ -1256,7 +1260,8 @@ describe("missing-data saves and action outcomes", () => {
     assert.deepEqual(h.tokenCalls, [true])
     const query = h.calls.find((call) => call.method === "POST")
     assert.match(query.body.jql, /\) AND id in \(1\)$/)
-    assert.doesNotMatch(query.body.jql, /30d|created|updated|resolved/i)
+    // The only date bound allowed here is the fixed self start date; rolling windows must not appear.
+    assert.doesNotMatch(query.body.jql.replace(' and created >= "2026-01-01"', ""), /\b30d\b|created|updated|resolved/i)
   })
 
   it("rejects issues no longer eligible without reading or writing them", async (t) => {
@@ -1405,7 +1410,9 @@ describe("missing-data saves and action outcomes", () => {
     assert.equal(result.status, "success")
     assert.equal(result.submissionId, "explicit-self")
     assert.equal(puts(h).length, 1)
-    assert.doesNotMatch(h.calls.find((call) => call.method === "POST").body.jql, /30d|created|updated|resolved/i)
+    // Self write scope is bounded by the same fixed created start date; no rolling window may appear.
+    const writeJql = h.calls.find((call) => call.method === "POST").body.jql
+    assert.doesNotMatch(writeJql.replace(' and created >= "2026-01-01"', ""), /\b30d\b|created|updated|resolved/i)
   })
 
   for (const kind of ["points", "defect-cause", "impact-scope"]) {

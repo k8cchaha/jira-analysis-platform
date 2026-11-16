@@ -28,7 +28,7 @@ const parseDefects = (changes) => parseMissingDataChanges("defect-cause", JSON.s
 
 describe("missing-data JQL contract", () => {
   it("uses the requested SUN Impact Scope population without inherited exclusions", () => {
-    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()')
+    assert.equal(MISSING_IMPACT_SCOPE_JQL, 'project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser() and created >= "2026-01-01"')
     assert.equal(missingDataJql("impact-scope"), MISSING_IMPACT_SCOPE_JQL)
     assert.doesNotMatch(MISSING_IMPACT_SCOPE_JQL, /status|created >= -|updated|resolution|Dev Ready|In Progress/)
     assert.throws(() => missingDataJql("unknown"))
@@ -46,7 +46,7 @@ describe("missing-data JQL contract", () => {
     )
     assert.equal(
       MISSING_POINTS_JQL,
-      'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser()',
+      'issuetype in (DEV-Task, QA-Task) and resolution in (EMPTY, Done, Fixed) and ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0))) and assignee = currentUser() and created >= "2026-01-01"',
     )
     assert.equal(missingDataJql("points"), MISSING_POINTS_JQL)
     assert.equal(STORY_POINTS_FIELD, "customfield_10005")
@@ -56,14 +56,16 @@ describe("missing-data JQL contract", () => {
   it("preserves the exact defect-cause scope", () => {
     assert.equal(
       MISSING_DEFECT_CAUSE_JQL,
-      'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY',
+      'project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY and created >= "2026-01-01"',
     )
     assert.equal(missingDataJql("defect-cause"), MISSING_DEFECT_CAUSE_JQL)
   })
 
-  it("does not introduce a date filter or alter the precise population cap", () => {
-    for (const jql of [MISSING_POINTS_JQL, MISSING_DEFECT_CAUSE_JQL]) {
-      assert.doesNotMatch(jql, /\b(created|updated|resolved|resolutiondate|duedate|startOfDay|startOfWeek|startOfMonth|now)\b/i)
+  it("bounds every self-population by the fixed created start date without altering the cap", () => {
+    // Self-mode populations now share one fixed lower bound; no rolling or clock-relative window is introduced.
+    for (const jql of [MISSING_POINTS_JQL, MISSING_DEFECT_CAUSE_JQL, MISSING_IMPACT_SCOPE_JQL]) {
+      assert.match(jql, /created >= "2026-01-01"$/)
+      assert.doesNotMatch(jql, /\b(updated|resolved|resolutiondate|duedate|startOfDay|now)\b/i)
     }
     assert.equal(MISSING_DATA_LIMIT, 5_000)
     assert.equal(MISSING_DATA_PAGE_SIZE, 50)

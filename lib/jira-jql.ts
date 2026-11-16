@@ -226,6 +226,10 @@ function enforcedSortedKeys(parentKeys: readonly string[]): string {
   return unique.sort().join(", ")
 }
 
+/** 「自己」模式的固定起算日：儀表板六類警示與缺失資料只納入此日之後建立的工作單。
+ *  對應真實 JQL：`created >= "2026-01-01"` */
+export const SELF_SCOPE_CREATED_SINCE = "2026-01-01"
+
 /** 近期指派給我（currentUser）且最近 30 天建立的全部分母（Scope 片段）。
  *  對應真實 JQL：`assignee = currentUser() AND created >= -30d` */
 export const RECENT_ASSIGNED_ISSUES_SCOPE_JQL =
@@ -256,11 +260,11 @@ const missingPointsPredicate = `((status = Done and ${actualStoryPointsJql} in (
  *    ((status = Done and cf[13736] in (EMPTY, 0)) or (statusCategory not in ("To Do") and cf[10005] in (EMPTY, 0)))
  *    and assignee = currentUser()` */
 export const MISSING_POINTS_JQL =
-  `${POINTS_SCOPE_JQL} and ${missingPointsPredicate} and assignee = currentUser()`
+  `${POINTS_SCOPE_JQL} and ${missingPointsPredicate} and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** Expanded Points READ population only; original supplementation eligibility remains unchanged. */
 export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
-  `issuetype in (DEV-Task, QA-Task) and ${missingPointsPredicate} and assignee = currentUser()`
+  `issuetype in (DEV-Task, QA-Task) and ${missingPointsPredicate} and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** 指派給我的 Defect（Bug）中，「Defect Cause」未填者。限定 SUN／TKK／jiratry 專案（僅這些專案有此欄位）。
  *  對應真實 JQL（defectCause 欄位在 Jira 中為 `"Defect Cause[Select List (multiple choices)]"`）：
@@ -268,11 +272,11 @@ export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
  *    statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and
  *    resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY` */
 export const MISSING_DEFECT_CAUSE_JQL =
-  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY`
+  `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** SUN 的 Story／Task／Bug，Impact Scope 未填（不限狀態）；self 可依 Jira 權限補填。 */
 export const MISSING_IMPACT_SCOPE_JQL =
-  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser()`
+  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {
@@ -303,7 +307,10 @@ export function missingDataReadJql(kind: MissingDataKind, scope: ResolvedDashboa
   dashboardDays(String(scope.days))
   if (!scope.accountIds.length || scope.accountIds.length > DASHBOARD_MEMBER_LIMIT || scope.accountIds.some((id) => !isDashboardAccountId(id)) || scope.projects.some((project) => !DASHBOARD_PROJECTS.some((option) => option.key === project))) throw new DashboardFilterError()
   const assignees = [...new Set(scope.accountIds)].sort().map((id) => `"${id}"`).join(", ")
-  const base = selfQuery.replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+  // Person/team keep only their rolling -Nd window: the self fixed start date must not be inherited.
+  const base = selfQuery
+    .replace(/assignee = currentUser\(\)/i, `assignee in (${assignees})`)
+    .replace(new RegExp(` and created >= "${SELF_SCOPE_CREATED_SINCE}"`, "gi"), "")
   const date = `created >= -${scope.days}d`
   const projects = scope.projects.length ? ` AND project in (${[...new Set(scope.projects)].sort().join(", ")})` : ""
   const jql = `${base} AND ${date}${projects}`
@@ -366,7 +373,8 @@ export function dashboardAlertJql(key: DashboardAlertKey, scope: ResolvedDashboa
   if (!Object.hasOwn(DASHBOARD_ALERT_JQL, key)) throw new DashboardFilterError()
   let assignee = "assignee = currentUser()"
   let projects = ""
-  let date = ""
+  // Self mode is bounded by a fixed start date; person/team keep their rolling -Nd window.
+  let date = scope.mode === "self" ? ` AND created >= "${SELF_SCOPE_CREATED_SINCE}"` : ""
   if (scope.mode !== "self") {
     dashboardDays(String(scope.days))
     date = ` AND created >= -${scope.days}d`

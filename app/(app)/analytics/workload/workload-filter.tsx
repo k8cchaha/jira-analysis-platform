@@ -16,16 +16,17 @@ import type { WorkloadFilter } from "@/lib/workload-filter"
 
 const choiceClass = "h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
 
-const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last1Month", "last2Months", "last3Months", "last6Months"] as const).map((preset) => ({
+// 工作量分析的區間快捷鍵只有近 3 個月與近 6 個月。
+const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last3Months", "last6Months"] as const).map((preset) => ({
   id: preset,
   label: DATE_RANGE_PRESET_LABEL[preset],
   preset,
 }))
 
 /**
- * 分析區間的預設值：以「近1月」起始。
+ * 分析區間的預設值：以「近3月」起始。
  *
- * 沒有 URL 區間時先帶入空區間；`DateRangeField` 取得瀏覽器本機今天後，會以預設的近1月
+ * 沒有 URL 區間時先帶入空區間；`DateRangeField` 取得瀏覽器本機今天後，會以預設的近3月
  * 補上並回報 `onCommit`。本元件不自行讀時鐘，避免 hydration 前後顯示不同日期。
  */
 export function WorkloadFilterForm({ initialFilter, initialError, initialRange = null, onQuery }: {
@@ -104,24 +105,27 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
     <>
       <section aria-label="查詢範圍" className="mb-4 min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <form onSubmit={query} className="space-y-3">
-          <div>
-            <DateRangeField
-              value={range}
-              onChange={setRange}
-              onCommit={commitRange}
-              shortcuts={WORKLOAD_SHORTCUTS}
-              defaultPreset="last1Month"
-              idPrefix={`${id}-range`}
-            />
-            {!rangeTouched && <p role="status" className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">尚未選擇分析區間，請按快捷鍵或點選日期欄位。</p>}
-          </div>
+          {/* One row by preference: 分析區間, 團隊, 專案 on the left, 查詢 alone on the right.
+              Nothing stretches, so the controls sit next to each other and only the button is pushed over. */}
           <div className="flex min-w-0 flex-wrap items-end gap-2">
+            <div className="min-w-0 max-w-full">
+              <DateRangeField
+                value={range}
+                onChange={setRange}
+                onCommit={commitRange}
+                shortcuts={WORKLOAD_SHORTCUTS}
+                defaultPreset="last3Months"
+                idPrefix={`${id}-range`}
+                required
+              />
+            </div>
             <TeamSelect
               groups={groups}
               initialExclusions={initialFilter?.exclusions}
               onGroupsChange={(nextGroups) => { markDefaultsEdited(); setGroups(nextGroups); setError(null) }}
               onExclusionsChange={setExclusions}
               helpText="團隊與成員變更只更新草稿，按「查詢」套用篩選條件。"
+              required
             />
             <FilterDropdown id={`${id}-projects`} kind="project" label="專案" value={projectLabel} open={projectOpen} onOpenChange={setProjectOpen} describedBy={`${id}-project-help`}>
               <fieldset className="min-w-0">
@@ -139,8 +143,10 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
               </fieldset>
               <p id={`${id}-project-help`} className="px-3 py-2 text-xs leading-5 text-slate-500 dark:text-slate-400">未選取專案時，不加專案限制。</p>
             </FilterDropdown>
-            <SearchButton disabled={!allGroupsLoaded || memberCount === 0} aria-describedby={`${id}-team-help ${id}-help`} />
+            {/* Controls stay left-aligned; the query button alone sits at the row's right edge. */}
+            <div className="ml-auto shrink-0"><SearchButton disabled={!allGroupsLoaded || memberCount === 0} aria-describedby={`${id}-team-help ${id}-help`} /></div>
           </div>
+          {!rangeTouched && <p role="status" className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">尚未選擇分析區間，請按快捷鍵或點選日期欄位。</p>}
           <p id={`${id}-help`} className="sr-only">按「查詢」或 Enter 套用團隊、專案與分析區間；分析區間以瀏覽器本機時區的日曆日為準。</p>
           {teamHint && <p id={`${id}-team-help`} role="status" className="text-xs leading-5 text-slate-500 dark:text-slate-400">{teamHint}</p>}
           {error && <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-400">{error}</p>}

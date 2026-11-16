@@ -315,7 +315,29 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   })() : []
   // Per-team rows for the clicked Sprint: planned SP (population), completed SP, capacity, and the resulting rate.
   const commitmentSprint = selectedCommitmentSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedCommitmentSprint) ?? null
-  const commitmentTeamRows: CommitmentTeamRow[] = commitmentSprint ? visibleCommitmentTeams.map((team) => {
+  // One team in scope: the panel lists that team's members instead, each with their own planned/completed/capacity.
+  const commitmentMemberRows: CommitmentTeamRow[] = commitmentSprint && singleTeam ? (() => {
+    const roster = groupStates[singleTeam.id]
+    if (roster?.status !== "success") return []
+    const names = new Map(roster.members.map((member) => [member.accountId, member.displayName]))
+    const population = selectProjectsTeamIssues(result.tasks, commitmentSprint, attribution ?? { status: "unavailable", reason: "not_provided" }, [singleTeam.id], { kind: "commitment-population" }, outputFilter)
+    const capacity = memberCapacity(result.request.project)
+    const byAccount = new Map<string, ProjectsAnalysisTask[]>()
+    for (const task of population) {
+      const key = task.assigneeAccountId ?? "unassigned"
+      byAccount.set(key, [...(byAccount.get(key) ?? []), task])
+    }
+    return [...byAccount.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([accountId, tasks], index) => {
+        const ratio = commitmentOf(commitmentSprint.id, tasks)
+        const done = tasks.filter((task) =>
+          (task.resolvedDate !== null && task.resolvedDate >= commitmentSprint.startDate && task.resolvedDate <= commitmentSprint.endDate)
+          || isBlockedParentStatus(task.parentStatus, countBlockedParent))
+        return { teamId: accountId, label: names.get(accountId) ?? tasks.find((task) => task.assigneeDisplayName)?.assigneeDisplayName ?? "未指派", color: memberColors[index % memberColors.length], planned: ratio.denominator, completed: ratio.numerator, capacity, rate: ratio.value, plannedHref: searchLink(tasks).href, completedHref: searchLink(done).href }
+      })
+  })() : []
+  const commitmentTeamRows: CommitmentTeamRow[] = commitmentSprint && !singleTeam ? visibleCommitmentTeams.map((team) => {
     const population = selectProjectsTeamIssues(result.tasks, commitmentSprint, attribution ?? { status: "unavailable", reason: "not_provided" }, [team.id], { kind: "commitment-population" }, outputFilter)
     const ratio = commitmentOf(commitmentSprint.id, population)
     // Planned = the whole population; completed = the same window/blocked rule, so both link their exact issues.
@@ -390,7 +412,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
           : (multi || commitmentView === "by-team")
             ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} legendToggle={commitmentView === "by-team" && hasAttribution ? { visibleIds: visibleCommitmentTeams.map((team) => team.id), onToggle: toggleTeam } : undefined} emptyMessage={commitmentView === "by-team" && !commitmentSeries.length ? "沒有可見團隊。" : undefined} onSprintSelect={(index) => setSelectedCommitmentSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={selectedCommitmentSprint} labelPointValues={commitmentView === "all-teams"} />
             : <p className="text-sm">{percent(commitmentRatioFor(first.sprint.id, null))}（{number(commitmentRatioFor(first.sprint.id, null).numerator ?? 0)}／{number(commitmentRatioFor(first.sprint.id, null).denominator ?? 0)} SP）</p>}
-      {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={commitmentTeamRows} />}
+      {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={singleTeam ? commitmentMemberRows : commitmentTeamRows} kind={singleTeam ? "member" : "team"} />}
     </Panel>)}
     {topicPanel("types", <Panel title="完成的任務類型" description="每種 Dev Type 一條趨勢線；與總產出同一批工作單，保留未分類方便對帳。單一 Sprint 顯示類型分布。">
       <Units name="完成的任務類型" value={typeUnit} onChange={setTypeUnit} />

@@ -191,13 +191,14 @@ export type CommitmentTeamRow = {
  * Sprint detail under the 完成率 chart: per team, a bar showing planned (light) with completed (solid) on top, a
  * second bar for capacity, and the completion rate at the right. All bars share one scale so lengths compare.
  */
-export function ProjectsCommitmentDetail({ sprint, teams }: { sprint: SprintRecord; teams: readonly CommitmentTeamRow[] }) {
-  // Teams with no planned work say nothing about completion; only rows that carry a population are listed.
+export function ProjectsCommitmentDetail({ sprint, teams, kind = "team" }: { sprint: SprintRecord; teams: readonly CommitmentTeamRow[]; kind?: "team" | "member" }) {
+  const noun = kind === "member" ? "成員" : "團隊"
+  // Rows with no planned work say nothing about completion; only those carrying a population are listed.
   const withPlan = teams.filter((team) => (team.planned ?? 0) > 0)
   const scale = Math.max(1, ...withPlan.flatMap((team) => [team.planned ?? 0, team.completed ?? 0, team.capacity ?? 0]))
-  return <section className="projects-viz mt-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700" aria-label={`${sprint.name} 各團隊完成率`} data-commitment-detail={sprint.id}>
+  return <section className="projects-viz mt-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700" aria-label={`${sprint.name} 各${noun}完成率`} data-commitment-detail={sprint.id}>
     <h3 className="text-base font-semibold">{sprint.name} <span className="text-sm font-normal tabular-nums text-slate-500 dark:text-slate-400">（{sprint.startDate} — {sprint.endDate}）</span></h3>
-    {withPlan.length ? <ul className="mt-3 space-y-3" aria-label="各團隊計畫、完成與 Capacity">
+    {withPlan.length ? <ul className="mt-3 space-y-3" aria-label={`各${noun}計畫、完成與 Capacity`}>
       {withPlan.map((team) => <li key={team.teamId} data-commitment-team={team.teamId} className="min-w-0">
         <div className="flex items-baseline justify-between gap-2 text-sm">
           <span className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: `var(--viz-${team.color})` }} /><span className="truncate">{team.label}</span></span>
@@ -218,6 +219,6 @@ export function ProjectsCommitmentDetail({ sprint, teams }: { sprint: SprintReco
           計畫 <PointNumber value={team.planned} href={team.plannedHref} label={`${team.label} 計畫`} /> SP · 完成 <PointNumber value={team.completed} href={team.completedHref} label={`${team.label} 完成`} /> SP · Capacity {dash(team.capacity)}
         </p>
       </li>)}
-    </ul> : <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">此 Sprint 沒有可見團隊。</p>}
+    </ul> : <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">此 Sprint 沒有可計算的{noun}。</p>}
   </section>
 }
