@@ -8,6 +8,22 @@ class BodyError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
 }
 
+/**
+ * The public origin behind the reverse proxy. In production the container receives `http://0.0.0.0:8080/...`, so
+ * `request.url`'s origin is never the browser origin. The deployment's own `AUTH_URL` names the site, which Next
+ * already trusts for Auth.js, so it wins; otherwise the forwarded host is used. The client's `Origin` is only
+ * compared against this, never trusted on its own.
+ */
+function servedOrigin(request: Request): string {
+  if (process.env.AUTH_URL) {
+    try { return new URL(process.env.AUTH_URL).origin } catch { /* malformed AUTH_URL: fall through to the headers */ }
+  }
+  const host = (request.headers.get("x-forwarded-host") ?? request.headers.get("host"))?.split(",")[0].trim()
+  const proto = request.headers.get("x-forwarded-proto")?.split(",")[0].trim() || new URL(request.url).protocol.replace(":", "")
+  if (host && /^[A-Za-z0-9.-]+(?::\d+)?$/.test(host)) return `${proto}://${host}`
+  return new URL(request.url).origin
+}
+
 /** Count actual bytes, including bodies without Content-Length; reject malformed UTF-8. */
 async function readJson(request: Request): Promise<unknown> {
   const declared = request.headers.get("content-length")
@@ -48,7 +64,7 @@ export async function POST(request: Request) {
     const session = await auth()
     if (!session?.user?.id) return Response.json({ status: "error", error: { code: "reauthorize", message: "登入狀態已失效，請重新登入。" } }, { status: 401, headers })
     const origin = request.headers.get("origin")
-    if (origin !== new URL(request.url).origin || (request.headers.has("sec-fetch-site") && request.headers.get("sec-fetch-site") !== "same-origin")) throw new BodyError(403, "僅接受同來源查詢。")
+    if (origin !== servedOrigin(request) || (request.headers.has("sec-fetch-site") && request.headers.get("sec-fetch-site") !== "same-origin")) throw new BodyError(403, "僅接受同來源查詢。")
     if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(request.headers.get("content-type") ?? "")) throw new BodyError(415, "查詢內容必須使用 application/json。")
     const input = parseProjectsAnalysisRequest(await readJson(request))
     resolveProjectsAnalysisSprints(input, new Date())

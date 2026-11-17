@@ -41,7 +41,7 @@ export function harness(t, options = {}) {
   }
   const context = vm.createContext({
     URL, URLSearchParams, Buffer, Request, Response, AbortSignal, AbortController, TextDecoder, Uint8Array, Date: DateFixture, Intl,
-    process: { env: { AUTH_SECRET: "fixture-secret-only", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    process: { env: { AUTH_SECRET: "fixture-secret-only", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira", ...(options.env ?? {}) } },
     console: { error: () => {}, log: () => {} },
     fetch: async (url, init = {}) => {
       const prefix = "https://api.atlassian.com/ex/jira/fixture-cloud"

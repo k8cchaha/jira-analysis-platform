@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // 容器部署（deploy.sh / Dockerfile）只帶 .next/standalone，不在 image 內安裝 node_modules。
   output: "standalone",
+  experimental: {
+    // Production 由站點網域服務，但容器內 request.url 的 origin 是打到本身的 http://<pod>:8080，
+    // 因此任何 origin 比對都會誤判。Next 自身可接受的來源清單併同 X-Forwarded-Host 一起當作
+    // 本站來源（只認 HTTP Host／X-Forwarded 標頭，不信任 X-Forwarded-For）。
+    // 由部署環境提供，例如 AUTH_URL="https://jira-analysis.example.com"。
+    serverActions: { allowedOrigins: process.env.AUTH_URL ? [new URL(process.env.AUTH_URL).host] : [] },
+  },
   redirects() {
     // 精確相容既有分析網址；趨勢／比較直接轉入專案回顧與趨勢，query values 由 Next 原樣傳遞。
     return [
