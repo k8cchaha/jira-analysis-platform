@@ -4,6 +4,7 @@ import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
 import vm from "node:vm"
 import { describe, it } from "node:test"
+import { mockIsoCalendarWithoutEra } from "./helpers/intl-calendar-harness.mjs"
 
 const require = createRequire(import.meta.url)
 const ts = require("typescript")
@@ -515,6 +516,22 @@ describe("Resolved-only stream route and legacy flag", () => {
       ["SUN-201", true, null], ["SUN-202", false, "2026-10-13"], ["SUN-203", false, "2026-10-13"],
       ["SUN-204", false, "2026-10-14"], ["SUN-205", false, null], ["SUN-206", false, null],
     ])
+    assert.ok(searches(h).every((call) => !/resolved|CHANGED|updated|status =/.test(call.body.jql)))
+    assert.deepEqual(h.tokenCalls, [true])
+  })
+  it("publishes all paged Resolved markers as base then done when the ISO formatter omits era", async (t) => {
+    mockIsoCalendarWithoutEra(t)
+    const h = harness(t, { devTasks: resolvedTasks, today: "2026-10-14", parentPageSize: 1, taskPageSize: 2 })
+    const response = await h.route().GET(new Request("https://fixture.invalid/api/sprint/burndown/stream?project=SUN&sprint=7517", { headers: { accept: "text/event-stream" } }))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("Cache-Control"), "no-store, no-transform")
+    const frames = parseFrames(await response.text())
+    assert.deepEqual(frames.map((frame) => frame.event), ["base", "done"])
+    assert.deepEqual(frames[0].data.tasks.map((task) => [task.key, task.doneBeforeStart, task.doneDate]), [
+      ["SUN-201", true, null], ["SUN-202", false, "2026-10-13"], ["SUN-203", false, "2026-10-13"],
+      ["SUN-204", false, "2026-10-14"], ["SUN-205", false, null], ["SUN-206", false, null],
+    ])
+    assert.equal(searches(h).length, 5)
     assert.ok(searches(h).every((call) => !/resolved|CHANGED|updated|status =/.test(call.body.jql)))
     assert.deepEqual(h.tokenCalls, [true])
   })

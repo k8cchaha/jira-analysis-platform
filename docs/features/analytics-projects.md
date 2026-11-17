@@ -57,6 +57,7 @@
 
 ## 日期、缺值與限制
 - Resolved 使用 REST `resolutiondate` 嚴格 timestamp／offset 解析，依與 search 同身分的 `/myself` 所驗證 Jira 帳號時區分桶。缺少／錯誤身分或時區報錯，無 fallback。不用 `updated`、Done transition、60 日截點、末日夾值或受阻母票覆寫。
+- Resolved 的共用日曆投影明確使用 Gregorian 公曆（`calendar: "gregory"`）及 `formatToParts()`，避免 ISO formatter 在不同 Node／ICU 版本省略年代欄位造成誤拒。最終帳號日期限定西元 0001–9999 年；越界報錯，UTC instant 暫時越界但帳號日期合法則仍可分析。
 - API 只收 browser IANA timezone，不收 client today／起迄日；**server clock** 重算今天並從設定驗證已結束 Sprint。Browser eligibility timezone 與 Jira 完成 timezone 是兩個不同用途，均保留在 API 結果中，不在畫面另列說明。
 - SP／Actual 分開 nullable；**0 是有效值**，不互補。空母體為 0；有票但全未填為「—／未填」；部分已填顯示已知總和、已填／未填數及完整率。未回傳必要欄位不是 null，會整筆失敗。
 - 比率分母 0／全未填顯示「—／不適用」；部分缺值標示已填點數比。不產生 NaN／Infinity、不夾 100%；保留來源精度，先聚合再於呈現時四捨五入。

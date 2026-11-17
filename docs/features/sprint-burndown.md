@@ -52,6 +52,8 @@
 
 日期由 server 使用與搜尋相同 credentials 唯讀取得 `GET /rest/api/3/myself` 的帳號時區，驗證 `accountId` 等於已登入 viewer，並以具名時區解析 timestamp（`Z`／`±HHMM`／`±HH:MM`），包含 DST。Jira 回 profile 時區或 instance default；不以 timestamp 文字的 offset 代替帳號時區，也不用瀏覽器／主機預設或 UTC+8 補值。缺失／非法時區、身分不符、lookup 失敗均顯示錯誤。現有 OAuth scope 定義包含 `read:jira-user`，真實 grant 未驗證。
 
+日曆投影明確使用 Gregorian 公曆（`calendar: "gregory"`），再由 `formatToParts()` 組成 `YYYY-MM-DD`；不依賴 ISO formatter 在各 Node／ICU 版本是否提供年代欄位。最終帳號日曆日期須在西元 0001–9999 年，超出範圍會報錯；UTC instant 暫時跨越年份邊界但帳號日曆日期仍合法時不誤拒。
+
 最後可見日是 `min(UTC今天, Sprint end, start+59天)`；Sprint 尚未開始則沒有可見完成日。Sprint之後／未來／60天視窗之外的完成不移到末日，也不傳成可計入成員統計的普通完成 marker。app今天仍是UTC日期，不能聲稱全系統統一UTC+8。工作量分析仍使用自己的 Done-transition 母體及日期投影，不因本頁修改而改變。
 
 ### 線與完成度

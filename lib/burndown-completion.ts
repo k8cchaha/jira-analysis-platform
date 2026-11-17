@@ -44,7 +44,8 @@ export function createResolvedCalendarDateResolver(timeZone: string): (value: un
   let formatter: Intl.DateTimeFormat
   try {
     formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone, calendar: "iso8601", numberingSystem: "latn",
+      // ISO formatters may omit era in newer ICU; Gregorian keeps the AD/BC boundary check usable.
+      timeZone, calendar: "gregory", numberingSystem: "latn",
       year: "numeric", month: "2-digit", day: "2-digit", era: "short",
     })
   } catch (error) {
@@ -57,7 +58,8 @@ export function createResolvedCalendarDateResolver(timeZone: string): (value: un
     const parts = formatter.formatToParts(instant)
     const part = (name: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === name)?.value
     const year = part("year")
-    if (part("era") !== "AD" || !year || Number(year) > 9999) { debugReject("calendar", value); throw new Error("Invalid resolutiondate calendar") }
+    const calendarYear = Number(year)
+    if (part("era") !== "AD" || !year || !Number.isInteger(calendarYear) || calendarYear < 1 || calendarYear > 9999) { debugReject("calendar", value); throw new Error("Invalid resolutiondate calendar") }
     return `${year.padStart(4, "0")}-${part("month")}-${part("day")}`
   }
 }
