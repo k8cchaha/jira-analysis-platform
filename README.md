@@ -46,6 +46,9 @@ read:group:jira
 read:user:jira
 read:avatar:jira
 read:issue:jira
+read:issue-details:jira
+read:project:jira
+read:board-scope:jira-software
 write:jira-work
 offline_access
 ```

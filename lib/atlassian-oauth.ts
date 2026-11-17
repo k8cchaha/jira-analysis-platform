@@ -12,7 +12,10 @@ export const ATLASSIAN_SCOPES = [
   "read:user:jira",
   "read:avatar:jira",
   "read:issue:jira",
+  "read:issue-details:jira",
+  "read:project:jira",
   "write:jira-work",
+  "read:board-scope:jira-software",
   "read:sprint:jira-software",
   "offline_access",
 ].join(" ")
