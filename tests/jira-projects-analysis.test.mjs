@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { harness, input, fields, issueTypes, parent, task, plain } from "./helpers/projects-analysis-server-harness.mjs"
+import { mockIsoCalendarWithoutEra } from "./helpers/intl-calendar-harness.mjs"
 
 const rejects = (h, request = input, code = "invalid_response") => assert.rejects(h.getProjectsAnalysis(request), (error) => error.code === code)
 const searches = (h) => h.calls.filter((call) => call.method === "POST")
@@ -156,6 +157,25 @@ describe("Sprint analytics read-only server", () => {
     assert.ok(searches(h).every((call) => !/currentUser|assignee|created|resolutiondate/.test(call.body.jql)))
     assert.equal(h.tokenCalls(), 1); assert.equal(data.jiraBaseUrl, "https://fixture.example.invalid")
     assert.ok(!JSON.stringify(data).includes("fixture-token"))
+  })
+  it("completes paged analysis with account-calendar summaries when the ISO formatter omits era", async (t) => {
+    mockIsoCalendarWithoutEra(t)
+    const h = harness(t, { pageSize: 1, tasks: [
+      task("101", "1", { customfield_10005: 5, customfield_13736: 6, resolutiondate: "2026-10-25T15:59:59Z" }),
+      task("102", "1", { customfield_10005: 3, customfield_13736: 4, resolutiondate: "2026-10-25T16:00:00Z" }),
+      task("103", "1", { customfield_10005: 2, customfield_13736: 1, resolutiondate: null }),
+    ] })
+    const data = await h.getProjectsAnalysis(input)
+    assert.equal(data.complete, true)
+    assert.equal(data.sourceIssueCount, 4)
+    assert.deepEqual(plain(data.tasks.map((row) => [row.id, row.resolvedDate])), [["101", "2026-10-25"], ["102", "2026-10-26"], ["103", null]])
+    assert.equal(data.summaries[0].output.count, 1)
+    assert.equal(data.summaries[0].output.sp.sum, 5)
+    assert.equal(data.summaries[0].output.actualSp.sum, 6)
+    assert.equal(data.summaries[0].outsideWindow.count, 1)
+    assert.equal(data.summaries[0].unfinished.count, 1)
+    assert.equal(searches(h).length, 4)
+    assert.ok(searches(h).every((call) => !/currentUser|assignee|created|resolutiondate/.test(call.body.jql)))
   })
   for (const [devName, qaName] of [["DEV-Task", "QA-TASK"], [" dev-task ", " qA-tAsK "]]) {
     it(`accepts Jira type labels ${JSON.stringify([devName, qaName])} and keeps canonical DTO labels`, async (t) => {
