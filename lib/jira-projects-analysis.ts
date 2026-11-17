@@ -28,7 +28,6 @@ export class JiraProjectsAnalysisError extends Error {
 }
 function invalid(): never { throw new JiraProjectsAnalysisError("invalid_response", "Jira 分析資料不完整或互相矛盾，請重新查詢。") }
 function metadata(): never {
-  console.log('HOHIHOHOHOOH')
   throw new JiraProjectsAnalysisError("metadata", "Jira 欄位或工作單票種設定不完整、不適用或不唯一，請聯繫管理員。")
 }
 
@@ -99,22 +98,14 @@ export async function discoverProjectsAnalysisFields(credentials: JiraCredential
 }
 
 export async function discoverProjectsAnalysisIssueTypes(credentials: JiraCredentials, projectId: string, check: () => void = () => {}): Promise<Map<string, ProjectsAnalysisTask["issueType"]>> {
-  console.log('RRRRR - 1')
   const data = await metadataJson(credentials, "/rest/api/3/issuetype", check)
-  console.log('RRRRR - 2')
   if (!Array.isArray(data)) return metadata()
-  console.log('RRRRR - 3')
   const types = new Map<string, ProjectsAnalysisTask["issueType"]>()
-  console.log('RRRRR - 4')
   for (const name of ["Dev-Task", "QA-Task"] as const) {
-    console.log('RRRRR - 4.1'+ name)
     const candidates = data.filter((type): type is RecordValue => projectsRecord(type) && typeof type.name === "string" && type.name.trim().toLowerCase() === name.toLowerCase())
-    console.log('RRRRR - 4.2')
     const selected = scopedCandidate(candidates, projectId)
-    console.log('RRRRR - 4.3')
     // Candidate lookup already matches names case-insensitively; retain the verified ID.
     if (!projectsNumericId(selected.id) || selected.subtask !== true || types.has(selected.id)) {
-      console.log('RRRRR - 4.4')
       console.log({
       expectedName: name,
       actualName: selected.name,
@@ -125,10 +116,8 @@ export async function discoverProjectsAnalysisIssueTypes(credentials: JiraCreden
     })
       return metadata()
     }
-    console.log('RRRRR - 4.5')
     types.set(selected.id, name)
   }
-  console.log('RRRRR - 5')
   return types
 }
 
@@ -166,7 +155,6 @@ function taskTeamAttribution(tasks: readonly ProjectsAnalysisTask[], groups: rea
 
 /** Boundary checks stop subsequent lookups/pages, not shared transports already in flight. */
 export async function getProjectsAnalysis(value: unknown, options: { signal?: AbortSignal } = {}): Promise<ProjectsAnalysisResult> {
-  console.log('XOOXOXOXXOXOOXXOXO - 1')
   const started = new Date()
   const deadline = Date.now() + 120_000
   const check = () => {
@@ -174,7 +162,6 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
     if (Date.now() >= deadline) throw new JiraProjectsAnalysisError("retry", "分析逾時，請縮小範圍後重試。")
   }
   try {
-    console.log('XOOXOXOXXOXOOXXOXO - 2')
     const request = parseProjectsAnalysisRequest(value)
     const sprints = resolveProjectsAnalysisSprints(request, started)
     check()
@@ -187,40 +174,31 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
     let accountIds: string[] | null = null
     let selectedMembers: Record<string, DashboardUser[]> | null = null
     if (request.groups.length) {
-      console.log('XXXXXXX - 1')
       selectedMembers = await loadDashboardGroupMembers(request.groups, credentials, { useSharedCache: true, check })
       check()
       accountIds = includedDashboardMembers(request.groups, {}, selectedMembers)
       if (!accountIds.length) throw new JiraProjectsAnalysisError("invalid_selection", "所選團隊沒有可分析的完整成員，請重新選擇。")
     }
-    console.log('XOOXOXOXXOXOOXXOXO - 3')
     const project = await metadataJson(credentials, `/rest/api/3/project/${encodeURIComponent(request.project)}`, check)
     if (!projectsRecord(project) || !projectsNumericId(project.id) || project.key !== request.project) metadata()
     const projectId = project.id
-    console.log('XOOXOXOXXOXOOXXOXO - 3.01')
     const customFields = await discoverProjectsAnalysisFields(credentials, projectId, check)
-    console.log('XOOXOXOXXOXOOXXOXO - 3.02')
     const types = await discoverProjectsAnalysisIssueTypes(credentials, projectId, check)
-    console.log('XOOXOXOXXOXOOXXOXO - 3.03')
     check()
-    console.log('XOOXOXOXXOXOOXXOXO - 3.04')
     const jiraTimeZone = await getVerifiedJiraAccountTimeZone(credentials)
     check()
     const resolveDate = createResolvedCalendarDateResolver(jiraTimeZone)
     const sources = new Map<string, string>()
     const keys = new Map<string, string>()
-    console.log('XOOXOXOXXOXOOXXOXO - 3.1')
     const remember = (issue: { id: string; key: string; fields: RecordValue }) => {
       if (!projectsNumericId(issue.id) || (keys.has(issue.key) && keys.get(issue.key) !== issue.id)) invalid()
       const signature = stable(issue)
       const previous = sources.get(issue.id)
-      console.log('XOOXOXOXXOXOOXXOXO - 3.2')
       if (previous !== undefined && previous !== signature) invalid()
       sources.set(issue.id, signature)
       keys.set(issue.key, issue.id)
       if (sources.size > PROJECTS_SOURCE_LIMIT) throw new JiraProjectsAnalysisError("limit", `分析來源超過 ${PROJECTS_SOURCE_LIMIT.toLocaleString("en-US")} 張唯一 Issue，請縮小 Sprint 或團隊範圍。`)
     }
-    console.log('XOOXOXOXXOXOOXXOXO - 4')
     async function* pages(jql: string, fields: string[]) {
       const iterator = searchJiraIssues(credentials, jql, fields)
       try {
