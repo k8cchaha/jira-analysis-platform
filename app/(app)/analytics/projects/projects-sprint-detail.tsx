@@ -189,22 +189,30 @@ export type CommitmentTeamRow = {
 
 /**
  * Sprint detail under the 完成率 chart: per team, a bar showing planned (light) with completed (solid) on top, a
- * second bar for capacity, and the completion rate at the right. All bars share one scale so lengths compare.
+ * second bar for capacity, then 負載率 (planned ÷ capacity) and 完成率 (completed ÷ planned) at the right.
+ * All bars share one scale so lengths compare.
  */
 export function ProjectsCommitmentDetail({ sprint, teams, kind = "team" }: { sprint: SprintRecord; teams: readonly CommitmentTeamRow[]; kind?: "team" | "member" }) {
   const noun = kind === "member" ? "成員" : "團隊"
   // Rows with no planned work say nothing about completion; only those carrying a population are listed.
   const withPlan = teams.filter((team) => (team.planned ?? 0) > 0)
   const scale = Math.max(1, ...withPlan.flatMap((team) => [team.planned ?? 0, team.completed ?? 0, team.capacity ?? 0]))
+  // Name | bars | 負載率 | 完成率. The bars take what is left, so both rates always sit in their own columns.
+  // Every row and the caption line share this template; the counts line spans it below the bars.
+  const row = "grid grid-cols-[minmax(0,6rem)_minmax(0,1fr)_4.5rem_4.5rem] items-center gap-x-3"
   return <section className="projects-viz mt-4 rounded-xl border border-slate-200 p-4 dark:border-slate-700" aria-label={`${sprint.name} 各${noun}完成率`} data-commitment-detail={sprint.id}>
     <h3 className="text-base font-semibold">{sprint.name} <span className="text-sm font-normal tabular-nums text-slate-500 dark:text-slate-400">（{sprint.startDate} — {sprint.endDate}）</span></h3>
-    {withPlan.length ? <ul className="mt-3 space-y-3" aria-label={`各${noun}計畫、完成與 Capacity`}>
-      {withPlan.map((team) => <li key={team.teamId} data-commitment-team={team.teamId} className="min-w-0">
-        <div className="flex items-baseline justify-between gap-2 text-sm">
-          <span className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: `var(--viz-${team.color})` }} /><span className="truncate">{team.label}</span></span>
-          <span className="shrink-0 tabular-nums font-medium" data-commitment-rate={team.rate === null ? "" : Math.round(team.rate * 1000) / 10}>{team.rate === null ? "—" : percent(team.rate)}</span>
-        </div>
-        <div className="mt-1 space-y-1">
+    {withPlan.length ? <div className="mt-3 space-y-3" role="list" aria-label={`各${noun}計畫、完成與 Capacity`}>
+      {/* Column captions sit in the two rate columns so the bars visibly stop short of them. */}
+      <div aria-hidden="true" className={`${row} text-xs text-slate-500 dark:text-slate-400`}><span /><span /><span className="text-right">負載率</span><span className="text-right">完成率</span></div>
+      {withPlan.map((team) => {
+        // 負載率 = planned ÷ capacity: how much of the team's capacity the Sprint planned to use.
+        const load = (team.planned ?? 0) / ((team.capacity ?? 0) > 0 ? team.capacity! : NaN)
+        const loadRate = Number.isFinite(load) ? load : null
+        return <div key={team.teamId} role="listitem" data-commitment-team={team.teamId} className="min-w-0">
+        <div className={`${row} text-sm`}>
+        <span className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: `var(--viz-${team.color})` }} /><span className="truncate">{team.label}</span></span>
+        <div className="space-y-1">
           {/* Planned in a light tint, completed drawn over it in the full team colour. */}
           <div className="relative h-3 rounded bg-slate-100 dark:bg-slate-800" role="img" aria-label={`${team.label}：計畫 ${dash(team.planned)} SP，完成 ${dash(team.completed)} SP`} data-commitment-bar="plan">
             <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.min(100, (team.planned ?? 0) / scale * 100)}%`, background: `var(--viz-${team.color})`, opacity: .35 }} />
@@ -214,11 +222,14 @@ export function ProjectsCommitmentDetail({ sprint, teams, kind = "team" }: { spr
             <div className="absolute inset-y-0 left-0 rounded bg-slate-400 dark:bg-slate-500" style={{ width: `${Math.min(100, (team.capacity ?? 0) / scale * 100)}%` }} />
           </div>
         </div>
+        <span className="text-right text-sm font-medium tabular-nums" data-commitment-load={loadRate === null ? "" : Math.round(loadRate * 1000) / 10}>{percent(loadRate)}</span>
+        <span className="text-right text-sm font-medium tabular-nums" data-commitment-rate={team.rate === null ? "" : Math.round(team.rate * 1000) / 10}>{team.rate === null ? "—" : percent(team.rate)}</span>
+        </div>
+        {/* The planned and completed counts each open exactly their own issues in Jira. */}
         <p className="mt-1 text-xs tabular-nums text-slate-500 dark:text-slate-400">
-          {/* The planned and completed counts each open exactly their own issues in Jira. */}
           計畫 <PointNumber value={team.planned} href={team.plannedHref} label={`${team.label} 計畫`} /> SP · 完成 <PointNumber value={team.completed} href={team.completedHref} label={`${team.label} 完成`} /> SP · Capacity {dash(team.capacity)}
         </p>
-      </li>)}
-    </ul> : <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">此 Sprint 沒有可計算的{noun}。</p>}
+      </div>})}
+    </div> : <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">此 Sprint 沒有可計算的{noun}。</p>}
   </section>
 }
