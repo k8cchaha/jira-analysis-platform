@@ -74,7 +74,7 @@ function harness(t, options = {}) {
       constructor(...args) { super(...(args.length ? args : [`${options.today ?? "2026-11-09"}T12:00:00.000Z`])) }
     },
     TextEncoder, TextDecoder, ReadableStream,
-    process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    process: { versions: process.versions, env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
     console: { error: () => {} },
     fetch: async (url, init = {}) => {
       const prefix = `https://api.atlassian.com/ex/jira/${encodeURIComponent(options.cloudId ?? "fixture-cloud")}`

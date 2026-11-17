@@ -74,7 +74,7 @@ function harness(t, options = {}) {
   const modules = new Map()
   const globals = {
     Buffer, URL, URLSearchParams, Error, Date, FormData, AbortSignal, Request, Response,
-    process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    process: { versions: process.versions, env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
     console: { error: () => {} },
     fetch: async (url, init = {}) => {
       const prefix = `https://api.atlassian.com/ex/jira/${encodeURIComponent(options.cloudId ?? "fixture-cloud")}`

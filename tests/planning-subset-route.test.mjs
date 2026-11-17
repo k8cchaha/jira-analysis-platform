@@ -93,7 +93,7 @@ function harness(t, options = {}) {
     Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : [`${options.today ?? TODAY}T12:00:00Z`])) }
     },
-    process: { env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
+    process: { versions: process.versions, env: { AUTH_SECRET: "unit-test-only-not-real", ATLASSIAN_JIRA_CLOUD_URL: "https://fixture.example.invalid/jira" } },
     console: { error: () => {} },
     fetch: async (url, init = {}) => {
       const prefix = `https://api.atlassian.com/ex/jira/${encodeURIComponent(options.cloudId ?? "fixture-cloud")}`

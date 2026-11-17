@@ -26,7 +26,15 @@ export class JiraProjectsAnalysisError extends Error {
     this.name = "JiraProjectsAnalysisError"
   }
 }
-function invalid(): never { throw new JiraProjectsAnalysisError("invalid_response", "Jira 分析資料不完整或互相矛盾，請重新查詢。") }
+/**
+ * DEBUG BUILD: `invalid()` takes the failing check and the field it was checking, appends both to the message the
+ * user sees, and logs one line without any data. Remove once the production failure is identified.
+ */
+function invalid(site = "unknown", field = ""): never {
+  const detail = field ? `${site}:${field}` : site
+  console.error(JSON.stringify({ scope: "projects-analysis", site, field }))
+  throw new JiraProjectsAnalysisError("invalid_response", `${detail}｜Jira 分析資料不完整或互相矛盾，請重新查詢。`)
+}
 function metadata(): never {
   throw new JiraProjectsAnalysisError("metadata", "Jira 欄位或工作單票種設定不完整、不適用或不唯一，請聯繫管理員。")
 }
@@ -63,7 +71,7 @@ async function metadataJson(credentials: JiraCredentials, path: string, check: (
     throw new JiraProjectsAnalysisError("retry", "Jira 暫時無法完成分析，請稍後重試。")
   }
   let data: unknown
-  try { data = await response.json() } catch { invalid() }
+  try { data = await response.json() } catch { invalid("json-body") }
   check()
   return data
 }
@@ -122,7 +130,7 @@ export async function discoverProjectsAnalysisIssueTypes(credentials: JiraCreden
 }
 
 function required(fields: RecordValue, key: string): unknown {
-  if (!Object.hasOwn(fields, key)) return invalid()
+  if (!Object.hasOwn(fields, key)) return invalid("required", key)
   return fields[key]
 }
 function issueKey(value: unknown, project: string): value is string {
@@ -130,7 +138,7 @@ function issueKey(value: unknown, project: string): value is string {
 }
 function nullableName(value: unknown): string | null {
   if (value === null) return null
-  if (!projectsText(value) || /[\u0000-\u001f\u007f]/.test(value)) return invalid()
+  if (!projectsText(value) || /[\u0000-\u001f\u007f]/.test(value)) return invalid("name-field")
   return value
 }
 function stable(value: unknown): string {
@@ -145,7 +153,7 @@ function taskTeamAttribution(tasks: readonly ProjectsAnalysisTask[], groups: rea
   // Configuration order, not request order or worker completion order: later wins.
   for (const team of DASHBOARD_TEAMS) {
     if (!groups.includes(team.group)) continue
-    if (!members[team.group]) invalid()
+    if (!members[team.group]) invalid("attribution-members")
     for (const member of members[team.group]) {
       if (returnedAccounts.has(member.accountId)) byAccount.set(member.accountId, team.group)
     }
@@ -186,15 +194,17 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
     const types = await discoverProjectsAnalysisIssueTypes(credentials, projectId, check)
     check()
     const jiraTimeZone = await getVerifiedJiraAccountTimeZone(credentials)
+    // DEBUG BUILD: names the zone and runtime, so an unsupported zone is visible without guessing.
+    console.error(JSON.stringify({ scope: "projects-analysis", site: "account-timezone", jiraTimeZone, runtime: `${process.version} icu=${process.versions.icu ?? "none"} cldr=${process.versions.cldr ?? "none"}` }))
     check()
     const resolveDate = createResolvedCalendarDateResolver(jiraTimeZone)
     const sources = new Map<string, string>()
     const keys = new Map<string, string>()
     const remember = (issue: { id: string; key: string; fields: RecordValue }) => {
-      if (!projectsNumericId(issue.id) || (keys.has(issue.key) && keys.get(issue.key) !== issue.id)) invalid()
+      if (!projectsNumericId(issue.id) || (keys.has(issue.key) && keys.get(issue.key) !== issue.id)) invalid("issue-identity", issue.key)
       const signature = stable(issue)
       const previous = sources.get(issue.id)
-      if (previous !== undefined && previous !== signature) invalid()
+      if (previous !== undefined && previous !== signature) invalid("issue-changed-between-pages", issue.key)
       sources.set(issue.id, signature)
       keys.set(issue.key, issue.id)
       if (sources.size > PROJECTS_SOURCE_LIMIT) throw new JiraProjectsAnalysisError("limit", `分析來源超過 ${PROJECTS_SOURCE_LIMIT.toLocaleString("en-US")} 張唯一 Issue，請縮小 Sprint 或團隊範圍。`)
@@ -216,10 +226,10 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
       for await (const issues of pages(projectsAnalysisParentIssuesJql(request.project, sprint.id), ["issuetype", "status"])) {
         for (const issue of issues) {
           const issueProject = required(issue.fields, "project"), type = required(issue.fields, "issuetype")
-          if (!projectsRecord(issueProject) || issueProject.id !== projectId || issueProject.key !== request.project || !issueKey(issue.key, request.project) || !projectsRecord(type) || type.subtask !== false || typeof type.name !== "string" || !["story", "task", "bug"].includes(type.name.trim().toLowerCase())) invalid()
+          if (!projectsRecord(issueProject) || issueProject.id !== projectId || issueProject.key !== request.project || !issueKey(issue.key, request.project) || !projectsRecord(type) || type.subtask !== false || typeof type.name !== "string" || !["story", "task", "bug"].includes(type.name.trim().toLowerCase())) invalid("parent-shape", issue.key)
           remember(issue)
           const parentStatus = required(issue.fields, "status")
-          if (parentStatus !== null && !projectsRecord(parentStatus)) invalid()
+          if (parentStatus !== null && !projectsRecord(parentStatus)) invalid("parent-status", issue.key)
           const parent = parents.get(issue.id) ?? { key: issue.key, sprintIds: new Set<number>(), statusName: parentStatus === null ? null : nullableName(parentStatus.name) }
           parent.sprintIds.add(sprint.id)
           parents.set(issue.id, parent)
@@ -232,38 +242,42 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
       for (const jql of queries) {
         for await (const issues of pages(jql, ["summary", "issuetype", "parent", "assignee", "status", "resolutiondate", ...customFields])) {
           for (const issue of issues) {
-            if (parents.has(issue.id)) invalid()
+            if (parents.has(issue.id)) invalid("child-is-also-parent", issue.key)
             // Parent IDs define the scope; pressure uses each linked child's own Project.
             const issueProject = required(issue.fields, "project"), parentValue = required(issue.fields, "parent"), type = required(issue.fields, "issuetype")
-            if (!projectsRecord(issueProject) || !projectsNumericId(issueProject.id) || typeof issueProject.key !== "string" || !/^[A-Z][A-Z0-9_]{0,99}$/.test(issueProject.key) || !issueKey(issue.key, issueProject.key) || !projectsRecord(parentValue) || !projectsNumericId(parentValue.id) || !projectsRecord(type) || !projectsNumericId(type.id) || type.subtask !== true) invalid()
+            if (!projectsRecord(issueProject) || !projectsNumericId(issueProject.id) || typeof issueProject.key !== "string" || !/^[A-Z][A-Z0-9_]{0,99}$/.test(issueProject.key) || !issueKey(issue.key, issueProject.key) || !projectsRecord(parentValue) || !projectsNumericId(parentValue.id) || !projectsRecord(type) || !projectsNumericId(type.id) || type.subtask !== true) invalid("child-shape", issue.key)
             const parent = parents.get(parentValue.id), issueType = types.get(type.id)
             // The discovered type ID supplies the canonical Dev/QA label; display names are not identity.
-            if (!parent || parentValue.key !== parent.key || !issueType) invalid()
+            if (!parent || parentValue.key !== parent.key || !issueType) invalid("child-parent-link", issue.key)
             const points = required(issue.fields, JIRA_FIELDS.storyPoints.id), actualPoints = required(issue.fields, JIRA_FIELDS.actualStoryPoints.id)
-            if (!isPointValue(points) || !isPointValue(actualPoints)) invalid()
+            if (!isPointValue(points) || !isPointValue(actualPoints)) invalid("points", issue.key)
             const devValue = required(issue.fields, JIRA_FIELDS.devType.id)
             let devType: string | null = null
             if (devValue !== null) {
-              if (!projectsRecord(devValue) || !projectsNumericId(devValue.id) || !projectsText(devValue.value)) invalid()
+              if (!projectsRecord(devValue) || !projectsNumericId(devValue.id) || !projectsText(devValue.value)) invalid("dev-type", issue.key)
               devType = nullableName(devValue.value)
             }
             const assignee = required(issue.fields, "assignee")
             let assigneeAccountId: string | null = null, assigneeDisplayName: string | null = null
             if (assignee !== null) {
-              if (!projectsRecord(assignee) || !isDashboardAccountId(assignee.accountId)) invalid()
+              if (!projectsRecord(assignee) || !isDashboardAccountId(assignee.accountId)) invalid("assignee", issue.key)
               assigneeAccountId = assignee.accountId
               assigneeDisplayName = nullableName(assignee.displayName)
             }
-            if (accountIds !== null && (assigneeAccountId === null || !accountIds.includes(assigneeAccountId))) invalid()
+            if (accountIds !== null && (assigneeAccountId === null || !accountIds.includes(assigneeAccountId))) invalid("assignee-outside-team", issue.key)
             const status = required(issue.fields, "status")
-            if (status !== null && !projectsRecord(status)) invalid()
+            if (status !== null && !projectsRecord(status)) invalid("status", issue.key)
             const statusName = status === null ? null : nullableName(status.name)
             const summary = required(issue.fields, "summary")
-            if (typeof summary !== "string" || summary.length > 100_000) invalid()
+            if (typeof summary !== "string" || summary.length > 100_000) invalid("summary", issue.key)
             const resolved = required(issue.fields, "resolutiondate")
-            if (!(resolved === null || (typeof resolved === "string" && resolved.length > 0))) invalid()
+            if (!(resolved === null || (typeof resolved === "string" && resolved.length > 0))) invalid("resolved-type", issue.key)
             let resolvedDate: string | null
-            try { resolvedDate = resolveDate(resolved) } catch { invalid() }
+            // Never log the full timestamp; the shape alone identifies a format problem.
+            try { resolvedDate = resolveDate(resolved) } catch (error) {
+              console.error(JSON.stringify({ scope: "projects-analysis", site: "resolved-date", key: issue.key, error: error instanceof Error ? error.name : typeof error }))
+              invalid("resolved-date", issue.key)
+            }
             remember(issue)
             tasks.set(issue.id, { id: issue.id, key: issue.key, summary, parentId: parentValue.id, parentKey: parent.key, projectId: issueProject.id, projectKey: issueProject.key, issueType, devType, points, actualPoints, resolvedDate, assigneeAccountId, assigneeDisplayName, statusName, parentStatus: parent.statusName, sprintIds: [...parent.sprintIds].sort((a, b) => a - b) })
           }
@@ -300,7 +314,7 @@ export async function getProjectsAnalysis(value: unknown, options: { signal?: Ab
       return parseProjectsAnalysisResult({ ...result, generatedAt: new Date().toISOString(), teamAttribution }, request)
     } catch (error) {
       // Invalid source data/overflow is an upstream failure, not an invalid user selection.
-      if (error instanceof ProjectsAnalysisValidationError) invalid()
+      if (error instanceof ProjectsAnalysisValidationError) invalid("result-validation", error.message.slice(0, 120))
       throw error
     }
   } catch (error) {

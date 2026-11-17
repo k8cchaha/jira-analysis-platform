@@ -41,8 +41,9 @@ export async function getVerifiedJiraAccountTimeZone(credentials: JiraCredential
   try {
     if (!timeZone || timeZone.length > 100 || timeZone !== timeZone.trim() || /^[+-]/.test(timeZone)) throw new Error()
     new Intl.DateTimeFormat("en", { timeZone }).format(0)
-  } catch {
-    throw new JiraAccountTimeZoneError("invalid_response", "Jira 帳號時區無效，無法判定完成日期。")
+  } catch (error) {
+    console.error(JSON.stringify({ scope: "account-timezone", timeZone, error: error instanceof Error ? error.name : typeof error }))
+    throw new JiraAccountTimeZoneError("invalid_response", `${timeZone}｜Jira 帳號時區無效，無法判定完成日期。`)
   }
   return timeZone
 }
