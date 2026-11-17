@@ -65,6 +65,23 @@ describe("Sprint analytics JSON POST", () => {
     assert.equal(response.status, status); privateResponse(response)
     assert.equal(h.calls.length, 0); assert.equal(h.tokenCalls(), 0)
   })
+  it("accepts the browser origin when the container sees its own internal http:// address (production proxy)", async (t) => {
+    // Behind the ALB the container receives http://0.0.0.0:8080/..., while AUTH_URL names the public site.
+    const h = harness(t, { env: { AUTH_URL: "https://app.example.invalid" } })
+    const request = new Request("http://0.0.0.0:8080/api/analytics/projects/query", { method: "POST", headers: { origin: "https://app.example.invalid", "content-type": "application/json" }, body: JSON.stringify(input), duplex: "half" })
+    const response = await route(h).POST(request)
+    assert.equal(response.status, 200); privateResponse(response)
+    // The same public origin is accepted when only the forwarded host is available.
+    const forwarded = harness(t, { env: {} })
+    const request2 = new Request("http://10.0.0.7:8080/api/analytics/projects/query", { method: "POST", headers: { origin: "https://app.example.invalid", "x-forwarded-host": "app.example.invalid", "x-forwarded-proto": "https", "content-type": "application/json" }, body: JSON.stringify(input), duplex: "half" })
+    assert.equal((await route(forwarded).POST(request2)).status, 200)
+  })
+  it("still rejects a foreign origin behind the proxy", async (t) => {
+    const h = harness(t, { env: { AUTH_URL: "https://app.example.invalid" } })
+    const request = new Request("http://0.0.0.0:8080/api/analytics/projects/query", { method: "POST", headers: { origin: "https://evil.example.invalid", "content-type": "application/json" }, body: JSON.stringify(input), duplex: "half" })
+    const response = await route(h).POST(request)
+    assert.equal(response.status, 403); privateResponse(response); assert.equal(h.calls.length, 0)
+  })
   it("requires Origin rather than inferring same-origin from cookies", async (t) => {
     const h = harness(t), request = jsonRequest(); request.headers.delete("origin")
     const response = await route(h).POST(request)
