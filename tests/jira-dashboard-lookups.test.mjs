@@ -567,7 +567,7 @@ describe("independently authenticated private lookup endpoint", () => {
 describe("narrow additive OAuth scopes", () => {
   it("includes the configured granular lookup and issue scopes without removing existing scopes", (t) => {
     const scopes = harness(t).oauth().ATLASSIAN_SCOPES.split(" ")
-    assert.deepEqual(plain(scopes), ["read:me", "read:jira-work", "read:jira-user", "read:group:jira", "read:user:jira", "read:avatar:jira", "read:issue:jira", "write:jira-work", "read:sprint:jira-software", "offline_access"])
+    assert.deepEqual(plain(scopes), ["read:me", "read:jira-work", "read:jira-user", "read:group:jira", "read:user:jira", "read:avatar:jira", "read:issue:jira", "read:issue-details:jira", "read:project:jira", "write:jira-work", "read:board-scope:jira-software", "read:sprint:jira-software", "offline_access"])
     assert.equal(new Set(scopes).size, scopes.length)
   })
 })
