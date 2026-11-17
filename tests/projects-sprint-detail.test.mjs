@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { projectsHarness, MODEL, VIEW, nodes, plain, task, resultFixture } from "./helpers/projects-analysis-harness.mjs"
+import { projectsHarness, MODEL, VIEW, SPRINT_DETAIL, nodes, plain, task, resultFixture } from "./helpers/projects-analysis-harness.mjs"
 
 const request = { project: "SUN", sprintIds: [6824, 6823], groups: [], browserTimeZone: "UTC" }
 const attribution = { status: "available", byAssignee: [
@@ -77,6 +77,17 @@ describe("Sprint detail under the 總產出 trend", () => {
     assert.equal(rateOf("ent-android"), "15", "Android 6 of 2 × 20 points")
     assert.equal(barOf("ent-android"), "Android：完成 6 SP／Capacity 40，兌現率 15%")
     assert.equal(rateOf("ent-web"), "10", "Web 2 of 1 × 20 points")
+    // 負載率 = planned ÷ capacity on the same rows: Android 20 of 40 planned for the Sprint.
+    const commitmentHtml = renderToStaticMarkup(nodes(render()).find((node) => node.type?.name === "ProjectsCommitmentDetail").type(nodes(render()).find((node) => node.type?.name === "ProjectsCommitmentDetail").props))
+    const loadOf = (team) => commitmentHtml.match(new RegExp(`data-commitment-team="${team}"[\\s\\S]*?data-commitment-load="([^"]*)"`))?.[1]
+    const completionOf = (team) => commitmentHtml.match(new RegExp(`data-commitment-team="${team}"[\\s\\S]*?data-commitment-rate="([^"]*)"`))?.[1]
+    // Sprint 58: only Android has a population there, planning 4 of its 2 × 20 capacity points.
+    assert.equal(loadOf("ent-android"), "10", "Android planned 4 of 40 capacity points")
+    assert.equal(loadOf("ent-web"), undefined, "Web planned nothing, so it has no row here")
+    // Completion is completed ÷ planned, a different figure from the load.
+    assert.equal(completionOf("ent-android"), "100")
+    assert.match(commitmentHtml, /負載率/)
+    assert.match(commitmentHtml, /完成率/)
   })
 
   it("scopes the chart colour tokens onto the panel so pie slices actually paint", () => {
@@ -190,5 +201,48 @@ describe("Sprint detail under the 總產出 trend", () => {
     const body = plain(html.replace(/<[^>]*>/g, " "))
     assert.match(body, /7\.5%/, "Telasa gives 40 points per member: 6 of 80")
     assert.match(body, /完成 6 SP／Capacity 80（2 人）/)
+  })
+})
+
+describe("Sprint 完成率 and 完成任務類型 default to the newest Sprint", () => {
+  // The earliest query result starts on Sprint 6824 (index 1) for every topic, like 總產出 already does.
+  const NEWEST = 6824
+  const topicChart = (tree, id) => nodes(tree).find((n) => n.type?.name === "ProjectsTrendChart" && n.props.id === id)
+  const selectionOf = (chart) => nodes(chart).find((n) => n.props["data-selection-index"] !== undefined)?.props["data-selection-index"]
+  const commitmentDetail = (tree) => nodes(tree).find((n) => n.type?.name === "ProjectsCommitmentDetail")
+  const draw = (h, chart) => h.invoke(chart.type, chart.props)
+  const setup = () => {
+    const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
+    h.groupStates["ent-android"] = { status: "success", members: [{ accountId: "a1" }] }
+    h.groupStates["ent-web"] = { status: "success", members: [{ accountId: "w1" }] }
+    const result = resultFixture(h.load(MODEL), tasks(), request, attribution)
+    return { h, render: () => h.invoke(Component, { result }) }
+  }
+
+  it("opens 完成率 on the newest Sprint with its per-team detail below the chart", () => {
+    const { h, render } = setup()
+    const chart = topicChart(render(), "commitment")
+    assert.equal(chart.props.initialSprintId, NEWEST)
+    assert.equal(selectionOf(draw(h, chart)), 1, "the newest Sprint starts selected")
+    assert.equal(commitmentDetail(render()).props.sprint.id, NEWEST, "its detail panel is visible without a click")
+  })
+
+  it("opens 完成任務類型 on the newest Sprint with its own donut", () => {
+    const { h, render } = setup()
+    const chart = topicChart(render(), "types")
+    assert.equal(chart.props.initialSprintId, NEWEST)
+    assert.equal(selectionOf(draw(h, chart)), 1, "the newest Sprint starts selected")
+    assert.ok(nodes(render()).find((n) => n.type?.name === "ProjectsDevTypePie" && n.props.title === "Sprint 59 類型佔比"), "the newest Sprint's donut renders")
+  })
+
+  it("keeps a cleared selection cleared instead of reseeding it on re-render", () => {
+    const { render } = setup()
+    // Clearing (a second click on the seeded Sprint) reports null; re-rendering must not reselect it.
+    topicChart(render(), "commitment").props.onSprintSelect(null)
+    const commitment = topicChart(render(), "commitment")
+    assert.equal(commitment.props.initialSprintId, NEWEST, "the one-time initial id is unchanged")
+    assert.equal(commitmentDetail(render()), undefined, "no Sprint detail after clearing")
+    topicChart(render(), "types").props.onSprintSelect(null)
+    assert.equal(nodes(render()).find((n) => n.type?.name === "ProjectsDevTypePie" && n.props.title === "Sprint 59 類型佔比"), undefined, "no Sprint donut after clearing")
   })
 })

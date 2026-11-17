@@ -48,7 +48,7 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, legendSeries, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
@@ -58,6 +58,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   distribution?: boolean
   focusableLegend?: boolean
   legendToggle?: LegendToggle
+  /** Every series the legend offers, including ones hidden from `series`. Defaults to `series`. */
+  legendSeries?: TrendSeries[]
   stackedTotalId?: string
   emptyMessage?: string
   /** Reports the clicked Sprint, or null when a second click clears the selection. */
@@ -96,10 +98,17 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
-  // Resolve identity from the complete catalog, never from visible-series rank.
-  const catalog = series.map((item, index) => ({ item, index, shape: item.encoding?.shape ?? index, dash: item.encoding ? item.encoding.dash : dashes[index % 7] }))
+  // Resolve identity from the complete catalog, never from visible-series rank. The legend is built from every
+  // offered series, so hiding one removes its curve but keeps its button to bring it back.
+  const legend = legendSeries ?? series
+  const legendIndex = (id: string) => Math.max(0, legend.findIndex((entry) => entry.id === id))
+  const encodingOf = (item: TrendSeries, index: number) => ({ item, index, shape: item.encoding?.shape ?? index, dash: item.encoding ? item.encoding.dash : dashes[index % 7] })
+  const catalog = legend.map(encodingOf)
   const visibleIds = legendToggle ? new Set(legendToggle.visibleIds) : null
-  const visible = catalog.filter(({ item }) => !visibleIds || item.toggleable === false || visibleIds.has(item.id))
+  // Without a legend every series is drawn, even if it was left out of `legendSeries`.
+  const visible = legendSeries
+    ? (visibleIds ? series.filter((item) => visibleIds.has(item.id)) : series).map((item) => encodingOf(item, legendIndex(item.id)))
+    : catalog.filter(({ item }) => !visibleIds || visibleIds.has(item.id))
   const active = visible.length ? focus ?? hover ?? pinned : null
   // Bar values follow the hovered Sprint, or the clicked one while the pointer is elsewhere.
   const labelledIndex = active ?? (visible.length ? pinned : null)
@@ -178,9 +187,11 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
     return index === selection.index || (start < selection.pill.left + selection.pill.width + 8 && start + size > selection.pill.left - 8)
   }
   return <div ref={container} className="projects-viz projects-trend min-w-0" data-chart-id={id}>
-    {(series.length > 1 || legendToggle) && <div aria-label="圖例" className={`projects-trend-legend mb-4 flex flex-wrap gap-x-4 gap-y-2 text-xs${legendToggle ? " is-toggle" : ""}`}>
+    {(legend.length > 1 || legendToggle) && <div aria-label="圖例" className={`projects-trend-legend mb-4 flex flex-wrap gap-x-4 gap-y-2 text-xs${legendToggle ? " is-toggle" : ""}`}>
       {catalog.map((entry) => {
         const { item } = entry
+        // A hidden team has no series to plot, but records the data it would draw, so unticking stays reversible.
+        if (legendToggle && item.toggleable !== false && !visibleIds!.has(item.id) && !series.some((plotted) => plotted.id === item.id)) return <button type="button" key={item.id} aria-pressed={false} aria-label={`顯示 ${item.label} 產出`} className="flex min-h-9 items-center gap-2 rounded-md border border-transparent px-2 text-left focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => legendToggle.onToggle(item.id)}>{keyFor(entry)}<span>{item.label}</span><span>· 已隱藏</span></button>
         return legendToggle && item.toggleable !== false ? <button type="button" key={item.id} aria-pressed={visibleIds!.has(item.id)} aria-label={`顯示 ${item.label} 產出`} className="flex min-h-9 items-center gap-2 rounded-md border border-transparent px-2 text-left focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => legendToggle.onToggle(item.id)}>{keyFor(entry)}<span>{item.label}</span>{!visibleIds!.has(item.id) && <span>· 已隱藏</span>}</button> : focusableLegend && !legendToggle ? <button type="button" key={item.id} aria-pressed={emphasis === item.id} aria-label={`聚焦 ${item.label} 趨勢`} className="flex min-h-9 items-center gap-2 rounded-md border border-transparent px-2 text-left focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => setEmphasis((previous) => previous === item.id ? null : item.id)}>{keyFor(entry)}<span>{item.label}</span>{emphasis === item.id && <span className="text-xs">· 聚焦</span>}</button> : <span key={item.id} className="flex min-h-8 items-center gap-2">{keyFor(entry)}{item.label}</span>
       })}
     </div>}
