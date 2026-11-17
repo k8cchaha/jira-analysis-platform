@@ -142,7 +142,10 @@ export async function getBurndownBase(
     const timeZone = await jiraAccountTimeZone(credentials)
     let resolveCompletion: ReturnType<typeof createBurndownCompletionResolver>
     try { resolveCompletion = createBurndownCompletionResolver(timeZone, sprint.startDate, lastDate) }
-    catch { throw new JiraBurndownError("invalid_response", "Jira 帳號時區無效，無法判定完成日期。") }
+    catch (error) {
+      console.error(JSON.stringify({ scope: "dev-status", site: "timezone", timeZone, error: error instanceof Error ? error.name : typeof error }))
+      throw new JiraBurndownError("invalid_response", `${timeZone}｜Jira 帳號時區無效，無法判定完成日期。`)
+    }
     // 2. 撈全部 Dev-Task：給 tasks 填上 points / actualPoints / assignee，未估計進清單。
     for await (const issues of searchJiraIssues(
       credentials,
@@ -152,8 +155,9 @@ export async function getBurndownBase(
       for (const issue of issues) {
         const points = pointValue(issue.fields[STORY_POINTS_FIELD])
         let completion: ReturnType<typeof resolveCompletion>
+        // DEBUG BUILD: name the issue and the failing reason; the resolver already logged the timestamp's shape.
         try { completion = resolveCompletion(issue.fields.resolutiondate) }
-        catch { throw new JiraBurndownError("invalid_response", "Jira 回傳了無法識別的 Resolved 日期，無法提供精確結果。") }
+        catch (error) { throw new JiraBurndownError("invalid_response", `${issue.key}｜${error instanceof Error ? error.message : "unknown"}｜Jira 回傳了無法識別的 Resolved 日期，無法提供精確結果。`) }
         if (points === null) {
           unestimated.push({
             key: issue.key,
@@ -248,7 +252,11 @@ export async function getBurndownData(
 
 /** Compatibility boundary: preserve the existing Burndown error codes and messages. */
 async function jiraAccountTimeZone(credentials: JiraCredentials): Promise<string> {
-  try { return await getVerifiedJiraAccountTimeZone(credentials) }
+  try {
+    const timeZone = await getVerifiedJiraAccountTimeZone(credentials)
+    console.error(JSON.stringify({ scope: "resolved-date", site: "account-timezone", timeZone, runtime: `${process.version} icu=${process.versions.icu ?? "none"} cldr=${process.versions.cldr ?? "none"}` }))
+    return timeZone
+  }
   catch (error) {
     if (error instanceof JiraAccountTimeZoneError) {
       throw new JiraBurndownError(error.code === "forbidden" ? "request_failed" : error.code, error.message)
