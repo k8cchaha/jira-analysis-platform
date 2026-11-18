@@ -3,6 +3,7 @@
 .projects-analysis table { width: 100%; border-collapse: collapse; text-align: left; font-size: .875rem; }
 .projects-analysis th, .projects-analysis td { padding: .65rem .75rem; border-bottom: 1px solid #e2e8f0; vertical-align: top; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .projects-analysis thead th { color: #475569; font-size: .75rem; font-weight: 500; }
+.projects-analysis .projects-unfinished-table thead th { vertical-align: middle; }
 .projects-analysis tbody th { font-weight: 500; }
 .projects-viz { --viz-surface: #ffffff; --viz-sp: #2a78d6; --viz-actual: #eb6834; --viz-type-0: #2a78d6; --viz-type-1: #eb6834; --viz-type-2: #1baf7a; --viz-type-3: #eda100; --viz-type-4: #e87ba4; --viz-type-5: #008300; --viz-type-6: #6250d6; --viz-grid: #e2e8f0; --viz-text: #475569; --viz-points: #93b8e8; --viz-focus: #0f172a; --viz-selection-band: #dbeafe; --viz-selection-pill: #dbeafe; --viz-selection-text: #1e3a8a; --viz-selection-border: #3b82f6; }
 .projects-trend-svg { touch-action: pan-y; }
@@ -24,6 +25,7 @@
 .projects-trend-legend.is-toggle button[aria-pressed="false"] { border-style: dashed; border-color: var(--viz-grid); }
 .projects-trend-legend.is-toggle button[aria-pressed="false"] svg { opacity: .45; }
 .projects-trend-grid line { stroke: var(--viz-grid); stroke-width: 1; }
+.projects-trend-grid .projects-trend-zero-baseline { stroke: var(--viz-text); stroke-width: 1.5; }
 .projects-trend-grid text, .projects-trend-x-label, .projects-trend-end-label, .projects-trend-unit-title { fill: var(--viz-text); font-size: 11px; }
 .projects-trend-unit-title { font-weight: 600; }
 /* Values printed above a hovered/selected point or bar. */

@@ -70,6 +70,26 @@ export function cleanAxisMaximum(values: readonly (number | null)[], integer = f
   return Number.MAX_VALUE
 }
 
+/** Signed charts use one finite absolute extent; their raw samples are never shifted or clamped. */
+export function cleanSignedAxisMaximum(values: readonly (number | null)[], integer = false): number {
+  return cleanAxisMaximum(values.map((value) => {
+    if (value === null) return null
+    if (!Number.isFinite(value)) throw new RangeError("Signed trend values must be finite numbers or null")
+    return Math.abs(value)
+  }), integer)
+}
+
+/** Geometry-only normalization avoids overflowing 2 * extent or value + extent near MAX_VALUE. */
+export function buildSignedTrendGeometry(values: readonly (number | null)[], extent: number, width: number, height: number) {
+  if (!Number.isFinite(extent) || extent <= 0) throw new RangeError("Signed trend extent must be finite and positive")
+  const normalized = values.map((value) => {
+    if (value === null) return null
+    if (!Number.isFinite(value) || Math.abs(value) > extent) throw new RangeError("Signed trend value must be finite and within the axis extent")
+    return value / extent + 1
+  })
+  return buildTrendGeometry(normalized, 2, width, height)
+}
+
 /** Harmonic-mean tangent for equally spaced, normalized samples (never pixel slopes). */
 function monotoneTangent(before: number, after: number): number {
   if (before === 0 || after === 0 || Math.sign(before) !== Math.sign(after)) return 0
