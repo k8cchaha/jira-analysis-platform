@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import type { BurndownDay } from "@/lib/jira-burndown"
+import { buildChartBandLayout } from "@/lib/chart-band-layout"
 
 const W = 720
 const H = 320
@@ -59,16 +60,16 @@ export function BurndownChart({
   // 是否有受阻母票的深黃長條（決定是否顯示對應的圖例）。
   const hasBlockedBar = days.some((day) => (day.blockedPoints ?? 0) > 0)
 
-  // x 軸起點（0 位置）就是 days 最前面的「空起點格」（remaining＝total），
-  // 兩條線都從此格的 total 起步，與理想線初始值對齊。
-  const step = (index: number) => (index / (days.length - 1)) * plotW
+  // 首個區間仍是 days 的「空起點格」；所有日期置中並在首尾保留半格，兩條線共用座標。
+  const layout = buildChartBandLayout(days.length, plotW)
+  const xAt = (index: number) => PAD_L + layout.center(index)
   const y = (points: number) => PAD_T + plotH - (points / yMax) * plotH
 
   // 理想線：從起點格（total）出發，逐日等速下降到 endDate 的 0。
   const idealPath = days
     .map(
       (day, index) =>
-        `${index === 0 ? "M" : "L"}${PAD_L + step(index)},${y(day.idealPoints)}`
+        `${index === 0 ? "M" : "L"}${xAt(index)},${y(day.idealPoints)}`
     )
     .join(" ")
 
@@ -87,7 +88,7 @@ export function BurndownChart({
       flush()
       return
     }
-    const move = `${PAD_L + step(index)},${y(day.remainingPoints)}`
+    const move = `${xAt(index)},${y(day.remainingPoints)}`
     commands.push(commands.length === 0 ? `M${move}` : `L${move}`)
   })
   flush()
@@ -138,7 +139,7 @@ export function BurndownChart({
           index > 0 && index % xLabelStep === 0 ? (
             <text
               key={day.date}
-              x={PAD_L + step(index)}
+              x={xAt(index)}
               y={H - PAD_B + 18}
               textAnchor="middle"
               className="fill-slate-500 text-[10px] dark:fill-slate-400"
@@ -152,8 +153,8 @@ export function BurndownChart({
             「受阻母票」的點數（blockedPoints）以深黃長條疊在當天藍色長條之上。 */}
         {showBar &&
           days.map((day, index) => {
-            const barW = Math.max(2, step(1) * 0.6)
-            const x = PAD_L + step(index) - barW / 2
+            const barW = Math.min(24, layout.bucketWidth * .6)
+            const x = xAt(index) - barW / 2
             const bottom = y(0)
             // 空起點格（index 0）顯示「sprint 開始前就已 Done」的點數，用綠色。
             const openingCell = index === 0

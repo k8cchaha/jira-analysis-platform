@@ -502,7 +502,7 @@ describe("projects result visualization and readonly local details", () => {
     const sprints = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, name: index === 2 ? "Sprint 60 · 很長的合成測試名稱用於驗證選取標籤" : `Sprint ${58 + index}`, startDate: "2026-01-01", endDate: "2026-01-14" }))
     const props = { id: "selection", sprints, series: [{ id: "sp", label: "SP", color: "sp", values: sprints.map((_, index) => ({ value: index, display: String(index) })) }], unit: "SP", formatTick: String }
     const render = (overrides = {}) => h.invoke(Component, { ...props, ...overrides })
-    const pointer = (index) => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ pointerType: "mouse", clientX: 58 + index * 430 / 5, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
+    const pointer = (index) => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ pointerType: "mouse", clientX: 58 + (index + .5) * 430 / 6, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
     return { h, props, render, pointer }
   }
   const selectedBand = (tree) => nodes(tree).find((n) => n.props["data-selection-index"] !== undefined)
@@ -582,9 +582,11 @@ describe("projects result visualization and readonly local details", () => {
       assert.equal(selectedPill(render()), undefined)
     }
     target(render(), 3).props.onFocus()
-    assert.equal(nodes(render()).find((n) => n.props.className === "projects-trend-crosshair").props.x1, nodes(render()).find((n) => n.props["data-sprint-index"] === 3).props.x + nodes(render()).find((n) => n.props["data-sprint-index"] === 3).props.width / 2)
+    const crosshair = nodes(render()).find((n) => n.props.className === "projects-trend-crosshair")
+    const hit = nodes(render()).find((n) => n.props["data-sprint-index"] === 3)
+    assert.ok(Math.abs(crosshair.props.x1 - (hit.props.x + hit.props.width / 2)) < 1e-10)
   })
-  it("clamps selection bounds at both plot edges, preserves full names, and draws the band behind data", () => {
+  it("centers selections inside equal buckets at both edges, preserves full names, and draws the band behind data", () => {
     const { render, props } = selectionFixture()
     for (const index of [0, 2, 5]) {
       // Focus only previews; the band and pill belong to an actual selection (click).
@@ -595,7 +597,7 @@ describe("projects result visualization and readonly local details", () => {
       const tree = render(), band = selectedBand(tree), pill = selectedPill(tree), svg = nodes(tree).find((n) => n.type === "svg" && n.props.onPointerMove)
       const crosshair = nodes(tree).find((n) => n.props.className === "projects-trend-crosshair")
       // A compact band around the Sprint keeps the selection visible without covering its neighbours.
-      const slot = (488 - 58) / 5
+      const slot = (488 - 58) / props.sprints.length
       assert.ok(band.props.width > 0 && band.props.width >= slot * .25 && band.props.width <= slot * .6)
       assert.ok(band.props.x >= 58 && band.props.x + band.props.width <= 488)
       assert.ok(crosshair.props.x1 >= band.props.x && crosshair.props.x1 <= band.props.x + band.props.width)
@@ -604,7 +606,11 @@ describe("projects result visualization and readonly local details", () => {
       assert.ok(parseFloat(pill.props.style.left) >= 58 / 640 * 100)
       assert.ok((parseFloat(pill.props.style.left) + parseFloat(pill.props.style.width)) <= 488 / 640 * 100 + 1e-10)
       assert.ok(parseFloat(pill.props.style.width) * 640 / 100 <= 160)
-      assert.ok(nodes(tree).find((n) => n.type === "text" && n.props.children === (index === 2 ? `${props.sprints[index].name.slice(0, 12)}…` : props.sprints[index].name)).props.className.includes("is-covered"))
+      const center = 58 + (index + .5) * slot
+      assert.ok(Math.abs(band.props.x + band.props.width / 2 - center) < 1e-10)
+      assert.ok(Math.abs((parseFloat(pill.props.style.left) + parseFloat(pill.props.style.width) / 2) * 640 / 100 - center) < 1e-10)
+      const axisLabel = nodes(tree).find((n) => n.type === "text" && String(n.props.className ?? "").startsWith("projects-trend-x-label") && Math.abs(n.props.x - center) < 1e-10)
+      assert.ok(axisLabel.props.className.includes("is-covered"))
       const order = nodes(svg)
       assert.ok(order.indexOf(band) < order.findIndex((n) => n.props["data-series"] === "sp"))
       target(render(), index).props.onBlur()
@@ -616,7 +622,7 @@ describe("projects result visualization and readonly local details", () => {
       const sprints = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, name: `Sprint ${58 + index}`, startDate: "2026-01-01", endDate: "2026-01-14" }))
       const props = { id: "selection", sprints, series: [{ id: "sp", label: "SP", color: "sp", values: sprints.map((_, index) => ({ value: index, display: String(index) })) }], unit: "SP", formatTick: String }
       const render = (overrides = {}) => h.invoke(Component, { ...props, ...overrides })
-      const move = (index) => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ pointerType: "mouse", clientX: 58 + index * 430 / 5, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
+      const move = (index) => nodes(render()).find((n) => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ pointerType: "mouse", clientX: 58 + (index + .5) * 430 / 6, currentTarget: { getBoundingClientRect: () => ({ left: 0, width: 640 }) } })
       return { render, pointer: move }
     })()
     const band = (tree) => nodes(tree).find((n) => n.props["data-selection-index"] !== undefined)?.props["data-selection-index"]
