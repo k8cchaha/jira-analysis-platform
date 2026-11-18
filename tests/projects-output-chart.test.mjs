@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { projectsHarness, MODEL, VIEW, plain, nodes, task, resultFixture } from "./helpers/projects-analysis-harness.mjs"
+import { projectsHarness, MODEL, VIEW, CHART, plain, nodes, task, resultFixture } from "./helpers/projects-analysis-harness.mjs"
 
 const request = { project: "SUN", sprintIds: [6824, 6823], groups: [], browserTimeZone: "UTC" }
 const attribution = { status: "available", byAssignee: [
@@ -64,6 +64,131 @@ function setup(options = {}) {
   const toggle = (label) => legends(draw()).find((n) => n.props["aria-label"] === `顯示 ${label} 產出`).props.onClick()
   return { h, result, Component, render, draw, toggle }
 }
+
+const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-8, `${message}: ${actual} vs ${expected}`)
+const translateX = (node) => Number(node.props.transform.match(/translate\(([^ ,]+)/)[1])
+const columnCenter = (column) => { const rect = nodes(column).find((node) => node.props.className === "projects-stack-fill"); return translateX(column) + rect.props.x + rect.props.width / 2 }
+function measuredChart(count, width, stacked = true) {
+  const h = projectsHarness(), Component = h.load(CHART).ProjectsTrendChart
+  const sprints = Array.from({ length: count }, (_, index) => ({ id: index + 1, name: `Sprint ${67 + index}`, startDate: "2026-10-01", endDate: "2026-10-14" }))
+  const props = { id: "alignment", sprints, unit: "SP", formatTick: String, ...(stacked ? { stackedTotalId: OVERVIEW } : {}), series: [{ id: "team", label: "Team", color: "type-0", values: sprints.map((_, index) => ({ value: 10 + index, points: 10 + index, actualPoints: 14 + index, display: String(10 + index) })) }] }
+  const draw = () => h.invoke(Component, props)
+  draw().props.ref.current = { clientWidth: width }
+  h.flushEffects()
+  return { h, draw, props }
+}
+const plotBounds = (tree) => { const grid = nodes(tree).find((node) => node.props.className === "projects-trend-grid"); const line = nodes(grid).find((node) => node.type === "line"); return { left: line.props.x1, right: line.props.x2 } }
+
+describe("Stacked Sprint alignment", () => {
+  it("centers first/middle/last selections, labels and bar pairs in equal non-overlapping buckets", () => {
+    for (const count of [1, 2, 5, 20]) for (const width of [160, 320, 940]) {
+      const { draw } = measuredChart(count, width)
+      const { left, right } = plotBounds(draw()), bucketWidth = (right - left) / count
+      const bandWidths = []
+      for (const index of new Set([0, Math.floor(count / 2), count - 1])) {
+        target(draw(), index).props.onClick()
+        const tree = draw(), center = left + (index + .5) * bucketWidth
+        const columns = nodes(tree).filter((node) => node.props["data-stack-index"] === index)
+        assert.equal(columns.length, 2)
+        close(columns.reduce((sum, column) => sum + columnCenter(column), 0) / 2, center, "bar pair center")
+        for (const column of columns) {
+          const rect = nodes(column).find((node) => node.props.className === "projects-stack-fill")
+          assert.ok(rect.props.width > 0 && rect.props.width <= 24)
+          assert.ok(columnCenter(column) - rect.props.width / 2 >= left + index * bucketWidth - 1e-8)
+          assert.ok(columnCenter(column) + rect.props.width / 2 <= left + (index + 1) * bucketWidth + 1e-8)
+        }
+        const band = nodes(tree).find((node) => node.props["data-selection-index"] === index)
+        close(band.props.x + band.props.width / 2, center, "selection band center")
+        bandWidths.push(band.props.width)
+        assert.ok(band.props.x >= left - 1e-8 && band.props.x + band.props.width <= right + 1e-8)
+        const pill = nodes(tree).find((node) => node.props["data-pill-index"] === index)
+        const pillLeft = parseFloat(pill.props.style.left) / 100 * width, pillWidth = parseFloat(pill.props.style.width) / 100 * width
+        close(pillLeft + pillWidth / 2, center, "Sprint pill center")
+        assert.ok(pillWidth <= bucketWidth + 1e-8)
+        assert.equal(pill.props.title, `Sprint ${67 + index}`)
+        if (pillWidth < 24) assert.equal(pill.props.style.paddingInline, 0)
+        close(nodes(tree).find((node) => node.props.className === "projects-trend-crosshair").props.x1, center, "crosshair center")
+        const hit = target(tree, index)
+        close(hit.props.x, left + index * bucketWidth, "hit target left")
+        close(hit.props.width, bucketWidth, "hit target width")
+        const cue = nodes(tree).filter((node) => node.props.className === "projects-trend-focus-cue")[index]
+        close((cue.props.x1 + cue.props.x2) / 2, center, "keyboard cue center")
+        const label = nodes(tree).find((node) => String(node.props.className ?? "").startsWith("projects-trend-x-label") && Math.abs(node.props.x - center) < 1e-8)
+        if (width >= 480 || count <= 3 || index === 0 || index === count - 1) {
+          assert.ok(label, "rendered Sprint label shares the bucket center")
+          assert.equal(label.props.textAnchor, "middle")
+        }
+      }
+      bandWidths.forEach((bandWidth) => close(bandWidth, bandWidths[0], "consistent first/middle/last selection width"))
+      const targets = nodes(draw()).filter((node) => node.props["data-sprint-index"] !== undefined)
+      targets.slice(1).forEach((hit, index) => close(targets[index].props.x + targets[index].props.width, hit.props.x, "adjacent hit targets"))
+    }
+  })
+  it("draws every total path and marker through its own bar center without double offsets", () => {
+    for (const count of [1, 2, 5]) {
+      const { draw } = measuredChart(count, 940), tree = draw()
+      for (const kind of ["points", "actual"]) {
+        const line = nodes(tree).find((node) => node.props["data-series-unit"] === (kind === "points" ? "points" : "actualPoints"))
+        const markers = nodes(line).filter((node) => node.type?.name === "Marker")
+        const columns = nodes(tree).filter((node) => node.props["data-stack-kind"] === kind)
+        markers.forEach((marker, index) => close(translateX(line) + marker.props.x, columnCenter(columns[index]), "marker/bar center"))
+        const samples = nodes(line).filter((node) => node.props.className === "projects-trend-line").flatMap((path) => [...path.props.d.matchAll(/[MLC] ([^MLC]+)/g)].map((match) => match[1].trim().split(/\s+/).map(Number).slice(-2)))
+        assert.equal(samples.length, count === 1 ? 0 : count)
+        samples.forEach(([x, y], index) => {
+          close(translateX(line) + x, columnCenter(columns[index]), "path/bar center")
+          close(y, markers[index].props.y, "path/marker height")
+        })
+      }
+    }
+  })
+  it("resolves pointer positions with the same buckets as click targets while preserving the pinned selection", () => {
+    const { draw } = measuredChart(5, 940)
+    target(draw(), 0).props.onClick()
+    const { left, right } = plotBounds(draw()), bucketWidth = (right - left) / 5
+    for (let index = 0; index < 5; index++) for (const fraction of [.01, .99]) {
+      const svg = nodes(draw()).find((node) => node.props.className === "projects-trend-svg block w-full overflow-visible")
+      svg.props.onPointerMove({ pointerType: "mouse", clientX: 11 + (left + (index + fraction) * bucketWidth) / 2, currentTarget: { getBoundingClientRect: () => ({ left: 11, width: 470 }) } })
+      const tree = draw()
+      close(nodes(tree).find((node) => node.props.className === "projects-trend-crosshair").props.x1, left + (index + .5) * bucketWidth, "hovered Sprint center")
+      assert.equal(nodes(tree).find((node) => node.props["data-selection-index"] !== undefined).props["data-selection-index"], 0)
+    }
+  })
+  it("centers ordinary multi-series curves, labels and selections with the same band layout", () => {
+    for (const count of [1, 2, 5]) for (const width of [160, 320, 940]) {
+      const { draw, props } = measuredChart(count, width, false)
+      props.series.push({ ...props.series[0], id: "second", label: "Second", color: "type-1", values: props.series[0].values.map((value) => ({ ...value, value: value.value + 5 })) })
+      const { left, right } = plotBounds(draw()), bucketWidth = (right - left) / count
+      const bandWidths = []
+      for (const index of new Set([0, Math.floor(count / 2), count - 1])) {
+        target(draw(), index).props.onClick()
+        const tree = draw(), center = left + (index + .5) * bucketWidth
+        assert.equal(nodes(tree).filter((node) => node.props["data-stack-index"] !== undefined).length, 0)
+        const curves = nodes(tree).filter((node) => String(node.props.className ?? "").startsWith("projects-trend-series"))
+        assert.equal(curves.length, 2)
+        for (const curve of curves) {
+          const marker = nodes(curve).find((node) => node.type?.name === "Marker" && node.key === String(index))
+          close(translateX(curve) + marker.props.x, center, "ordinary curve marker center")
+          const samples = nodes(curve).filter((node) => node.props.className === "projects-trend-line").flatMap((path) => [...path.props.d.matchAll(/[MLC] ([^MLC]+)/g)].map((match) => match[1].trim().split(/\s+/).map(Number).slice(-2)))
+          samples.forEach(([x], sample) => close(translateX(curve) + x, left + (sample + .5) * bucketWidth, "ordinary path sample center"))
+        }
+        const band = nodes(tree).find((node) => node.props["data-selection-index"] === index)
+        close(band.props.x + band.props.width / 2, center, "ordinary selection center")
+        bandWidths.push(band.props.width)
+        const pill = nodes(tree).find((node) => node.props["data-pill-index"] === index)
+        close((parseFloat(pill.props.style.left) + parseFloat(pill.props.style.width) / 2) / 100 * width, center, "ordinary pill center")
+        close(nodes(tree).find((node) => node.props.className === "projects-trend-crosshair").props.x1, center, "ordinary crosshair center")
+        close(target(tree, index).props.x + target(tree, index).props.width / 2, center, "ordinary hit center")
+        assert.ok(nodes(tree).filter((node) => String(node.props.className ?? "").startsWith("projects-trend-x-label")).every((label) => label.props.textAnchor === "middle"))
+        if (width >= 640) {
+          const endLabels = nodes(tree).filter((node) => node.props.className === "projects-trend-end-label")
+          assert.equal(endLabels.length, 2)
+          endLabels.forEach((label) => close(label.props.x, left + (count - .5) * bucketWidth + 12, "end label stays beside the last data point"))
+        }
+      }
+      bandWidths.forEach((bandWidth) => close(bandWidth, bandWidths[0], "ordinary first/middle/last band width"))
+    }
+  })
+})
 
 describe("Projects output zero-team filtering", () => {
   const switchingTasks = () => [
@@ -297,7 +422,9 @@ describe("Projects per-team completed output", () => {
     assert.equal(pointsMarkers[0].props.partial, true, "the estimate has an unfilled Sprint, so its marker is hollow")
     for (const column of columns) {
       const bars = nodes(column).filter((n) => n.props.className === "projects-stack-fill")
-      assert.equal(column.props.transform, pointsCurve.props.transform)
+      const curve = column.props["data-stack-kind"] === "points" ? pointsCurve : actualCurve
+      const marker = nodes(curve).find((n) => n.type?.name === "Marker" && n.key === String(column.props["data-stack-index"]))
+      close(columnCenter(column), translateX(curve) + marker.props.x, "total marker aligns with its bar")
       assert.ok(bars.every((n) => n.props.width <= 24 && n.props.height > 0))
       assert.ok(bars.length > 0)
     }

@@ -69,7 +69,7 @@ export function ProjectsQueryClient(props: ProjectsFilterProps) {
     {visible.result ? <div aria-busy={visible.loading} className={visible.loading ? "pointer-events-none opacity-50" : ""} inert={visible.loading}>
       <ProjectsAnalysisView key={`${visible.nonce}-${visible.result.generatedAt}`} result={visible.result} />
     </div> : !visible.loading && !visible.error ? <section className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-      選擇專案、已結束 Sprint 與選填團隊，按「查詢」比較六項指標。改變條件不會自動查詢；本版不比較 Capacity。
+      選擇專案、Sprint 與選填團隊，按「查詢」比較開發指標。
     </section> : null}
   </div>
 }

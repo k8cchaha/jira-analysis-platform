@@ -12,6 +12,7 @@ export const CHART = "app/(app)/analytics/projects/projects-trend-chart.tsx"
 export const GEOMETRY = "app/(app)/analytics/projects/projects-trend-geometry.ts"
 export const SPRINT_DETAIL = "app/(app)/analytics/projects/projects-sprint-detail.tsx"
 export const DEV_TYPE_PIE = "app/(app)/analytics/projects/projects-dev-type-pie.tsx"
+export const BURNDOWN_CHART = "app/(app)/sprint/burndown/burndown-chart.tsx"
 export const plain = (value) => JSON.parse(JSON.stringify(value))
 export function projectsHarness() {
   const modules = new Map(), components = new Map(), effects = [], requests = [], events = new Map()
@@ -46,13 +47,14 @@ export function projectsHarness() {
     },
   }
   const sandbox = vm.createContext({ Date, Intl, URL, URLSearchParams, Error, AbortController, Response, console,
+    ResizeObserver: class { observe() {} disconnect() {} },
     window: { addEventListener(name, callback) { if (!events.has(name)) events.set(name, new Set()); events.get(name).add(callback) }, removeEventListener(name, callback) { events.get(name)?.delete(callback) } },
     fetch(url, options) { return new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })) },
   })
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
     if (path.endsWith(".css")) return {}
-    if (!path.startsWith("lib/") && !path.startsWith("app/(app)/analytics/projects/") && ![CLIENT, VIEW, CHART, GEOMETRY].includes(path)) throw new Error(`Unexpected module ${path}`)
+    if (!path.startsWith("lib/") && !path.startsWith("app/(app)/analytics/projects/") && ![CLIENT, VIEW, CHART, GEOMETRY, BURNDOWN_CHART].includes(path)) throw new Error(`Unexpected module ${path}`)
     const loadedModule = { exports: {} }; modules.set(path, loadedModule)
     if (!compiled.has(path)) compiled.set(path, ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"), { fileName: path, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)
     const fixtureRequire = (name) => {
