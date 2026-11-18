@@ -9,8 +9,9 @@ import { memberCapacity, teamCapacities } from "@/lib/projects-capacity"
 import { isBlockedParentStatus } from "@/lib/blocked-parent"
 import { ProjectsCommitmentDetail, ProjectsSprintDetail, sprintTeamBreakdown, type CommitmentTeamRow } from "./projects-sprint-detail"
 import { ProjectsDevTypePie } from "./projects-dev-type-pie"
+import { ProjectsUnfinishedDetail } from "./projects-unfinished-detail"
 import { jiraIssueHref, jiraSearchHref } from "@/lib/jira-url"
-import { filterProjectsMetricTasks, projectsPointTotal, projectsRatio, ProjectsAnalysisValidationError, PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, selectProjectsTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsMetricFilter, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
+import { filterProjectsMetricTasks, projectsEstimationDeviation, projectsPointTotal, projectsRatio, ProjectsAnalysisValidationError, PROJECTS_DEV_TYPES, projectsWorkTotals, selectProjectsMetricIssues, selectProjectsOutputTeamIssues, selectProjectsTeamIssues, type PointTotal, type ProjectsAnalysisResult, type ProjectsAnalysisTask, type ProjectsMetric, type ProjectsMetricFilter, type ProjectsRatio, type ProjectsSprintSummary, type WorkTotals } from "@/lib/projects-analysis"
 import { ProjectsTrendChart, type TrendDatum, type TrendSeries } from "./projects-trend-chart"
 import "./projects-analysis.css"
 
@@ -39,7 +40,8 @@ const outputTeams = [...DASHBOARD_TEAMS.map((team, index) => ({ id: team.group, 
 const outputUnitLabels = { sp: "Story Points", actualSp: "Actual Story Points" }
 const topics = [
   { id: "output", label: "總產出" },
-  { id: "commitment", label: "Sprint 完成率" },
+  { id: "commitment", label: "負載率／完成率" },
+  { id: "estimation-deviation", label: "估點偏差率" },
   { id: "types", label: "完成任務類型" },
   { id: "unfinished", label: "目前未完成" },
 ] as const
@@ -62,7 +64,7 @@ const newestSprintId = (sprints: readonly { id: number; startDate: string }[]): 
 const outputMemberViewLabels: Record<OutputView, string> = { "all-teams": "全成員總覽", "by-team": "各成員產出" }
 type SegmentedValue = Unit | OutputView | CommitmentView
 const pointFields = { sp: "points", actualSp: "actualPoints" } as const
-const number = (value: number) => new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2, ...(value > 0 && (value < .01 || value >= 1e12) ? { notation: "scientific" as const } : value >= 10_000 ? { notation: "compact" as const } : {}) }).format(value)
+const number = (value: number) => new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2, ...(Math.abs(value) > 0 && (Math.abs(value) < .01 || Math.abs(value) >= 1e12) ? { notation: "scientific" as const } : Math.abs(value) >= 10_000 ? { notation: "compact" as const } : {}) }).format(value)
 const points = (value: PointTotal) => value.sum === null ? "—／未填" : number(value.sum)
 const percentTick = (value: number) => value > 0 && value < .0005 ? "<0.1%" : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 1, style: "percent", notation: value >= 1e4 ? "scientific" : "standard" }).format(value)
 const percent = (value: ProjectsRatio) => value.value === null ? "—／不適用" : percentTick(value.value)
@@ -94,6 +96,12 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [detail, setDetail] = useState<{ id: number; metric: DetailMetric; label: string } | null>(null)
   const candidates = outputTeams.filter((team) => !result.request.groups.length || result.request.groups.includes(team.id))
   const [outputUnit, setOutputUnit] = useState<"sp" | "actualSp">("sp")
+  const [unfinishedUnit, setUnfinishedUnit] = useState<"sp" | "count">("sp")
+  const [includeUnfinishedQa, setIncludeUnfinishedQa] = useState(true)
+  const [hideRequestInfoParent, setHideRequestInfoParent] = useState(false)
+  // Like the other topics, seed the newest Sprint once; unit/filter changes must retain manual selection or dismissal.
+  const [selectedUnfinishedSprint, setSelectedUnfinishedSprint] = useState<number | null>(() => newestSprintId(result.sprints))
+  const [initialUnfinishedSprint] = useState(selectedUnfinishedSprint)
   const [visibleTeams, setVisibleTeams] = useState<string[]>(() => candidates.map((team) => team.id))
   // Members hidden from the single-team chart; empty means every member of that team is shown.
   const [hiddenMembers, setHiddenMembers] = useState<string[]>([])
@@ -109,6 +117,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   // Same rule as 總產出: the newest Sprint starts selected, and clearing it stays cleared.
   const [selectedCommitmentSprint, setSelectedCommitmentSprint] = useState<number | null>(() => newestSprintId(result.sprints))
   const [initialCommitmentSprint] = useState(selectedCommitmentSprint)
+  const [selectedEstimationSprint, setSelectedEstimationSprint] = useState<number | null>(() => newestSprintId(result.sprints))
+  const [initialEstimationSprint] = useState(selectedEstimationSprint)
   // Teams switched off in the 完成率 legend. It keeps its own list: the chart only offers teams with a population,
   // so sharing the 總產出 team list would make hiding follow the wrong order and the button look like it vanished.
   const [hiddenCommitmentTeams, setHiddenCommitmentTeams] = useState<string[]>([])
@@ -125,6 +135,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const hasAttribution = attribution?.status === "available"
   // Unchecked QA-Task filtering is display-only: it recomputes output cohorts locally and never rewrites the server summary.
   const outputFilter: ProjectsMetricFilter | undefined = includeQa ? undefined : { excludeQa: true }
+  const unfinishedFilter: ProjectsMetricFilter = { excludeQa: !includeUnfinishedQa, excludeRequestInfoParent: hideRequestInfoParent }
   const clearOutputDetail = () => setDetail((previous) => previous && !Array.isArray(previous.metric) && (previous.metric as ProjectsMetric | OutputTeamMetric).kind === "output-teams" ? null : previous)
   const toggleTeam = (id: string) => {
     setVisibleTeams((previous) => previous.includes(id) ? previous.filter((team) => team !== id) : candidates.filter((team) => previous.includes(team.id) || team.id === id).map((team) => team.id))
@@ -134,11 +145,11 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const cohorts = new Map<string, ProjectsAnalysisTask[]>()
   const links = new Map<string, { href: string | null; unavailable?: string }>()
   const issues = (id: number, metric: DetailMetric): ProjectsAnalysisTask[] => {
-    const key = JSON.stringify([id, metric, includeQa])
+    const key = JSON.stringify([id, metric, includeQa, includeUnfinishedQa, hideRequestInfoParent])
     if (!cohorts.has(key)) {
       const sprint = result.sprints.find((item) => item.id === id)
       const metrics: readonly (ProjectsMetric | OutputTeamMetric)[] = Array.isArray(metric) ? metric : [metric as ProjectsMetric | OutputTeamMetric]
-      const selected = sprint ? metrics.flatMap((item) => item.kind === "output-teams" ? selectProjectsOutputTeamIssues(result.tasks, sprint, attribution ?? { status: "unavailable", reason: "not_provided" }, item.teamIds, outputFilter) : selectProjectsMetricIssues(result.tasks, sprint, item, item.kind === "custom" ? outputFilter : undefined)) : []
+      const selected = sprint ? metrics.flatMap((item) => item.kind === "output-teams" ? selectProjectsOutputTeamIssues(result.tasks, sprint, attribution ?? { status: "unavailable", reason: "not_provided" }, item.teamIds, outputFilter) : selectProjectsMetricIssues(result.tasks, sprint, item, item.kind === "custom" ? outputFilter : item.kind === "unfinished" ? unfinishedFilter : undefined)) : []
       cohorts.set(key, [...new Map(selected.map((task) => [task.id, task])).values()])
     }
     return cohorts.get(key)!
@@ -180,11 +191,15 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     const total = select(summary), point = unit === "count" ? null : total[unit]
     return { value: unit === "count" ? total.count : point!.sum, points: paired ? total.sp.sum : undefined, actualPoints: paired ? total.actualSp.sum : undefined, display: unit === "count" ? number(total.count) : points(point!), readout: metricValue(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, unit === "count" ? total.count : point!.sum, unit === "count" ? number(total.count) : points(point!)), note: point ? coverage(summary.sprint.id, metric, `${label} ${unitLabels[unit]}`, point, unit as "sp" | "actualSp") : undefined, partial: point ? point.missingCount > 0 : false, actions: [action(summary.sprint.id, metric, `${label} ${unitLabels[unit]}，查看工作單明細`)] }
   }) })
+  const estimationMetric: ProjectsMetric = { kind: "estimation-deviation" }
+  const estimationRows = result.sprints.map((sprint) => ({ sprint, ...projectsEstimationDeviation(result.tasks, sprint) }))
+  const estimationDisplay = (value: number | null) => value === null ? "—／不適用" : number(value)
+  const estimationSeries: TrendSeries[] = [{ id: "estimation-deviation", label: "估點偏差率", color: "sp", values: estimationRows.map(({ sprint, value }) => ({ value, display: estimationDisplay(value), readout: metricValue(sprint.id, estimationMetric, "估點偏差率", value, estimationDisplay(value)), actions: [action(sprint.id, estimationMetric, "估點偏差率，查看工作單明細")] })) }]
   const ratioParts = (s: ProjectsSprintSummary, unit: Unit) => {
     const value = s.commitment
     const all: DetailMetric = { kind: "commitment-all" }, numerator: ProjectsMetric = { kind: "commitment-done" }, denominator: ProjectsMetric = { kind: "commitment-all" }
     const amount = (value: number | null) => value === null ? "未填" : number(value)
-    return { value, main: metricValue(s.sprint.id, all, "Sprint 完成率 · 全部 Dev-Task", value.value, percent(value)), numerator: metricValue(s.sprint.id, numerator, `Sprint 完成率 分子 · ${unitLabels[unit]}`, value.numerator, amount(value.numerator)), denominator: metricValue(s.sprint.id, denominator, `Sprint 完成率 分母 · ${unitLabels[unit]}`, value.denominator, amount(value.denominator)) }
+    return { value, main: metricValue(s.sprint.id, all, "負載率／完成率 · 全部 Dev-Task", value.value, percent(value)), numerator: metricValue(s.sprint.id, numerator, `負載率／完成率 分子 · ${unitLabels[unit]}`, value.numerator, amount(value.numerator)), denominator: metricValue(s.sprint.id, denominator, `負載率／完成率 分母 · ${unitLabels[unit]}`, value.denominator, amount(value.denominator)) }
   }
   const ratioView = (s: ProjectsSprintSummary, unit: Unit) => <Ratio {...ratioParts(s, unit)} unit={unitLabels[unit]} />
   const commitmentCoverage = (s: ProjectsSprintSummary) => <><span className="mt-1 block">分子完成 SP</span>{coverage(s.sprint.id, { kind: "commitment-done" }, "分子完成 SP", s.commitmentPoints.done, "sp")}<span className="block">分母全部 Dev-Task SP</span>{coverage(s.sprint.id, { kind: "commitment-all" }, "分母全部 Dev-Task SP", s.commitmentPoints.all, "sp")}</>
@@ -420,7 +435,13 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     : commitmentByMember
       ? commitmentMemberSeries[commitmentView === "team-load" ? "load" : "completion"]
       : commitmentTeams.map((team) => ({ id: team.id, label: team.label, color: team.color, encoding: team.encoding, values: result.sprints.map((sprint) => commitmentView === "team-load" ? loadDatum(sprint.id, [team.id]) : commitmentDatum(sprint.id, [team.id])) }))
-  const trend = (id: string, series: TrendSeries[], unit: string, integer = false) => <ProjectsTrendChart id={id} sprints={result.sprints} series={series} unit={unit} integer={integer} formatTick={unit === "%" ? percentTick : number} />
+  const unfinishedTotal = (summary: ProjectsSprintSummary) => projectsWorkTotals(issues(summary.sprint.id, { kind: "unfinished" }))
+  const unfinishedSprint = selectedUnfinishedSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedUnfinishedSprint) ?? null
+  const unfinishedTasks = unfinishedSprint ? issues(unfinishedSprint.id, { kind: "unfinished" }) : (() => {
+    const ids = new Set(result.sprints.flatMap((sprint) => issues(sprint.id, { kind: "unfinished" }).map((task) => task.id)))
+    // A shared parent can put one issue in several Sprints; the aggregate lists it once, in original order.
+    return result.tasks.filter((task) => ids.has(task.id))
+  })()
   const first = result.summaries[0]
   const hasUnavailableSearch = result.sprints.some((s) => searchLink(issues(s.id, { kind: "population" })).unavailable)
   const issuePoint = (task: ProjectsAnalysisTask, unit: "sp" | "actualSp") => {
@@ -428,12 +449,13 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     return value !== null && result.jiraBaseUrl ? <ExternalNumber href={jiraIssueHref(result.jiraBaseUrl, task.key)} label={`${task.key} · ${unitLabels[unit]}`}>{display}</ExternalNumber> : <span>{display}</span>
   }
   const summaryTiles = multi ? [] : (() => {
-    const s = first, id = s.sprint.id
+    const s = first, id = s.sprint.id, unfinished = unfinishedTotal(s), estimation = estimationRows[0]
     return [
       { topic: "output", label: "全範圍總產出", metric: (includeQa ? { kind: "output" } : { kind: "custom" }) as DetailMetric, value: <>{pointValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, `全範圍總產出 ${unitLabels[outputUnit]}`, scopeOutput(s)[outputUnit])} {unitLabels[outputUnit]}</>, extra: countValue(id, includeQa ? { kind: "output" } : { kind: "custom" }, "全範圍完成張數", scopeOutput(s).count) },
       { topic: "types", label: "完成任務類型", metric: { kind: "output" } as DetailMetric, value: countValue(id, { kind: "output" }, "完成的任務類型張數", s.output.count), extra: "六類 Dev Type＋未分類，詳見下方" },
-      { topic: "commitment", label: "Sprint 完成率", metric: { kind: "commitment-all" } as DetailMetric, value: ratioView(s, "sp"), extra: "分子當期完成／分母全部 Dev-Task" },
-      { topic: "unfinished", label: "目前未完成", metric: { kind: "unfinished" } as DetailMetric, value: countValue(id, { kind: "unfinished" }, "目前未完成張數", s.unfinished.count), extra: <>{pointValue(id, { kind: "unfinished" }, "目前未完成 SP", s.unfinished.sp)} SP · Resolved 空白</> },
+      { topic: "commitment", label: "負載率／完成率", metric: { kind: "commitment-all" } as DetailMetric, value: ratioView(s, "sp"), extra: "分子當期完成／分母全部 Dev-Task" },
+      { topic: "estimation-deviation", label: "估點偏差率", metric: estimationMetric as DetailMetric, value: <>{metricValue(id, estimationMetric, "估點偏差率", estimation.value, estimationDisplay(estimation.value))}{estimation.value !== null && " SP"}</>, extra: `${number(estimation.totals.count)} 張已完成且雙欄已填的 Dev-Task` },
+      { topic: "unfinished", label: "目前未完成", metric: { kind: "unfinished" } as DetailMetric, value: countValue(id, { kind: "unfinished" }, "目前未完成張數", unfinished.count), extra: <>{pointValue(id, { kind: "unfinished" }, "目前未完成 SP", unfinished.sp)} SP · Resolved 空白</> },
     ]
   })()
   function selectTopic(next: Topic, trigger?: HTMLButtonElement) {
@@ -469,13 +491,29 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
       <ProjectsTrendChart id="output" sprints={result.sprints} series={outputSeries} unit={unitLabels[outputUnit]} formatTick={number} stackedTotalId={hasAttribution && outputView === "all-teams" ? OVERVIEW_STACK : undefined} legendToggle={hasAttribution ? { visibleIds: displayedTeams, onToggle: memberSeries.length ? toggleMember : toggleTeam } : undefined} emptyMessage={hasAttribution && !outputSeries.length ? "所選 Sprint 的團隊點數皆為 0。" : undefined} onSprintSelect={(index) => setSelectedOutputSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialOutputSprint} labelPointValues={outputView === "all-teams" || !hasAttribution} />
       {sprintDetailSprint && <ProjectsSprintDetail sprint={sprintDetailSprint} teams={sprintBreakdown} />}
     </Panel>)}
-    {topicPanel("commitment", <Panel title="Sprint 負載率／完成率" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Three views: both aggregate curves, then one of the two rates per team (per member for a single team). */}<Units name="比率範圍" value={commitmentView} onChange={(view) => { if (view !== commitmentView) setCommitmentView(view) }} choices={commitmentViewChoices} labels={commitmentByMember ? commitmentMemberViewLabels : commitmentViewLabels} disabled={!hasAttribution} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => setIncludeQa(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={countBlockedParent} onChange={(event) => setCountBlockedParent(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />受阻母票計為已完成</label></div>}>
+    {topicPanel("commitment", <Panel title="負載率／完成率" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Three views: both aggregate curves, then one of the two rates per team (per member for a single team). */}<Units name="比率範圍" value={commitmentView} onChange={(view) => { if (view !== commitmentView) setCommitmentView(view) }} choices={commitmentViewChoices} labels={commitmentByMember ? commitmentMemberViewLabels : commitmentViewLabels} disabled={!hasAttribution} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeQa} onChange={(event) => setIncludeQa(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={countBlockedParent} onChange={(event) => setCountBlockedParent(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />受阻母票計為已完成</label></div>}>
         {commitmentByMember
           ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} emptyMessage={commitmentSeries.length ? undefined : "此團隊在此 Sprint 沒有可計算比率的工作單。"} onSprintSelect={(index) => setSelectedCommitmentSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialCommitmentSprint} labelPointValues={commitmentView === "overview"} />
           : (multi || commitmentView !== "overview")
             ? <ProjectsTrendChart id="commitment" sprints={result.sprints} series={commitmentSeries} unit="%" formatTick={percentTick} legendToggle={commitmentView === "overview" ? undefined : { visibleIds: visibleCommitmentTeams.map((team) => team.id), onToggle: toggleCommitmentTeam }} legendSeries={commitmentView === "overview" ? undefined : commitmentLegend} emptyMessage={commitmentView !== "overview" && !commitmentSeries.length ? "沒有可見團隊。" : undefined} onSprintSelect={(index) => setSelectedCommitmentSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialCommitmentSprint} labelPointValues={commitmentView === "overview"} />
             : <p className="text-sm">{percent(commitmentRatioFor(first.sprint.id, null))}（{number(commitmentRatioFor(first.sprint.id, null).numerator ?? 0)}／{number(commitmentRatioFor(first.sprint.id, null).denominator ?? 0)} SP）</p>}
       {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={singleTeam ? commitmentMemberRows : commitmentTeamRows} kind={singleTeam ? "member" : "team"} />}
+    </Panel>)}
+    {topicPanel("estimation-deviation", <Panel title="估點偏差率" description="依公式 SP − Actual SP 加總點數差，不是百分比。僅計算完成日期在該 Sprint 內、SP 與 Actual SP 都已填的 Dev-Task；正值表示高估、負值表示低估。">
+      <ProjectsTrendChart id="estimation-deviation" sprints={result.sprints} series={estimationSeries} unit="SP" signed formatTick={number} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues />
+      {estimationRows.every((row) => row.totals.count === 0) && <p role="status" className="mt-3 text-sm text-slate-500 dark:text-slate-400">所選 Sprint 沒有符合計算條件的工作單。</p>}
+      <div className="mt-4 min-w-0 overflow-x-auto"><table>
+        <caption className="sr-only">估點偏差率計算核對</caption>
+        <thead><tr><th>Sprint</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th><th>明細</th></tr></thead>
+        <tbody>{estimationRows.map(({ sprint, value, totals }) => <tr key={sprint.id} aria-current={selectedEstimationSprint === sprint.id ? "true" : undefined} className={selectedEstimationSprint === sprint.id ? "bg-slate-50 dark:bg-slate-800" : undefined}>
+          <th scope="row">{sprint.name}</th>
+          <td>{countValue(sprint.id, estimationMetric, "估點偏差率符合條件張數", totals.count)}</td>
+          <td>{pointValue(sprint.id, estimationMetric, "估點偏差率 SP", totals.sp)}</td>
+          <td>{pointValue(sprint.id, estimationMetric, "估點偏差率 Actual SP", totals.actualSp)}</td>
+          <td>{metricValue(sprint.id, estimationMetric, "估點偏差率", value, estimationDisplay(value))}</td>
+          <td>{button(sprint.id, estimationMetric, "估點偏差率")}</td>
+        </tr>)}</tbody>
+      </table></div>
     </Panel>)}
     {topicPanel("types", <Panel title="完成任務類型">
       {/* The trend sits on top; the two donuts share the row beneath it — all-Sprint summary left, the clicked
@@ -487,8 +525,9 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
         {selectedTypeSprint && <ProjectsDevTypePie shares={selectedSprintShares} title={`${selectedTypeSprint.name} 類型佔比`} legend="right" />}
       </div>}
     </Panel>)}
-    {topicPanel("unfinished", <Panel title="目前未完成" description="只看現行 Resolved 空白，不限 Sprint 區間；區間外已完成不算未完成。SP／張數分開呈現。">
-        {multi ? <div className="space-y-6"><div><h3 className="mb-2 text-sm font-medium">未完成 SP</h3>{trend("unfinished-sp", [totalSeries("unfinished-sp", "未完成 SP", "sp", (s) => s.unfinished, "sp", { kind: "unfinished" })], "SP")}</div><div className="border-t border-slate-200 pt-4 dark:border-slate-700"><h3 className="mb-2 text-sm font-medium">未完成張數</h3>{trend("unfinished-count", [totalSeries("unfinished-count", "未完成張數", "actual", (s) => s.unfinished, "count", { kind: "unfinished" })], "張數", true)}</div></div> : <p className="text-sm">{countValue(first.sprint.id, { kind: "unfinished" }, "目前未完成張數", first.unfinished.count)} · {pointValue(first.sprint.id, { kind: "unfinished" }, "目前未完成 SP", first.unfinished.sp)} SP</p>}
+    {topicPanel("unfinished", <Panel title="目前未完成" description="依 Sprint 母票歸屬，只看現行 Resolved 空白的工作單，不以狀態判完成。切換 SP／張數，點選 Sprint 查看未完成清單。" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3"><Units<"sp" | "count"> name="目前未完成" value={unfinishedUnit} onChange={setUnfinishedUnit} choices={["sp", "count"]} labels={unitLabels} compact /><label className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={includeUnfinishedQa} onChange={(event) => setIncludeUnfinishedQa(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />含 QA-Task</label><label title="只隱藏母票狀態為 Request Info 的工作單" className="flex min-h-11 cursor-pointer items-center gap-2 text-xs"><input type="checkbox" checked={hideRequestInfoParent} onChange={(event) => setHideRequestInfoParent(event.target.checked)} className="h-4 w-4 accent-blue-600 focus-visible:outline-2 focus-visible:outline-blue-600" />隱藏受阻母票</label></div>}>
+      <ProjectsTrendChart id="unfinished" sprints={result.sprints} series={[totalSeries("unfinished", unfinishedUnit === "sp" ? "未完成 SP" : "未完成張數", "sp", unfinishedTotal, unfinishedUnit, { kind: "unfinished" })]} unit={unitLabels[unfinishedUnit]} formatTick={number} integer={unfinishedUnit === "count"} initialSprintId={initialUnfinishedSprint} onSprintSelect={(index) => setSelectedUnfinishedSprint(index === null ? null : result.sprints[index]?.id ?? null)} labelPointValues />
+      <ProjectsUnfinishedDetail sprint={unfinishedSprint} tasks={unfinishedTasks} jiraBaseUrl={result.jiraBaseUrl} renderPoint={(task) => issuePoint(task, "sp")} />
     </Panel>)}
     </div>
     {detail && sprint && <Panel title={<>{sprint.name} · {detail.label} · {valueLink(tasks.length, number(tasks.length), tasks, `${sprint.name} · ${detail.label} 明細張數`)} 張工作單</>} description="本次完整查詢資料的唯讀明細，不會另查 Jira。">

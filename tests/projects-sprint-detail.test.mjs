@@ -204,7 +204,7 @@ describe("Sprint detail under the 總產出 trend", () => {
   })
 })
 
-describe("Sprint 完成率 and 完成任務類型 default to the newest Sprint", () => {
+describe("負載率／完成率 and 完成任務類型 default to the newest Sprint", () => {
   // The earliest query result starts on Sprint 6824 (index 1) for every topic, like 總產出 already does.
   const NEWEST = 6824
   const topicChart = (tree, id) => nodes(tree).find((n) => n.type?.name === "ProjectsTrendChart" && n.props.id === id)

@@ -18,18 +18,20 @@ export type ProjectsAnalysisTask = {
   statusName: string | null
   /** The parent's current Jira status, used by 「受阻母票計為已完成」; null when unknown. */
   parentStatus: string | null
+  /** Verified parent type; older DTOs may omit it and normalize to unknown (null). */
+  parentIssueType?: "Story" | "Task" | "Bug" | null
   sprintIds: number[]
 }
 export type PointTotal = { sum: number | null; knownCount: number; missingCount: number }
 export type WorkTotals = { count: number; sp: PointTotal; actualSp: PointTotal }
 export type ProjectsRatio = { numerator: number | null; denominator: number | null; value: number | null; partial: boolean }
 /** `custom` is a display-only output cohort (completed in the Sprint, optionally without QA-Task) the server summary never computes. */
-export type ProjectsMetric = { kind: "population" | "output" | "unfinished" | "outside" | "commitment-all" | "commitment-done" | "type" | "pressure" | "custom" | "commitment-population" | "commitment-completed"; value?: string }
+export type ProjectsMetric = { kind: "population" | "output" | "unfinished" | "outside" | "commitment-all" | "commitment-done" | "type" | "pressure" | "custom" | "estimation-deviation" | "commitment-population" | "commitment-completed"; value?: string }
 /**
- * `excludeQa` drops QA-Task from a client-side (custom) cohort; server summaries are never rewritten, so
- * charts, tables and local details must all pass the same filter.
+ * Display-only filters never rewrite server summaries: charts, tables and local details share the same cohort.
+ * `excludeRequestInfoParent` only applies to unfinished work, not the broader blocked-parent completion rule.
  */
-export type ProjectsMetricFilter = { excludeQa?: boolean }
+export type ProjectsMetricFilter = { excludeQa?: boolean; excludeRequestInfoParent?: boolean }
 /** Apply a display-only filter to a cohort that was already selected (e.g. a team's tasks). */
 export function filterProjectsMetricTasks(tasks: readonly ProjectsAnalysisTask[], filter: ProjectsMetricFilter | undefined): ProjectsAnalysisTask[] {
   return filter?.excludeQa ? tasks.filter((task) => task.issueType !== "QA-Task") : [...tasks]
@@ -95,7 +97,8 @@ export function selectProjectsMetricIssues(tasks: readonly ProjectsAnalysisTask[
     switch (metric.kind) {
       case "population": return true
       case "output": return completed(task)
-      case "unfinished": return task.resolvedDate === null
+      case "estimation-deviation": return task.issueType === "Dev-Task" && completed(task) && task.points !== null && task.actualPoints !== null
+      case "unfinished": return task.resolvedDate === null && !(filter?.excludeQa && task.issueType === "QA-Task") && !(filter?.excludeRequestInfoParent && task.parentStatus === "Request Info")
       case "outside": return task.resolvedDate !== null && !completed(task)
       case "commitment-all": return task.issueType === "Dev-Task"
       case "commitment-done": return task.issueType === "Dev-Task" && completed(task)
@@ -120,6 +123,16 @@ export function projectsPointTotal(tasks: readonly ProjectsAnalysisTask[], field
   return { sum: tasks.length && !knownCount ? null : sum, knownCount, missingCount: tasks.length - knownCount }
 }
 export function projectsWorkTotals(tasks: readonly ProjectsAnalysisTask[]): WorkTotals { return { count: tasks.length, sp: projectsPointTotal(tasks, "points"), actualSp: projectsPointTotal(tasks, "actualPoints") } }
+
+/** Point difference, not a percentage: only completed, paired Dev-Tasks contribute to this Sprint. */
+export function projectsEstimationDeviation(tasks: readonly ProjectsAnalysisTask[], sprint: SprintRecord): { value: number | null; totals: WorkTotals } {
+  const eligible = selectProjectsMetricIssues(tasks, sprint, { kind: "estimation-deviation" })
+  const totals = projectsWorkTotals(eligible)
+  if (!eligible.length) return { value: null, totals }
+  const value = eligible.reduce((sum, task) => sum + (task.points! - task.actualPoints!), 0)
+  if (!Number.isFinite(value)) return invalid("估點偏差超出可計算範圍。")
+  return { value: Object.is(value, -0) ? 0 : value, totals }
+}
 
 function parseTeamAttribution(value: unknown, tasks: readonly ProjectsAnalysisTask[], groups: readonly string[]): ProjectsTeamAttribution {
   if (!projectsRecord(value)) return invalid("團隊歸屬資料不完整，請重試。")
@@ -199,8 +212,10 @@ export function parseProjectsAnalysisResult(value: unknown, expected?: ProjectsA
   const seen = new Set<string>(), parents = new Set<string>()
   const tasks = value.tasks.map((raw): ProjectsAnalysisTask => {
     if (!projectsRecord(raw) || !projectsNumericId(raw.id) || seen.has(raw.id) || !projectsNumericId(raw.parentId) || !projectsNumericId(raw.projectId) || !projectsText(raw.key) || !projectsText(raw.parentKey) || !projectsText(raw.projectKey) || typeof raw.summary !== "string" || raw.summary.length > 100_000 || (raw.issueType !== "Dev-Task" && raw.issueType !== "QA-Task") || !nullableText(raw.devType) || !isPointValue(raw.points) || !isPointValue(raw.actualPoints) || !(raw.assigneeAccountId === null || isDashboardAccountId(raw.assigneeAccountId)) || !nullableText(raw.assigneeDisplayName) || !nullableText(raw.statusName) || !nullableText(raw.parentStatus) || !(raw.resolvedDate === null || (typeof raw.resolvedDate === "string" && dateRangeValue(raw.resolvedDate) !== null)) || !Array.isArray(raw.sprintIds) || !raw.sprintIds.length || new Set(raw.sprintIds).size !== raw.sprintIds.length || raw.sprintIds.some((id) => !request.sprintIds.includes(id))) return invalid()
+    const parentIssueType = raw.parentIssueType ?? null
+    if (parentIssueType !== null && parentIssueType !== "Story" && parentIssueType !== "Task" && parentIssueType !== "Bug") return invalid("母票類型資料無效。")
     seen.add(raw.id); parents.add(raw.parentId)
-    return { id: raw.id, key: raw.key, summary: raw.summary, parentId: raw.parentId, parentKey: raw.parentKey, projectId: raw.projectId, projectKey: raw.projectKey, issueType: raw.issueType as ProjectsAnalysisTask["issueType"], devType: raw.devType, points: raw.points, actualPoints: raw.actualPoints, resolvedDate: raw.resolvedDate as string | null, assigneeAccountId: raw.assigneeAccountId, assigneeDisplayName: raw.assigneeDisplayName, statusName: raw.statusName, parentStatus: raw.parentStatus, sprintIds: [...raw.sprintIds].sort((a, b) => a - b) }
+    return { id: raw.id, key: raw.key, summary: raw.summary, parentId: raw.parentId, parentKey: raw.parentKey, projectId: raw.projectId, projectKey: raw.projectKey, issueType: raw.issueType as ProjectsAnalysisTask["issueType"], devType: raw.devType, points: raw.points, actualPoints: raw.actualPoints, resolvedDate: raw.resolvedDate as string | null, assigneeAccountId: raw.assigneeAccountId, assigneeDisplayName: raw.assigneeDisplayName, statusName: raw.statusName, parentStatus: raw.parentStatus, parentIssueType, sprintIds: [...raw.sprintIds].sort((a, b) => a - b) }
   })
   if (tasks.length + parents.size > value.sourceIssueCount) return invalid()
   let jiraBaseUrl: string | null = null

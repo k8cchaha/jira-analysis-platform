@@ -110,13 +110,13 @@ function clickTopic(tree, label, trigger = topicTrigger()) {
 }
 
 describe("local Projects topic tabs", () => {
-  it("links the four stable tabs to mounted panels with one active topic and topic-local summaries", () => {
+  it("links the five stable tabs to mounted panels with one active topic and topic-local summaries", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), Component = h.load(VIEW).ProjectsAnalysisView
       const result = resultFixture(h.load(MODEL), [task(1)], request), render = () => h.invoke(Component, { result })
       const tree = render(), tabs = topicTabs(tree), panels = topicPanels(tree)
-      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "Sprint 完成率", "完成任務類型", "目前未完成"])
-      assert.equal(panels.length, 4)
+      assert.deepEqual(tabs.map((tab) => tab.props.children), ["總產出", "負載率／完成率", "估點偏差率", "完成任務類型", "目前未完成"])
+      assert.equal(panels.length, 5)
       assert.equal(activePanel(tree).props["data-topic"], "output")
       assert.equal(tabs.filter((tab) => tab.props["aria-selected"]).length, 1)
       assert.equal(tabs.filter((tab) => tab.props.tabIndex === 0).length, 1)
@@ -140,7 +140,7 @@ describe("local Projects topic tabs", () => {
       }
       // The data tables below the charts were removed on request; panels still render their charts only.
       assert.equal(nodes(render()).filter((node) => node.type?.name === "DataTable").length, 0)
-      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 5 : 2)
+      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 5 : 4)
       assert.equal(h.requests.length, 0)
     }
   })
@@ -307,12 +307,12 @@ describe("local Projects topic tabs", () => {
     assert.deepEqual(pies(render()).map((node) => node.props.title), ["2 個 Sprint 加總類型佔比", "Sprint 58 類型佔比"])
     assert.equal(pies(render())[1].props.shares.reduce((sum, share) => sum + share.points, 0), 11)
   })
-  it("uses Sprint 負載率／完成率 for metric labels while retaining the internal metric identifiers", () => {
+  it("uses 負載率／完成率 for metric labels while retaining the internal metric identifiers", () => {
     for (const request of [undefined, multiRequest]) {
       const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1)], request)
       const Component = h.load(VIEW).ProjectsAnalysisView, tree = h.invoke(Component, { result })
       const panel = topicPanels(tree).find((node) => node.props["data-topic"] === "commitment")
-      assert.equal(nodes(panel).find((node) => node.type?.name === "Panel").props.title, "Sprint 負載率／完成率")
+      assert.equal(nodes(panel).find((node) => node.type?.name === "Panel").props.title, "負載率／完成率")
       assert.doesNotMatch(h.render(Component, { result }), /Commitment/)
       if (request) {
         // 全團隊負載率／完成率 is the default: the two aggregate curves, no per-team ones.
@@ -350,7 +350,7 @@ describe("local Projects topic tabs", () => {
     nodes(draw()).find((node) => node.props["aria-label"] === "聚焦 Dev 趨勢").props.onClick()
     target(draw(), 1).props.onClick()
     const label = text(readout(draw()))
-    clickTopic(render(), "Sprint 完成率")
+    clickTopic(render(), "負載率／完成率")
     clickTopic(render(), "總產出"); clickTopic(render(), "完成任務類型")
     assert.equal(chartNode(render(), "types").props.unit, "SP", "完成任務類型 is fixed to Story Points")
     assert.equal(chartNode(render(), "types").key, original.key)
@@ -377,8 +377,8 @@ describe("local Projects topic tabs", () => {
     const Component = h.load(VIEW).ProjectsAnalysisView
     const html = renderToStaticMarkup(createElement("div", null, createElement(Component, { result }), createElement(Component, { result })))
     const controls = [...html.matchAll(/role="tab"[^>]*aria-controls="([^"]+)"/g)].map((match) => match[1])
-    assert.equal(controls.length, 8)
-    assert.equal(new Set(controls).size, 8)
+    assert.equal(controls.length, 10)
+    assert.equal(new Set(controls).size, 10)
     for (const id of controls) assert.ok(html.includes(`id="${id}" role="tabpanel"`))
   })
 })
@@ -387,14 +387,14 @@ describe("projects result visualization and readonly local details", () => {
   it("renders every remaining category plus unknown and ratio formulas", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1, { points: null, actualPoints: 5 }), task(2, { devType: "Bug", points: 6 }), task(3, { devType: "Bug", points: 3 }), task(4, { resolvedDate: null, points: 0 })])
     const html = h.render(h.load(VIEW).ProjectsAnalysisView, { result })
-    for (const text of ["—／未填", "Sprint 完成率", "未分類"]) assert.ok(html.includes(text), text)
+    for (const text of ["—／未填", "負載率／完成率", "未分類"]) assert.ok(html.includes(text), text)
     assert.doesNotMatch(html, /NaN|Infinity|績效排行/)
     assert.equal((html.match(/<details/g) ?? []).length, 0, "no collapsible data tables remain")
     assert.ok(html.includes('aria-label="圖例"'))
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     assert.equal(nodes(tree).filter((node) => node.type === "button" && node.props.className?.includes("text-2xl")).length, 0)
-    assert.equal(nodes(tree).filter((node) => node.type === "article" && "data-summary-tile" in node.props).length, 4)
-    assert.equal(nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart").length, 2)
+    assert.equal(nodes(tree).filter((node) => node.type === "article" && "data-summary-tile" in node.props).length, 5)
+    assert.equal(nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart").length, 4)
     assert.equal(chartNode(tree, "types").props.distribution, true)
   })
   it("omits the explanatory result header for single and multiple Sprints", () => {
@@ -424,16 +424,18 @@ describe("projects result visualization and readonly local details", () => {
     assert.ok(markers(tree).length > 0)
     assert.ok(paths(tree).length > 0)
   })
-  it("separates the remaining metrics and unfinished units, projecting existing sorted summaries", () => {
+  it("separates the remaining metrics with one switchable unfinished chart, projecting sorted summaries", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { resolvedDate: null, sprintIds: [6824], points: 8 })], multiRequest)
-    const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
-    const charts = nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart")
-    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "types", "unfinished-sp", "unfinished-count"])
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const tree = render(), charts = nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart")
+    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "estimation-deviation", "types", "unfinished"])
     assert.deepEqual([...chartNode(tree, "output").props.sprints].map((s) => s.id), [6823, 6824])
     assert.deepEqual(plain(chartNode(tree, "output").props.series[0].values.map((v) => v.value)), [3, 0])
-    assert.deepEqual(plain(chartNode(tree, "unfinished-sp").props.series[0].values.map((v) => v.value)), [0, 8])
-    assert.deepEqual(plain(chartNode(tree, "unfinished-count").props.series[0].values.map((v) => v.value)), [0, 1])
-    assert.equal(chartNode(tree, "unfinished-count").props.integer, true)
+    assert.deepEqual(plain(chartNode(tree, "unfinished").props.series[0].values.map((v) => v.value)), [0, 8])
+    unitsOf(tree, "目前未完成").props.onChange("count")
+    assert.deepEqual(plain(chartNode(render(), "unfinished").props.series[0].values.map((v) => v.value)), [0, 1])
+    assert.equal(chartNode(render(), "unfinished").props.integer, true)
+    assert.equal(h.requests.length, 0)
   })
   it("switches the type series without repainting identities or fetching", () => {
     const h = projectsHarness(), model = h.load(MODEL), Component = h.load(VIEW).ProjectsAnalysisView
@@ -746,7 +748,7 @@ describe("projects result visualization and readonly local details", () => {
     const Component = h.load(VIEW).ProjectsAnalysisView, render = () => h.invoke(Component, { result })
     const tiles = nodes(render()).filter((n) => n.type === "article" && "data-summary-tile" in n.props)
     expectQuery(tiles[0], "總產出 SP", ["1", "2", "3"])
-    expectQuery(tiles[1], "Sprint 完成率", ["1", "2", "3"])
+    expectQuery(tiles[1], "負載率／完成率", ["1", "2", "3"])
     nodes(tiles[1]).find((n) => n.type === "button").props.onClick()
     const details = nodes(render()).find((n) => n.props.title && text(n.props.title).includes("張工作單"))
     assert.match(text(details.props.title), /3 張工作單/)

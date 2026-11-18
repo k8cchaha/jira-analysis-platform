@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import type { SprintRecord } from "@/lib/jira-sprint-data"
 import { buildChartBandLayout } from "@/lib/chart-band-layout"
-import { buildStackGeometry, buildTrendGeometry, cleanAxisMaximum } from "./projects-trend-geometry"
+import { buildSignedTrendGeometry, buildStackGeometry, buildTrendGeometry, cleanAxisMaximum, cleanSignedAxisMaximum } from "./projects-trend-geometry"
 
 export type TrendDatum = {
   value: number | null
@@ -45,13 +45,15 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, distribution = false, focusableLegend = false, legendToggle, legendSeries, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, signed = false, distribution = false, focusableLegend = false, legendToggle, legendSeries, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
   unit: string
   formatTick: (value: number) => string
   integer?: boolean
+  /** Opt-in symmetric signed domain for differences; cannot be combined with stacks or distribution bars. */
+  signed?: boolean
   distribution?: boolean
   focusableLegend?: boolean
   legendToggle?: LegendToggle
@@ -68,6 +70,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   /** Plot height in px; letting a neighbouring card drive it keeps a two-column layout aligned. */
   plotHeight?: number
 }) {
+  if (signed && (distribution || stackedTotalId !== undefined)) throw new RangeError("Signed trends cannot use stacked or distribution bars")
   const patternPrefix = `projects-stack-${useId().replace(/[^a-zA-Z0-9_-]/g, "_")}`
   const container = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(640)
@@ -120,10 +123,11 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   })
   const totalMarkers = (field: "points" | "actualPoints") => sprints.map((_, index) => stackSeries.some(({ item }) => item.values[index]?.[field] !== null && item.values[index]?.[field] !== undefined))
   // Both side-by-side bars share the axis, so the taller unit (usually Actual SP) must fit it too.
-  const maximum = cleanAxisMaximum(implicitTotal ? [...totalValues("points"), ...totalValues("actualPoints")] : lineSeries.flatMap(({ item }) => item.values.flatMap((value) => [value.value, value.points, value.actualPoints].filter((amount): amount is number | null => amount !== undefined))), integer)
+  const maximum = signed ? cleanSignedAxisMaximum(lineSeries.flatMap(({ item }) => item.values.map((value) => value.value)), integer) : cleanAxisMaximum(implicitTotal ? [...totalValues("points"), ...totalValues("actualPoints")] : lineSeries.flatMap(({ item }) => item.values.flatMap((value) => [value.value, value.points, value.actualPoints].filter((amount): amount is number | null => amount !== undefined))), integer)
   const left = 58, right = width >= 640 && lineSeries.length <= 4 ? 152 : 18, top = 22
   const plotHeight = plotHeightProp, height = plotHeight + 70
-  const endLabels = !implicitTotal && width >= 640 && lineSeries.length <= 4 ? lineSeries.map(({ item }) => ({ item, value: item.values.at(-1)?.value })).filter((entry) => entry.value !== null && entry.value !== undefined).map((entry) => ({ ...entry, y: top + (1 - entry.value! / maximum) * plotHeight })) : []
+  const yAt = (value: number) => top + (signed ? (1 - (value / maximum + 1) / 2) : (1 - value / maximum)) * plotHeight
+  const endLabels = !implicitTotal && width >= 640 && lineSeries.length <= 4 ? lineSeries.map(({ item }) => ({ item, value: item.values.at(-1)?.value })).filter((entry) => entry.value !== null && entry.value !== undefined).map((entry) => ({ ...entry, y: yAt(entry.value!) })) : []
   const availableWidth = Math.max(1, width - left - right)
   // Every Cartesian mode reserves half a Sprint bucket at each end and shares its center with all interactions.
   const layout = buildChartBandLayout(Math.max(1, sprints.length), availableWidth)
@@ -176,7 +180,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
     container.current?.querySelector<HTMLElement | SVGRectElement>(distribution ? `[data-distribution-index="${selected}"]` : `[data-sprint-index="${selected}"]`)?.focus()
     dismiss()
   }
-  const ticks = integer && maximum <= 4 ? Array.from({ length: maximum + 1 }, (_, index) => index) : [0, .25, .5, .75, 1].map((fraction) => integer ? Math.round(maximum * fraction) : maximum * fraction)
+  const ticks = signed ? (integer && maximum <= 4 ? Array.from({ length: maximum * 2 + 1 }, (_, index) => index - maximum) : [-1, -.5, 0, .5, 1].map((fraction) => integer ? Math.sign(fraction) * Math.round(maximum * Math.abs(fraction)) : maximum * fraction)) : integer && maximum <= 4 ? Array.from({ length: maximum + 1 }, (_, index) => index) : [0, .25, .5, .75, 1].map((fraction) => integer ? Math.round(maximum * fraction) : maximum * fraction)
   // The selection decoration follows the selected Sprint only: hover previews the readout but must not move or hide it.
   const selection = !distribution && committedVisual && visible.length > 0 && pinned !== null && sprints[pinned] ? (() => {
     const band = spanAt(pinned, Math.max(layout.bucketWidth * .4, barOffset * 2 + barWidth + 8))
@@ -215,7 +219,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
         </div>
       })}
     </div> : <div className="relative">
-      <svg className="projects-trend-svg block w-full overflow-visible" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label={`${unit} ${stacked ? "團隊堆疊長條與總量曲線" : "趨勢"}，X 軸為已選 Sprint，Y 軸從零開始`} onPointerMove={(event) => {
+      <svg className="projects-trend-svg block w-full overflow-visible" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label={`${unit} ${stacked ? "團隊堆疊長條與總量曲線" : "趨勢"}，X 軸為已選 Sprint，${signed ? "Y 軸以零為中線，顯示正負點數" : "Y 軸從零開始"}`} onPointerMove={(event) => {
         if (event.pointerType === "touch") return
         const bounds = event.currentTarget.getBoundingClientRect()
         if (!bounds.width) return
@@ -224,8 +228,8 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
         observe(index)
       }} onPointerLeave={() => setHover(null)}>
         <g className="projects-trend-grid" aria-hidden="true">{[...new Set(ticks)].map((tick) => {
-          const y = top + (1 - tick / maximum) * plotHeight
-          return <g key={tick}><line x1={left} x2={width - right} y1={y} y2={y} /><text x={left - 9} y={y + 4} textAnchor="end">{formatTick(tick)}</text></g>
+          const y = yAt(tick)
+          return <g key={tick}><line className={signed && tick === 0 ? "projects-trend-zero-baseline" : undefined} x1={left} x2={width - right} y1={y} y2={y} /><text x={left - 9} y={y + 4} textAnchor="end">{formatTick(tick)}</text></g>
         })}</g>
         {/* Stacked mode charts both units, so it labels them together above the plot; other modes keep the unit at the axis. */}
         {/* Both modes centre the unit above the plot, so the caption never collides with the Y-axis labels. */}
@@ -267,7 +271,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
         {labelPointValues && !stacked && labelledIndex !== null ? lineSeries.flatMap(({ item }) => {
           const value = item.values[labelledIndex]?.value
           if (value === null || value === undefined) return []
-          return [<text key={`line-value-${item.id}`} data-line-value={item.id} className="projects-trend-value" x={x(labelledIndex)} y={top + (1 - value / maximum) * plotHeight - 8} textAnchor="middle" aria-hidden="true">{formatTick(value)}</text>]
+          return [<text key={`line-value-${item.id}`} data-line-value={item.id} className="projects-trend-value" x={x(labelledIndex)} y={yAt(value) - 8} textAnchor="middle" aria-hidden="true">{formatTick(value)}</text>]
         }) : null}
         {/* Stacked mode draws both totals as curves, one per unit, each centred on its own bar; other modes draw one curve per series. */}
         {(stacked ? !visible.length ? [] : [
@@ -275,7 +279,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
           { key: "points", values: totalValues("points"), offset: -1, color: "points", shape: 0, dash: "6 4" as string | undefined, partial: totalMarkers("points") },
           { key: "actualPoints", values: totalValues("actualPoints"), offset: 1, color: "actual", shape: 1, dash: undefined as string | undefined, partial: totalMarkers("actualPoints") },
         ] : [...lineSeries].sort((a, b) => Number(a.item.id === emphasis) - Number(b.item.id === emphasis)).map(({ item, shape, dash }) => ({ key: item.id, values: item.values.map((datum) => datum.value), offset: 0, color: item.color, shape, dash, partial: item.values.map((datum) => datum.partial === true) }))).map(({ key, values, offset, color, shape, dash, partial }) => {
-          const geometry = buildTrendGeometry(values, maximum, plotWidth, plotHeight)
+          const geometry = signed ? buildSignedTrendGeometry(values, maximum, plotWidth, plotHeight) : buildTrendGeometry(values, maximum, plotWidth, plotHeight)
           return <g key={key} data-series={key} data-series-unit={stacked ? key : undefined} style={seriesStyle(color)} transform={`translate(${plotLeft + offset * barOffset} ${top})`} className={`projects-trend-series${stacked ? ` projects-trend-series-${key === "points" ? "points" : "actual"}` : ""}${emphasis && emphasis !== key ? " is-context" : ""}${emphasis === key ? " is-emphasized" : ""}`} aria-hidden="true">
             {geometry.paths.map((path, segment) => <path key={segment} className="projects-trend-line" d={path} strokeDasharray={dash} vectorEffect="non-scaling-stroke" />)}
             {/* The group translates the whole curve and its markers to the same bar center. */}
@@ -288,7 +292,7 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
           {(width >= 480 || sprints.length <= 3 || index === 0 || index === sprints.length - 1) && <text className={`projects-trend-x-label${coveredLabel(sprint.name, index) ? " is-covered" : ""}`} x={x(index)} y={top + plotHeight + 27} textAnchor="middle" aria-hidden="true">{axisLabel(sprint.name)}</text>}
           {!!visible.length && <rect data-sprint-index={index} x={hitAt(index).left} y={top - 8} width={hitAt(index).width} height={plotHeight + 38} fill="transparent" role="button" tabIndex={index === selected ? 0 : -1} className="projects-trend-target" aria-label={`${sprint.name}，${sprint.startDate} 至 ${sprint.endDate}，查看 ${unit} 趨勢數值`} aria-controls={`${id}-readout`} aria-expanded={active === index} onFocus={() => { setHover(null); setFocus(index) }} onBlur={() => setFocus(null)} onClick={() => toggle(index)} onKeyDown={(event) => {
             if (event.key === "Escape") dismiss()
-            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(index) }
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(index); onSprintSelect?.(index) }
             if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
               event.preventDefault()
               const next = Math.max(0, Math.min(sprints.length - 1, index + (event.key === "ArrowRight" ? 1 : -1)))

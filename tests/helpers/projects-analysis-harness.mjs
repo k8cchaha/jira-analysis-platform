@@ -13,6 +13,8 @@ export const GEOMETRY = "app/(app)/analytics/projects/projects-trend-geometry.ts
 export const SPRINT_DETAIL = "app/(app)/analytics/projects/projects-sprint-detail.tsx"
 export const DEV_TYPE_PIE = "app/(app)/analytics/projects/projects-dev-type-pie.tsx"
 export const BURNDOWN_CHART = "app/(app)/sprint/burndown/burndown-chart.tsx"
+export const UNFINISHED_DETAIL = "app/(app)/analytics/projects/projects-unfinished-detail.tsx"
+const ISSUE_TYPE_ICON = "components/issue-type-icon.tsx", TICKET_LINK = "components/ticket-link.tsx"
 export const plain = (value) => JSON.parse(JSON.stringify(value))
 export function projectsHarness() {
   const modules = new Map(), components = new Map(), effects = [], requests = [], events = new Map()
@@ -54,7 +56,7 @@ export function projectsHarness() {
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
     if (path.endsWith(".css")) return {}
-    if (!path.startsWith("lib/") && !path.startsWith("app/(app)/analytics/projects/") && ![CLIENT, VIEW, CHART, GEOMETRY, BURNDOWN_CHART].includes(path)) throw new Error(`Unexpected module ${path}`)
+    if (!path.startsWith("lib/") && !path.startsWith("app/(app)/analytics/projects/") && ![CLIENT, VIEW, CHART, GEOMETRY, BURNDOWN_CHART, ISSUE_TYPE_ICON, TICKET_LINK].includes(path)) throw new Error(`Unexpected module ${path}`)
     const loadedModule = { exports: {} }; modules.set(path, loadedModule)
     if (!compiled.has(path)) compiled.set(path, ts.transpileModule(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"), { fileName: path, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText)
     const fixtureRequire = (name) => {
@@ -63,10 +65,9 @@ export function projectsHarness() {
       if (name === "@/components/filter-defaults-provider") return { useDefaultTeamGroups: () => hooks.useState([]) }
       if (name === "@/components/team-members-provider") return { useTeamMembers: () => ({ groupStates }) }
       if (name === "./projects-filter") return { ProjectsFilter: function ProjectsFilter(props) { return createElement("form", props) } }
-      if (name === "@/components/ticket-link") return { TicketLink: ({ task, jiraBaseUrl }) => createElement("a", { href: `${jiraBaseUrl}/browse/${encodeURIComponent(task.key)}` }, task.key) }
       let base = name.startsWith("@/") ? name.slice(2) : name.startsWith(".") ? normalize(`${dirname(path)}/${name}`) : null
       if (!base) throw new Error(`Unexpected import ${name}`)
-      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART, SPRINT_DETAIL, DEV_TYPE_PIE].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
+      if (!/\.(tsx?|css)$/.test(base)) base += [VIEW, CHART, SPRINT_DETAIL, DEV_TYPE_PIE, UNFINISHED_DETAIL, ISSUE_TYPE_ICON, TICKET_LINK].some((path) => path === `${base}.tsx`) ? ".tsx" : ".ts"
       return load(base)
     }
     vm.runInContext(`(function(require,module,exports){${compiled.get(path)}\n})`, sandbox, { filename: path })(fixtureRequire, loadedModule, loadedModule.exports)
@@ -81,7 +82,7 @@ export function projectsHarness() {
 }
 export function nodes(tree) { if (Array.isArray(tree)) return tree.flatMap(nodes); if (!tree?.props) return []; return [tree, ...nodes(tree.props.children)] }
 export function task(id, overrides = {}) {
-  return { id: String(id), key: `SUN-${id}`, summary: `Work ${id}`, parentId: "999", parentKey: "SUN-999", projectId: "100", projectKey: "SUN", issueType: "Dev-Task", devType: "Dev", points: 3, actualPoints: 2, resolvedDate: "2026-04-28", assigneeAccountId: null, assigneeDisplayName: null, statusName: "Done", parentStatus: "In Progress", sprintIds: [6823], ...overrides }
+  return { id: String(id), key: `SUN-${id}`, summary: `Work ${id}`, parentId: "999", parentKey: "SUN-999", projectId: "100", projectKey: "SUN", issueType: "Dev-Task", devType: "Dev", points: 3, actualPoints: 2, resolvedDate: "2026-04-28", assigneeAccountId: null, assigneeDisplayName: null, statusName: "Done", parentStatus: "In Progress", parentIssueType: null, sprintIds: [6823], ...overrides }
 }
 export function resultFixture(model, tasks = [], request = { project: "SUN", sprintIds: [6823], groups: [], browserTimeZone: "UTC" }, teamAttribution) {
   const startedAt = "2026-11-12T12:00:00Z"
