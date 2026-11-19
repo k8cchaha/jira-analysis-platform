@@ -91,14 +91,14 @@ Expanded Points constant只移除resolution限制，仍保留兩個missing分支
 project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and "Defect Cause[Select List (multiple choices)]" is EMPTY
 ```
 
-**E. Impact Scope缺失**：`MISSING_IMPACT_SCOPE_JQL`
+**E. Impact Scope缺失**：`MISSING_IMPACT_SCOPE_JQL`（`statusCategory != "To Do"` 排除尚未開始的 Issue）
 ```jql
-project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()
+project = sun and issuetype in (story, task, bug) and statusCategory != "To Do" and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()
 ```
 
 **F. 本人Impact補填資格**：`missingDataUpdateJql("impact-scope", ["101", "102"])`
 ```jql
-(project = sun and issuetype in (story, task, bug) and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()) AND id in (101,102)
+(project = sun and issuetype in (story, task, bug) and statusCategory != "To Do" and cf[14848] is EMPTY and (created >= "2026-11-01" or cf[13476] = "Sprint9") and cf[13476] is not EMPTY and assignee = currentUser()) AND id in (101,102)
 ```
 仍需service檢查原值／empty、schema、permission與allowed choices，builder不是完整授權。
 

@@ -274,9 +274,10 @@ export const MISSING_POINTS_WITH_UNEXPECTED_CLOSED_JQL =
 export const MISSING_DEFECT_CAUSE_JQL =
   `project in (sun, tkk, jiratry) and issuetype = bug and assignee = currentUser() and statusCategory != "To Do" and status not in ("In Progress", "Dev Ready") and resolution in (EMPTY, Done, Fixed) and ${JIRA_FIELDS.defectCause.jql} is EMPTY and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
-/** SUN 的 Story／Task／Bug，Impact Scope 未填（不限狀態）；self 可依 Jira 權限補填。 */
+/** SUN 的 Story／Task／Bug，Impact Scope 未填，且已離開 "To Do" 狀態類別；self 可依 Jira 權限補填。
+ *  對應真實 JQL：`... and statusCategory != "To Do" and assignee = currentUser() ...` */
 export const MISSING_IMPACT_SCOPE_JQL =
-  `project = sun and issuetype in (story, task, bug) and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
+  `project = sun and issuetype in (story, task, bug) and statusCategory != "To Do" and ${customFieldJql(JIRA_FIELDS.impactScope.id)} is EMPTY and (created >= "2026-11-01" or ${customFieldJql(JIRA_FIELDS.releasePackage.id)} = "Sprint9") and ${customFieldJql(JIRA_FIELDS.releasePackage.id)} is not EMPTY and assignee = currentUser() and created >= "${SELF_SCOPE_CREATED_SINCE}"`
 
 /** 權威缺失資料查詢；未識別的 kind 不回退到另一個類別。 */
 export function missingDataJql(kind: MissingDataKind) {

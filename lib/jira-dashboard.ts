@@ -445,10 +445,9 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
       throw new JiraDashboardError("invalid_page", "此分頁已過期或無效，請從第一頁重新載入。")
     }
   }
-  if (cursor.path.length > MISSING_DATA_LIMIT / MISSING_DATA_PAGE_SIZE) throw limitError()
   const fields = await getFields(credentials, kind)
   const selectedFields = fieldIds(fields, kind, true)
-  const result = await search(credentials, jql, selectedFields, MISSING_DATA_PAGE_SIZE, cursor.path.at(-1))
+  const result = await search(credentials, jql, selectedFields, MISSING_DATA_PAGE_SIZE, cursor.next)
   const warnings = new Set<string>()
   const pageIds = result.issues.map((issue) => issue.id)
   if (new Set(pageIds).size !== pageIds.length) throw invalidResponse()
@@ -484,14 +483,11 @@ export async function getMissingDataPage(kind: MissingDataKind, pageToken?: stri
     }
   })
   const next = result.nextPageToken
-  if (next && cursor.path.includes(next)) throw invalidResponse()
-  if (next && cursor.path.length >= MISSING_DATA_LIMIT / MISSING_DATA_PAGE_SIZE) throw limitError()
+  if (next && next === cursor.next) throw invalidResponse()
   return {
     readOnly,
     issues: issues.filter((issue): issue is MissingIssue => issue !== null),
-    page: cursor.path.length,
-    nextPageToken: next ? sealPageToken({ path: [...cursor.path, next], expiresAt: cursor.expiresAt }, context, secret) : null,
-    previousPageToken: cursor.path.length > 1 ? sealPageToken({ path: cursor.path.slice(0, -1), expiresAt: cursor.expiresAt }, context, secret) : null,
+    nextPageToken: next ? sealPageToken({ next, expiresAt: cursor.expiresAt }, context, secret) : null,
     jiraBaseUrl: baseUrl(), warnings: [...warnings],
   }
 }
