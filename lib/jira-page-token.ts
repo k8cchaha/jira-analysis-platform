@@ -8,13 +8,16 @@ interface PageTokenContext {
   filterKey?: string
 }
 
+// 只保留「這一頁要交給 Jira 的那一個 token」，不累積整條鏈，網址長度因此固定。
 export interface PageCursor {
-  path: Array<string | null>
+  next: string | null
   expiresAt: number
 }
 
 const TOKEN_TTL_MS = 15 * 60 * 1_000
-const MAX_TOKEN_LENGTH = 250_000
+// 單一 Jira token 上限 8,192 字元，加密與 base64url 膨脹後仍遠低於此值。
+const MAX_TOKEN_LENGTH = 16 * 1024
+const MAX_JIRA_TOKEN_LENGTH = 8_192
 
 function binding(context: PageTokenContext) {
   return createHash("sha256").update(JSON.stringify([
@@ -31,14 +34,13 @@ function encryptionKey(secret: string) {
 function validCursor(value: unknown): value is PageCursor {
   if (!value || typeof value !== "object") return false
   const cursor = value as PageCursor
-  return Number.isFinite(cursor.expiresAt) && Array.isArray(cursor.path) &&
-    cursor.path.length > 0 && cursor.path.length <= 101 && cursor.path[0] === null &&
-    cursor.path.slice(1).every((token) => typeof token === "string" && token.length > 0 && token.length <= 8_192) &&
-    new Set(cursor.path).size === cursor.path.length
+  if (Object.keys(cursor).some((key) => key !== "next" && key !== "expiresAt")) return false
+  return Number.isFinite(cursor.expiresAt) &&
+    (cursor.next === null || (typeof cursor.next === "string" && cursor.next.length > 0 && cursor.next.length <= MAX_JIRA_TOKEN_LENGTH))
 }
 
 export function initialPageCursor(now = Date.now()): PageCursor {
-  return { path: [null], expiresAt: now + TOKEN_TTL_MS }
+  return { next: null, expiresAt: now + TOKEN_TTL_MS }
 }
 
 export function sealPageToken(cursor: PageCursor, context: PageTokenContext, secret: string) {

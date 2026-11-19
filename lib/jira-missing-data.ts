@@ -65,9 +65,7 @@ export interface MissingIssue {
 export interface MissingDataPage {
   readOnly: boolean
   issues: MissingIssue[]
-  page: number
   nextPageToken: string | null
-  previousPageToken: string | null
   jiraBaseUrl: string | null
   warnings: string[]
 }

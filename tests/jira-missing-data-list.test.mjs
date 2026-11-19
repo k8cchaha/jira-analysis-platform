@@ -123,7 +123,6 @@ describe("complete dashboard dialog list", () => {
   it("rejects duplicate issue IDs in one batch", async () => { await rejectsIncomplete([page(1, [1, 1])]) })
   it("rejects duplicate issue IDs across batches", async () => { await rejectsIncomplete([page(1, [1], "second"), page(2, [1])]) })
   it("rejects repeated continuation tokens", async () => { await rejectsIncomplete([page(1, [], "same"), page(2, [], "same")]) })
-  it("rejects noncontiguous batch numbering", async () => { await rejectsIncomplete([page(1, [], "second"), page(3)]) })
   it("rejects a scope permission change", async () => { await rejectsIncomplete([page(1, [], "second"), page(2, [], null, { readOnly: true })]) })
   it("rejects a Jira site change", async () => { await rejectsIncomplete([page(1, [], "second"), page(2, [], null, { jiraBaseUrl: null })]) })
   for (const [name, value] of Object.entries({
@@ -136,6 +135,7 @@ describe("complete dashboard dialog list", () => {
     "bad warnings": page(1, [], null, { warnings: [42] }),
     "empty continuation": page(1, [], ""),
     "oversized continuation": page(1, [], "x".repeat(250_001)),
+    "continuation without a page number": page(undefined, [], "second"),
     "missing continuation": page(1, [], undefined, { nextPageToken: undefined }),
   })) {
     it(`rejects ${name}`, async () => { await rejectsIncomplete([value]) })

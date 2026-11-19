@@ -11,14 +11,14 @@ const context = {
   kind: "points",
   jql: "test fixed missing-data scope",
 }
-const cursor = { ...initialPageCursor(now), path: [null, "raw-jira-next-page-1", "raw-jira-next-page-2"] }
+const cursor = { ...initialPageCursor(now), next: "raw-jira-next-page-2" }
 
 describe("encrypted Jira page tokens", () => {
   it("initializes the first-page cursor with a fixed 15-minute lifetime", () => {
-    assert.deepEqual(initialPageCursor(now), { path: [null], expiresAt: now + ttl })
+    assert.deepEqual(initialPageCursor(now), { next: null, expiresAt: now + ttl })
   })
 
-  it("round-trips first-page and multi-page cursors without exposing the raw cursor", () => {
+  it("round-trips first-page and later-page cursors without exposing the raw cursor", () => {
     for (const value of [initialPageCursor(now), cursor]) {
       const token = sealPageToken(value, context, secret)
       assert.match(token, /^[A-Za-z0-9_-]+$/)
@@ -97,39 +97,31 @@ describe("encrypted Jira page tokens", () => {
     assert.throws(() => openPageToken(token, context, secret, now))
   })
 
-  it("rejects malformed cursor shapes, duplicate cursors, and invalid lifetimes", () => {
+  it("rejects malformed cursor shapes and invalid lifetimes", () => {
     for (const value of [
       null,
       {},
-      { expiresAt: now + ttl, path: [] },
-      { expiresAt: now + ttl, path: ["not-first-page"] },
-      { expiresAt: now + ttl, path: [null, null] },
-      { expiresAt: now + ttl, path: [null, ""] },
-      { expiresAt: now + ttl, path: [null, 7] },
-      { expiresAt: now + ttl, path: [null, "same", "same"] },
-      { expiresAt: now + ttl, path: [null, "a".repeat(8_193)] },
-      { expiresAt: now + ttl, path: [null, ...Array.from({ length: 101 }, (_, index) => String(index))] },
-      { expiresAt: Infinity, path: [null] },
-      { expiresAt: NaN, path: [null] },
-      { expiresAt: "invalid", path: [null] },
+      { expiresAt: now + ttl },
+      { expiresAt: now + ttl, next: "" },
+      { expiresAt: now + ttl, next: 7 },
+      { expiresAt: now + ttl, next: "a".repeat(8_193) },
+      { expiresAt: now + ttl, next: null, path: [null] },
+      { expiresAt: Infinity, next: null },
+      { expiresAt: NaN, next: null },
+      { expiresAt: "invalid", next: null },
     ]) {
       assert.throws(() => sealPageToken(value, context, secret), /Invalid page cursor/)
     }
   })
 
-  it("accepts the maximum cursor depth and individual raw-token length", () => {
-    const deepest = { expiresAt: now + ttl, path: [null, ...Array.from({ length: 100 }, (_, index) => `page-${index}`)] }
-    const longest = { expiresAt: now + ttl, path: [null, "a".repeat(8_192)] }
-    for (const value of [deepest, longest]) {
-      assert.deepEqual(openPageToken(sealPageToken(value, context, secret), context, secret, now), value)
-    }
+  it("accepts the maximum individual Jira token length", () => {
+    const longest = { expiresAt: now + ttl, next: "a".repeat(8_192) }
+    assert.deepEqual(openPageToken(sealPageToken(longest, context, secret), context, secret, now), longest)
   })
 
-  it("fails closed when a structurally valid cursor exceeds the encrypted-size limit", () => {
-    const oversized = {
-      expiresAt: now + ttl,
-      path: [null, ...Array.from({ length: 30 }, (_, index) => `${index}:`.padEnd(8_192, "a"))],
-    }
-    assert.throws(() => sealPageToken(oversized, context, secret), /Page cursor is too large/)
+  it("keeps the sealed token length constant regardless of how deep the list is", () => {
+    const lengths = [null, "a", "a".repeat(8_192)].map((next) => sealPageToken({ expiresAt: now + ttl, next }, context, secret).length)
+    assert.ok(Math.max(...lengths) < 16 * 1024)
+    assert.ok(lengths[0] < 120)
   })
 })

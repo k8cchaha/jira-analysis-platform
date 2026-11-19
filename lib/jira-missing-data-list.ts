@@ -61,7 +61,7 @@ export async function loadMissingDataList(
     if (result?.status === "error") throw new MissingDataListError(result.error)
     if (result?.status !== "success" || !result.data) incompleteList()
     const data = result.data
-    if (data.page !== page || typeof data.readOnly !== "boolean" ||
+    if (typeof data.readOnly !== "boolean" ||
       !(data.jiraBaseUrl === null || typeof data.jiraBaseUrl === "string") ||
       !Array.isArray(data.issues) || data.issues.length > MISSING_DATA_PAGE_SIZE ||
       !Array.isArray(data.warnings) || data.warnings.some((warning) => typeof warning !== "string") ||
