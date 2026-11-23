@@ -93,12 +93,17 @@ function Units<V extends SegmentedValue = Unit>({ name, value, onChange, ratios 
   return <div role="group" aria-label={groupLabel ?? `${name}呈現單位`} aria-disabled={disabled || undefined} className={`${compact ? "" : "mb-4 "}flex flex-wrap gap-1 rounded-lg bg-slate-100 p-1 text-xs dark:bg-slate-800 ${disabled ? "opacity-60" : ""}`}>{items.map((item) => <button type="button" key={item} disabled={disabled} aria-label={labels?.[item]} aria-pressed={value === item} className="min-h-9 rounded-md px-3 py-1 font-medium focus-visible:outline-2 focus-visible:outline-blue-600 aria-pressed:bg-white aria-pressed:shadow-sm disabled:cursor-not-allowed dark:aria-pressed:bg-slate-700" onClick={() => onChange(item)}>{text(item)}</button>)}</div>
 }
 
-export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResult }) {
+
+export function ProjectsAnalysisView({ result, selectedGroups = result.request.groups }: { result: ProjectsAnalysisResult; selectedGroups?: readonly string[] }) {
   const topicId = useId()
   const [activeTopic, setActiveTopic] = useState<Topic>("output")
   const topicTabs = useRef<Partial<Record<Topic, HTMLButtonElement>>>({})
   const [detail, setDetail] = useState<{ id: number; metric: DetailMetric; label: string } | null>(null)
-  const candidates = outputTeams.filter((team) => !result.request.groups.length || result.request.groups.includes(team.id))
+  // A result queried for all teams carries attribution for every team; re-scoping to a narrower set keeps it,
+  // because every account is still attributed and each team is filtered by its own attribution.
+  // An all-teams result (queried without a team selection) is narrowed in place when the filter now picks
+  // teams: no new request, the same tasks are re-scoped. `selectedGroups` empty means every team.
+  const candidates = outputTeams.filter((team) => !selectedGroups.length || selectedGroups.includes(team.id))
   const [outputUnit, setOutputUnit] = useState<"sp" | "actualSp">("sp")
   const [unfinishedUnit, setUnfinishedUnit] = useState<"sp" | "count">("sp")
   const [includeUnfinishedQa, setIncludeUnfinishedQa] = useState(true)
@@ -107,6 +112,14 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [selectedUnfinishedSprint, setSelectedUnfinishedSprint] = useState<number | null>(() => newestSprintId(result.sprints))
   const [initialUnfinishedSprint] = useState(selectedUnfinishedSprint)
   const [visibleTeams, setVisibleTeams] = useState<string[]>(() => candidates.map((team) => team.id))
+  // Re-focusing an all-teams result to other teams must re-seed the shown teams, or the charts would start
+  // with every team hidden. A new result remounts the view, so this only follows in-place scope changes.
+  const candidateKey = candidates.map((team) => team.id).join(",")
+  const [seededCandidates, setSeededCandidates] = useState(candidateKey)
+  if (seededCandidates !== candidateKey) {
+    setSeededCandidates(candidateKey)
+    setVisibleTeams(candidates.map((team) => team.id))
+  }
   // Members hidden from the single-team chart; empty means every member of that team is shown.
   const [hiddenMembers, setHiddenMembers] = useState<string[]>([])
   // Sprint rates: both aggregate curves for all teams, or one load / one completion curve per visible team.
@@ -139,6 +152,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   const [selectedOutputSprint, setSelectedOutputSprint] = useState<number | null>(() => newestSprintId(result.sprints))
   const [initialOutputSprint] = useState(selectedOutputSprint)
   const { groupStates } = useTeamMembers()
+  // A result queried for all teams carries attribution for every team; re-scoping to a different team set must
+  // re-validate it the way the query would, so a team without attribution is "unavailable", never silently empty.
   const attribution = result.teamAttribution
   const hasAttribution = attribution?.status === "available"
   // Unchecked QA-Task filtering is display-only: it recomputes output cohorts locally and never rewrites the server summary.
@@ -219,6 +234,12 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
   // An empty `value` means the whole scope; a comma list selects those teams.
   const estimationMetric = (teamIds: readonly string[] = []): ProjectsMetric => teamIds.length ? { kind: "estimation-deviation", value: teamIds.join(",") } : { kind: "estimation-deviation" }
   const estimationDisplay = (value: number | null) => value === null ? "—／不適用" : number(value)
+  /** 偏差率 = (SP − Actual SP) ÷ SP; no SP means no rate (未填), never a fabricated 0. */
+  const estimationRate = (value: number | null, totals: WorkTotals): number | null => {
+    const sp = totals.sp.sum
+    return value === null || sp === null || sp <= 0 ? null : value / sp
+  }
+  const rateDisplay = (rate: number | null) => rate === null ? "—／不適用" : percentTick(rate)
   const estimationSprint = selectedEstimationSprint === null ? null : result.sprints.find((sprint) => sprint.id === selectedEstimationSprint) ?? null
   // The table follows the chart: the clicked Sprint only, or every Sprint summed when none is selected.
   const estimationScopeSprints = estimationSprint ? [estimationSprint] : result.sprints
@@ -230,9 +251,18 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     if (!Number.isFinite(value)) throw new ProjectsAnalysisValidationError("估點偏差超出可計算範圍。")
     return { value: Object.is(value, -0) ? 0 : value, totals }
   }
-  const estimationSprintRows = estimationScopeSprints.map((sprint) => ({ sprint, ...projectsEstimationDeviation(result.tasks, sprint) }))
+  // Per-Sprint rows follow the same team scope as the aggregate.
+  const estimationSprintRows = estimationScopeSprints.map((sprint) => ({
+    sprint,
+    ...estimationOf(singleTeam && attribution?.status === "available"
+      ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "estimation-deviation" })
+      : selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" })),
+  }))
   // Selecting a Sprint narrows the table to that Sprint; otherwise every selected Sprint is summed.
-  const aggregateTasks = estimationScopeSprints.flatMap((sprint) => selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" }))
+  // The aggregate follows the team scope too: one team in scope means that team's work, never the whole project.
+  const aggregateTasks = estimationScopeSprints.flatMap((sprint) => singleTeam && attribution?.status === "available"
+    ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "estimation-deviation" })
+    : selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" }))
   const estimationAggregate = { ...estimationOf(aggregateTasks), tasks: aggregateTasks }
   const estimationShowsTeams = estimationView === "by-team" && hasAttribution
   // 各團隊偏差率: one line per in-scope team (selected teams, or every team plus 其他 without a selection).
@@ -241,9 +271,10 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     const dev = attribution?.status === "available"
       ? projectsEstimationDeviation(selectProjectsTeamIssues(result.tasks, sprint, attribution, teamIds, { kind: "estimation-deviation" }), sprint)
       : null
-    if (!dev) return { value: null, display: estimationDisplay(null) }
+    if (!dev) return { value: null, display: rateDisplay(null) }
+    const rate = estimationRate(dev.value, dev.totals)
     const label = `${estimationTeams.find((team) => team.id === teamIds[0])?.label ?? teamIds[0]} 估點偏差率`
-    return { value: dev.value, display: estimationDisplay(dev.value), readout: metricValue(sprint.id, estimationMetric(teamIds), label, dev.value, estimationDisplay(dev.value)), actions: [action(sprint.id, estimationMetric(teamIds), `${label}，查看工作單明細`)] }
+    return { value: rate, display: rateDisplay(rate), note: <span>{number(dev.value ?? 0)} SP ÷ {number(dev.totals.sp.sum ?? 0)} SP（{estimationDisplay(dev.value)} ÷ {points(dev.totals.sp)}）</span>, readout: metricValue(sprint.id, estimationMetric(teamIds), label, rate, rateDisplay(rate)), actions: [action(sprint.id, estimationMetric(teamIds), `${label}，查看工作單明細`)] }
   })
   // One team in scope charts that team's members instead: each member's own paired Dev-Tasks per Sprint.
   // The roster only names members; tasks outside it keep their Jira display name.
@@ -255,7 +286,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     ? [...new Set(result.sprints.flatMap((sprint) => estimationTeamTasks(sprint).map((task) => task.assigneeAccountId ?? "unassigned")))]
     : []
   const estimationMemberName = (accountId: string) => {
-    const roster = estimationRoster?.status === "success" ? estimationRoster.members.find((member) => member.accountId === accountId) : undefined
+    const roster = estimationRoster?.status === "success" && Array.isArray(estimationRoster.members) ? estimationRoster.members.find((member) => member.accountId === accountId) : undefined
     return roster?.displayName ?? result.tasks.find((task) => task.assigneeAccountId === accountId && task.assigneeDisplayName)?.assigneeDisplayName ?? (accountId === "unassigned" ? "未指派" : accountId)
   }
   // Sums one member's paired Dev-Tasks over the given Sprints (all selected Sprints when none is clicked).
@@ -268,32 +299,70 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
     color: member.color,
     values: result.sprints.map((sprint) => {
       const dev = estimationOf(estimationForAccount(member.accountId, [sprint]))
-      return { value: dev.value, display: estimationDisplay(dev.value) }
+      const rate = estimationRate(dev.value, dev.totals)
+      return { value: rate, display: rateDisplay(rate), note: <span>{number(dev.value ?? 0)} SP ÷ {number(dev.totals.sp.sum ?? 0)} SP（{estimationDisplay(dev.value)} ÷ {points(dev.totals.sp)}）</span> }
     }),
   }))
-  const estimationTeamsSeries: TrendSeries[] = singleTeam ? estimationMemberSeries : estimationTeams.map((team) => ({ id: team.id, label: team.label, color: team.color, encoding: team.encoding, values: estimationSeriesFor([team.id]) }))
+  // 各團隊偏差率 rows: only teams with qualifying paired work in the range (clicked Sprint, or all Sprints).
+  // A team with 0 張 is left out of the table and the chart rather than shown as 不適用.
+  const estimationTeamRows = estimationShowsTeams && !singleTeam && attribution?.status === "available" ? estimationTeams
+    .map((team) => ({ team, ...estimationOf(estimationScopeSprints.flatMap((sprint) => selectProjectsTeamIssues(result.tasks, sprint, attribution, [team.id], { kind: "estimation-deviation" }))) }))
+    .filter((row) => row.totals.count > 0) : []
+  // 各成員偏差率 rows follow the same rule.
+  const estimationMemberRows = estimationShowsTeams && singleTeam ? estimationMembers
+    .map((member) => ({ member, ...estimationOf(estimationForAccount(member.accountId, estimationScopeSprints)) }))
+    .filter((row) => row.totals.count > 0) : []
+  // The chart offers the same set as the table, so a zero-team never shows an empty 不適用 line.
+  const estimationChartTeamIds = new Set(estimationTeamRows.map((row) => row.team.id))
+  const estimationChartMemberIds = new Set(estimationMemberRows.map((row) => row.member.accountId))
+  const estimationTeamsSeries: TrendSeries[] = singleTeam
+    ? estimationMemberSeries.filter((series) => estimationChartMemberIds.has(series.id.replace("estimation-member:", "")))
+    : estimationTeams.filter((team) => estimationChartTeamIds.has(team.id)).map((team) => ({ id: team.id, label: team.label, color: team.color, encoding: team.encoding, values: estimationSeriesFor([team.id]) }))
   // Hiding is keyed by series id: team ids for teams, `estimation-member:<accountId>` for members.
   const visibleEstimationSeries = estimationTeamsSeries.filter((series) => !hiddenEstimationTeams.includes(series.id))
   const visibleEstimationIds = visibleEstimationSeries.map((series) => series.id)
   // The legend offers every series, hidden or not, so a hidden line can always be brought back.
   const estimationLegend = estimationTeamsSeries
+  // 全團隊／全成員總覽 also charts each Dev Type's deviation rate beneath the table: same formula, same Sprint
+  // scope (clicked Sprint rows, or every Sprint summed). Types with no qualifying work are left out.
+  // Dev-Type cohorts honour the team scope exactly like the aggregate rows.
+  const estimationTypeTasks = (sprint: ProjectsAnalysisResult["sprints"][number], label: string) => {
+    const cohort = singleTeam && attribution?.status === "available"
+      ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "type", value: label })
+      : selectProjectsMetricIssues(result.tasks, sprint, { kind: "type", value: label })
+    return cohort.filter((task) => task.issueType === "Dev-Task" && task.points !== null && task.actualPoints !== null)
+  }
+  const estimationTypeRows = !estimationShowsTeams ? PROJECTS_DEV_TYPES.map((label) => {
+    const tasks = estimationScopeSprints.flatMap((sprint) => estimationTypeTasks(sprint, label))
+    return { label, ...estimationOf(tasks) }
+  }).filter((row) => row.totals.count > 0) : []
+  const estimationTypeSeries: TrendSeries[] = estimationTypeRows.map((row, index) => ({
+    id: `estimation-type:${row.label}`,
+    label: row.label,
+    color: `type-${index % 7}`,
+    values: result.sprints.map((sprint) => {
+      const dev = estimationOf(estimationTypeTasks(sprint, row.label))
+      const rate = estimationRate(dev.value, dev.totals)
+      return { value: rate, display: rateDisplay(rate), note: <span>{number(dev.value ?? 0)} SP ÷ {number(dev.totals.sp.sum ?? 0)} SP（{estimationDisplay(dev.value)} ÷ {points(dev.totals.sp)}）</span> }
+    }),
+  }))
+  const [hiddenEstimationTypes, setHiddenEstimationTypes] = useState<string[]>([])
+  const visibleEstimationTypeSeries = estimationTypeSeries.filter((series) => !hiddenEstimationTypes.includes(series.id))
+  const toggleEstimationType = (id: string) => setHiddenEstimationTypes((previous) => previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id])
   const estimationSeries: TrendSeries[] = [{
     id: "estimation-deviation",
     label: "估點偏差率",
     color: "sp",
     values: result.sprints.map((sprint) => {
-      const value = projectsEstimationDeviation(result.tasks, sprint).value
-      return { value, display: estimationDisplay(value) }
+      const tasks = singleTeam && attribution?.status === "available"
+        ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "estimation-deviation" })
+        : selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" })
+      const dev = estimationOf(tasks)
+      const rate = estimationRate(dev.value, dev.totals)
+      return { value: rate, display: rateDisplay(rate), note: <span>{number(dev.value ?? 0)} SP ÷ {number(dev.totals.sp.sum ?? 0)} SP（{estimationDisplay(dev.value)} ÷ {points(dev.totals.sp)}）</span> }
     }),
   }]
   const toggleEstimationTeam = (id: string) => setHiddenEstimationTeams((previous) => previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id])
-  // 各團隊偏差率 rows: every in-scope team over the clicked Sprint, or over all Sprints summed.
-  const estimationTeamRows = estimationShowsTeams && !singleTeam && attribution?.status === "available" ? estimationTeams.map((team) => {
-    const tasks = estimationScopeSprints.flatMap((sprint) => selectProjectsTeamIssues(result.tasks, sprint, attribution, [team.id], { kind: "estimation-deviation" }))
-    return { team, ...estimationOf(tasks) }
-  }) : []
-  // 各成員偏差率 rows follow the same rule.
-  const estimationMemberRows = estimationShowsTeams && singleTeam ? estimationMembers.map((member) => ({ member, ...estimationOf(estimationForAccount(member.accountId, estimationScopeSprints)) })) : []
   const estimationTableCaption = `估點偏差率計算核對${estimationSprint ? `：${estimationSprint.name}` : "：所有 Sprint"}` + (estimationShowsTeams ? (singleTeam ? "（各成員）" : "（各團隊）") : "")
   const estimationTableUnit = estimationShowsTeams ? (singleTeam ? "成員" : "團隊") : "Sprint"
   const ratioParts = (s: ProjectsSprintSummary, unit: Unit) => {
@@ -606,17 +675,17 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
             : <p className="text-sm">{percent(commitmentRatioFor(first.sprint.id, null))}（{number(commitmentRatioFor(first.sprint.id, null).numerator ?? 0)}／{number(commitmentRatioFor(first.sprint.id, null).denominator ?? 0)} SP）</p>}
       {commitmentSprint && <ProjectsCommitmentDetail sprint={commitmentSprint} teams={singleTeam ? commitmentMemberRows : commitmentTeamRows} kind={singleTeam ? "member" : "team"} />}
     </Panel>)}
-    {topicPanel("estimation-deviation", <Panel title="估點偏差率" description="依公式 SP − Actual SP 加總點數差，不是百分比。僅計算完成日期在該 Sprint 內、SP 與 Actual SP 都已填的 Dev-Task；正值表示高估、負值表示低估。" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Two views: one aggregate curve, or one deviation curve per team (members for a single team). */}<Units name="估點偏差率範圍" value={estimationView} onChange={(view) => { if (view !== estimationView) setEstimationView(view) }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? estimationMemberViewLabels : estimationViewLabels} disabled={!hasAttribution} compact /></div>}>
+    {topicPanel("estimation-deviation", <Panel title="估點偏差率" description="偏差率 = (SP − Actual SP) ÷ SP，圖表以偏差率繪製；表格同時保留 SP − Actual SP 點數差。僅計算完成日期在該 Sprint 內、SP 與 Actual SP 都已填的 Dev-Task；正值表示高估、負值表示低估。SP 為 0 或缺漏時偏差率為「—／不適用」。" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Two views: one aggregate curve, or one deviation curve per team (members for a single team). */}<Units name="估點偏差率範圍" value={estimationView} onChange={(view) => { if (view !== estimationView) setEstimationView(view) }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? estimationMemberViewLabels : estimationViewLabels} disabled={!hasAttribution} compact /></div>}>
       {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全團隊加總偏差。</p>}
       {estimationShowsTeams
-        ? <ProjectsTrendChart id="estimation-deviation-teams" sprints={result.sprints} series={visibleEstimationSeries} unit="SP" signed formatTick={number} legendToggle={{ visibleIds: visibleEstimationIds, onToggle: toggleEstimationTeam }} legendSeries={estimationLegend} emptyMessage={visibleEstimationSeries.length ? undefined : (singleTeam ? "沒有可見成員。" : "沒有可見團隊。")} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues={false} />
+        ? <ProjectsTrendChart id="estimation-deviation-teams" sprints={result.sprints} series={visibleEstimationSeries} unit="%" signed formatTick={percentTick} legendToggle={{ visibleIds: visibleEstimationIds, onToggle: toggleEstimationTeam }} legendSeries={estimationLegend} emptyMessage={visibleEstimationSeries.length ? undefined : (singleTeam ? "沒有可見成員。" : "沒有可見團隊。")} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues={false} />
         : <>
-          <ProjectsTrendChart id="estimation-deviation" sprints={result.sprints} series={estimationSeries} unit="SP" signed formatTick={number} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues />
+          <ProjectsTrendChart id="estimation-deviation" sprints={result.sprints} series={estimationSeries} unit="%" signed formatTick={percentTick} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues />
           {estimationAggregate.totals.count === 0 && <p role="status" className="mt-3 text-sm text-slate-500 dark:text-slate-400">所選 Sprint 沒有符合計算條件的工作單。</p>}
         </>}
       <div className="mt-4 min-w-0 overflow-x-auto"><table>
         <caption className="sr-only">{estimationTableCaption}</caption>
-        <thead><tr><th>{estimationTableUnit}</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th></tr></thead>
+        <thead><tr><th>{estimationTableUnit}</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th><th>偏差率</th></tr></thead>
         {estimationShowsTeams && singleTeam
           ? <tbody>{estimationMemberRows.length ? estimationMemberRows.map(({ member, value, totals }) => <tr key={member.accountId}>
             <th scope="row">{member.label}</th>
@@ -624,7 +693,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
             <td>{points(totals.sp)}</td>
             <td>{points(totals.actualSp)}</td>
             <td>{estimationDisplay(value)}</td>
-          </tr>) : <tr><td colSpan={5} className="text-sm text-slate-500 dark:text-slate-400">所選範圍沒有符合計算條件的工作單。</td></tr>}</tbody>
+            <td>{rateDisplay(estimationRate(value, totals))}</td>
+          </tr>) : <tr><td colSpan={6} className="text-sm text-slate-500 dark:text-slate-400">所選範圍沒有符合計算條件的工作單。</td></tr>}</tbody>
           : estimationShowsTeams
             ? <tbody>{estimationTeamRows.length ? estimationTeamRows.map(({ team, value, totals }) => <tr key={team.id}>
               <th scope="row">{team.label}</th>
@@ -632,7 +702,8 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
               <td>{points(totals.sp)}</td>
               <td>{points(totals.actualSp)}</td>
               <td>{estimationDisplay(value)}</td>
-            </tr>) : <tr><td colSpan={5} className="text-sm text-slate-500 dark:text-slate-400">所選範圍沒有符合計算條件的工作單。</td></tr>}</tbody>
+              <td>{rateDisplay(estimationRate(value, totals))}</td>
+            </tr>) : <tr><td colSpan={6} className="text-sm text-slate-500 dark:text-slate-400">所選範圍沒有符合計算條件的工作單。</td></tr>}</tbody>
             : estimationSprint
               ? <tbody><tr aria-current="true" className="bg-slate-50 dark:bg-slate-800">
                 <th scope="row">{estimationSprint.name}</th>
@@ -640,6 +711,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
                 <td>{points(estimationSprintRows[0]?.totals.sp ?? estimationAggregate.totals.sp)}</td>
                 <td>{points(estimationSprintRows[0]?.totals.actualSp ?? estimationAggregate.totals.actualSp)}</td>
                 <td>{estimationDisplay(estimationSprintRows[0]?.value ?? null)}</td>
+                <td>{rateDisplay(estimationRate(estimationSprintRows[0]?.value ?? null, estimationSprintRows[0]?.totals ?? estimationAggregate.totals))}</td>
               </tr></tbody>
               : <tbody>
                 {result.sprints.map((sprint) => {
@@ -650,6 +722,7 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
                     <td>{points(row.totals.sp)}</td>
                     <td>{points(row.totals.actualSp)}</td>
                     <td>{estimationDisplay(row.value)}</td>
+                    <td>{rateDisplay(estimationRate(row.value, row.totals))}</td>
                   </tr>
                 })}
                 {multi && <tr className="border-t-2 border-slate-300 font-semibold dark:border-slate-600">
@@ -658,9 +731,24 @@ export function ProjectsAnalysisView({ result }: { result: ProjectsAnalysisResul
                   <td>{points(estimationAggregate.totals.sp)}</td>
                   <td>{points(estimationAggregate.totals.actualSp)}</td>
                   <td>{estimationDisplay(estimationAggregate.value)}</td>
+                  <td>{rateDisplay(estimationRate(estimationAggregate.value, estimationAggregate.totals))}</td>
                 </tr>}
               </tbody>}
       </table></div>
+      {!estimationShowsTeams && <h3 className="mt-6 text-sm font-semibold">各種 Dev Type 的偏差率{estimationSprint ? `（${estimationSprint.name}）` : "（所有 Sprint 加總）"}</h3>}
+      {!estimationShowsTeams && <ProjectsTrendChart id="estimation-deviation-types" sprints={result.sprints} series={visibleEstimationTypeSeries} unit="%" signed formatTick={percentTick} legendToggle={{ visibleIds: visibleEstimationTypeSeries.map((series) => series.id), onToggle: toggleEstimationType }} legendSeries={estimationTypeSeries} emptyMessage={estimationTypeSeries.length ? undefined : "所選範圍沒有可計算偏差率的 Dev-Task。"} initialSprintId={initialEstimationSprint} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} />}
+      {!estimationShowsTeams && estimationTypeRows.length > 0 && <div className="mt-4 min-w-0 overflow-x-auto"><table>
+        <caption className="sr-only">各 Dev Type 偏差率計算核對{estimationSprint ? `：${estimationSprint.name}` : "：所有 Sprint 加總"}</caption>
+        <thead><tr><th>Dev Type</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th><th>偏差率</th></tr></thead>
+        <tbody>{estimationTypeRows.map(({ label, value, totals }) => <tr key={label}>
+          <th scope="row">{label}</th>
+          <td>{number(totals.count)} 張</td>
+          <td>{points(totals.sp)}</td>
+          <td>{points(totals.actualSp)}</td>
+          <td>{estimationDisplay(value)}</td>
+          <td>{rateDisplay(estimationRate(value, totals))}</td>
+        </tr>)}</tbody>
+      </table></div>}
     </Panel>)}
     {topicPanel("types", <Panel title="完成任務類型">
       {/* The trend sits on top; the two donuts share the row beneath it — all-Sprint summary left, the clicked

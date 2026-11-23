@@ -143,8 +143,9 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
           className={`h-10 shrink-0 rounded-lg border px-3 text-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 ${latestSelected ? "border-blue-600 bg-blue-50 font-semibold text-blue-700 dark:border-blue-500 dark:bg-slate-800 dark:text-blue-300" : "border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"}`}>近 {RECENT_SPRINT_COUNT} Sprints</button>
         <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
           <TeamSelect key={projectSelected ? "ready" : "no-project"} groups={groups} onGroupsChange={(nextGroups) => {
+            // The parent decides whether a team change invalidates the shown result; only the notice is cleared here.
             if (latestSelection.current.project && JSON.stringify([...groups].sort()) !== JSON.stringify([...nextGroups].sort())) {
-              props.onGroupsChange(nextGroups); setQueryNotice(null); props.onDraftChange()
+              props.onGroupsChange(nextGroups); setQueryNotice(null)
             }
           }} perMember={false} helpText="未選團隊表示此 Project／Sprint 範圍內全部可讀工作單；團隊條件僅保留於本頁。" />
         </div>
