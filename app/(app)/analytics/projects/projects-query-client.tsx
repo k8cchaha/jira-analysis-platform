@@ -35,8 +35,34 @@ export function ProjectsQueryClient(props: ProjectsFilterProps) {
     controller.current?.abort(); nonce.current++
     setQuery(emptyQuery(scope))
   }
+  // Picking teams after an all-teams query re-scopes that result locally instead of refetching, as long as the
+  // project and Sprints are unchanged: the all-teams payload already carries every team's work.
+  const narrowsTeams = (project: ProjectsSelection["project"], sprintIds: readonly number[]) => Boolean(
+    visible.result
+    && !visible.result.request.groups.length
+    && project === visible.result.request.project
+    && JSON.stringify([...sprintIds].sort((a, b) => a - b)) === JSON.stringify(visible.result.request.sprintIds)
+  )
+  function groupsChanged(next: string[]) {
+    // Always narrow from the shown result: a request already in flight for an earlier team set must not hide it.
+    const current = visible.result?.request ?? visible.request
+    if (current && narrowsTeams(current.project, current.sprintIds)) {
+      changeGroups(next)
+      // Re-seal the same result under the new scope, otherwise the scope guard would discard it next render.
+      setQuery({ ...visible, scope: JSON.stringify([props.project, props.selectedSprintIds, props.error, [...next].sort()]) })
+      return
+    }
+    changeGroups(next)
+    invalidate()
+  }
   async function submit(selection: ProjectsSelection) {
     if (!teamReady || selection.error) return
+    // Same project and Sprints as an all-teams result, with the teams picked since: only narrow the view.
+    // The request keeps its all-teams scope; only the filter's current selection narrows what is shown.
+    if (groups.length > 0 && narrowsTeams(selection.project, selection.selectedSprintIds) && !visible.request?.groups.length) {
+      setQuery({ ...visible, scope, request: visible.request ?? visible.result!.request, loading: false, error: null })
+      return
+    }
     let request: ProjectsAnalysisRequest
     try { request = parseProjectsAnalysisRequest({ project: selection.project, sprintIds: selection.selectedSprintIds, groups, browserTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }) }
     catch (error) { setQuery({ ...emptyQuery(scope), error: error instanceof Error ? error.message : "篩選條件無效。" }); return }
@@ -60,14 +86,15 @@ export function ProjectsQueryClient(props: ProjectsFilterProps) {
   }
 
   return <div className="min-w-0 space-y-6">
-    <ProjectsFilter {...props} groups={groups} onGroupsChange={changeGroups} onDraftChange={invalidate} onQuery={submit} teamReady={teamReady} loading={visible.loading} />
+    <ProjectsFilter {...props} groups={groups} onGroupsChange={groupsChanged} onDraftChange={invalidate} onQuery={submit} teamReady={teamReady} loading={visible.loading} />
     {visible.error ? <div role="alert" className="rounded-lg border border-rose-200 bg-white p-4 text-sm text-rose-700 dark:border-rose-800 dark:bg-slate-900 dark:text-rose-300">
       <p>{visible.error}</p>
       {visible.request && <button type="button" disabled={!teamReady} onClick={() => submit({ project: visible.request!.project, selectedSprintIds: visible.request!.sprintIds, error: null })} className="mt-2 min-h-9 rounded px-3 text-slate-800 underline focus-visible:outline-2 dark:text-slate-100">重試相同條件</button>}
     </div> : null}
     {visible.loading ? <p role="status" className="text-sm text-slate-600 dark:text-slate-300">正在完整讀取 Sprint 工作單，完成全部分頁後顯示結果…</p> : null}
     {visible.result ? <div aria-busy={visible.loading} className={visible.loading ? "pointer-events-none opacity-50" : ""} inert={visible.loading}>
-      <ProjectsAnalysisView key={`${visible.nonce}-${visible.result.generatedAt}`} result={visible.result} />
+      {/* An all-teams result follows the filter's current team selection without a new request. */}
+      <ProjectsAnalysisView key={`${visible.nonce}-${visible.result.generatedAt}`} result={visible.result} selectedGroups={visible.result.request.groups.length ? undefined : groups} />
     </div> : !visible.loading && !visible.error ? <section className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
       選擇專案、Sprint 與選填團隊，按「查詢」比較開發指標。
     </section> : null}

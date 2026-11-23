@@ -7,9 +7,9 @@ const props = { project: "SUN", selectedSprintIds: [6823], error: null, sprints:
 const filter = (tree) => nodes(tree).find((node) => node.type?.name === "ProjectsFilter")
 const view = (tree) => nodes(tree).find((node) => node.type?.name === "ProjectsAnalysisView")
 function setup(initial = props) { const h = projectsHarness(), Component = h.load(CLIENT).ProjectsQueryClient; const render = (next = initial) => h.invoke(Component, next); render(); h.flushEffects(); return { h, Component, render } }
-function success(h, index, tasks = [task(1)]) {
+function success(h, index, tasks = [task(1)], attribution) {
   const request = JSON.parse(h.requests[index].options.body)
-  const result = resultFixture(h.load(MODEL), tasks, request)
+  const result = resultFixture(h.load(MODEL), tasks, request, attribution)
   h.requests[index].resolve(Response.json({ status: "success", data: result }))
 }
 
@@ -140,7 +140,8 @@ describe("local Projects topic tabs", () => {
       }
       // The data tables below the charts were removed on request; panels still render their charts only.
       assert.equal(nodes(render()).filter((node) => node.type?.name === "DataTable").length, 0)
-      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 5 : 4)
+      // 4 (or 5 when several Sprints exist); the overview-only Dev Type deviation trend adds one.
+      assert.equal(nodes(render()).filter((node) => node.type?.name === "ProjectsTrendChart").length, request ? 6 : 5)
       assert.equal(h.requests.length, 0)
     }
   })
@@ -394,7 +395,7 @@ describe("projects result visualization and readonly local details", () => {
     const tree = h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     assert.equal(nodes(tree).filter((node) => node.type === "button" && node.props.className?.includes("text-2xl")).length, 0)
     assert.equal(nodes(tree).filter((node) => node.type === "article" && "data-summary-tile" in node.props).length, 5)
-    assert.equal(nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart").length, 4)
+    assert.equal(nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart").length, 5)
     assert.equal(chartNode(tree, "types").props.distribution, true)
   })
   it("omits the explanatory result header for single and multiple Sprints", () => {
@@ -428,7 +429,7 @@ describe("projects result visualization and readonly local details", () => {
     const h = projectsHarness(), result = resultFixture(h.load(MODEL), [task(1), task(2, { resolvedDate: null, sprintIds: [6824], points: 8 })], multiRequest)
     const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
     const tree = render(), charts = nodes(tree).filter((node) => node.type?.name === "ProjectsTrendChart")
-    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "estimation-deviation", "types", "unfinished"])
+    assert.deepEqual(charts.map((node) => node.props.id), ["output", "commitment", "estimation-deviation", "estimation-deviation-types", "types", "unfinished"])
     assert.deepEqual([...chartNode(tree, "output").props.sprints].map((s) => s.id), [6823, 6824])
     assert.deepEqual(plain(chartNode(tree, "output").props.series[0].values.map((v) => v.value)), [3, 0])
     assert.deepEqual(plain(chartNode(tree, "unfinished").props.series[0].values.map((v) => v.value)), [0, 8])
@@ -783,5 +784,57 @@ describe("projects result visualization and readonly local details", () => {
     assert.match(text(details.props.title), /1,100 張工作單/)
     assert.equal(nodes(details).filter((n) => n.type === "tr").length, 1101)
     assert.equal(h.requests.length, 0)
+  })
+})
+
+describe("narrowing an all-teams result to the picked teams", () => {
+  it("re-scopes locally, without a request, when teams are picked and project/Sprints are unchanged", async () => {
+    const { h, render } = setup()
+    const pending = filter(render()).props.onQuery(props)
+    success(h, 0, [task(1, { assigneeAccountId: "a1", assigneeDisplayName: "Ann" })], { status: "available", byAssignee: [{ accountId: "a1", teamId: "ent-android" }] })
+    await pending
+    const before = view(render()).props
+    assert.equal(h.requests.length, 1)
+    h.groupStates["ent-android"] = { status: "success" }
+    filter(render()).props.onGroupsChange(["ent-android"])
+    const after = view(render())
+    assert.ok(after, "the existing result stays on screen")
+    assert.equal(h.requests.length, 1, "no refetch")
+    assert.deepEqual(plain(after.props.selectedGroups), ["ent-android"])
+    assert.equal(after.props.result, before.result, "same payload, only the scope differs")
+    // Pressing 查詢 again with the same project and Sprints also avoids a refetch.
+    filter(render()).props.onQuery(props)
+    assert.equal(h.requests.length, 1)
+  })
+  it("shows only the picked team's data from the same result, without a request", async () => {
+    const { h, render } = setup()
+    const pending = filter(render()).props.onQuery(props)
+    success(h, 0, [task(1, { points: 8, assigneeAccountId: "a1", assigneeDisplayName: "Ann" }), task(2, { points: 4, assigneeAccountId: "a2", assigneeDisplayName: "Bob" })], { status: "available", byAssignee: [{ accountId: "a1", teamId: "ent-web" }, { accountId: "a2", teamId: "ent-android" }] })
+    await pending
+    const outSeries = (tree) => nodes(view(tree).props.result ? h.invoke(h.load(VIEW).ProjectsAnalysisView, view(tree).props) : []).filter((node) => node.type?.name === "ProjectsTrendChart")
+    assert.deepEqual(plain(outSeries(render())[0].props.series.map((series) => series.id)), ["ent-android", "ent-web"])
+    h.groupStates["ent-web"] = { status: "success", members: [{ accountId: "a1", displayName: "Ann" }] }
+    filter(render()).props.onGroupsChange(["ent-web"])
+    const narrowed = render()
+    assert.equal(h.requests.length, 1, "no refetch")
+    assert.ok(view(narrowed), "the same result stays on screen")
+    assert.deepEqual(plain(view(narrowed).props.selectedGroups), ["ent-web"])
+    // One team in scope charts that team's members, but only Web's own account carries the points.
+    const narrowedSeries = plain(outSeries(narrowed)[0].props.series.map((series) => [series.id, series.values[0].display]))
+    assert.deepEqual(narrowedSeries, [["member:a1", "8"]], "only Web's member and work are charted; Android's 4 points are gone")
+  })
+
+  it("refetches when teams are picked for a result that already has a team scope, or after changing Sprints", () => {
+    const { h, render } = setup()
+    filter(render()).props.onGroupsChange([])
+    filter(render()).props.onQuery(props); success(h, 0)
+    h.groupStates["ent-android"] = { status: "success" }
+    filter(render()).props.onGroupsChange(["ent-android"])
+    assert.equal(h.requests.length, 1)
+    filter(render()).props.onGroupsChange(["ent-android"])
+    assert.equal(h.requests.length, 1)
+    // Changing Sprints invalidates the narrowed view as before.
+    const next = render({ ...props, selectedSprintIds: [6824] })
+    assert.equal(view(next), undefined)
   })
 })
