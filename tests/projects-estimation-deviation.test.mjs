@@ -97,7 +97,7 @@ describe("Estimation deviation chart and tab", () => {
     assert.throws(() => h.invoke(Component, { ...props, distribution: true }), /signed|Signed/)
     assert.throws(() => h.invoke(Component, { ...props, stackedTotalId: "delta" }), /signed|Signed/)
   })
-  it("places the tab directly after the two rates and exposes the exact eligible numbers and detail cohort without fetching", () => {
+  it("places the tab directly after the two rates and shows the exact eligible numbers without fetching or detail links", () => {
     const h = projectsHarness(), model = h.load(MODEL), result = resultFixture(model, cohortSource(), request), Component = h.load(VIEW).ProjectsAnalysisView
     const render = () => h.invoke(Component, { result })
     const tabs = nodes(render()).filter((node) => node.props.role === "tab")
@@ -108,13 +108,11 @@ describe("Estimation deviation chart and tab", () => {
     assert.equal(chartOf(render()).props.initialSprintId, 6824)
     const table = nodes(topic(render())).find((node) => node.type === "table")
     assert.ok(table)
-    assert.match(renderToStaticMarkup(table), /Actual SP/)
-    assert.match(renderToStaticMarkup(table), /—／不適用/)
-    const button = nodes(topic(render())).find((node) => node.type === "button" && node.props["aria-label"]?.includes("估點偏差率，查看工作單明細"))
-    button.props.onClick()
-    const detail = nodes(render()).find((node) => node.props.description === "本次完整查詢資料的唯讀明細，不會另查 Jira。")
-    const tickets = nodes(detail).filter((node) => node.type?.name === "TicketLink").map((node) => node.props.task.key)
-    assert.deepEqual([...new Set(tickets)], ["SUN-1", "SUN-2", "SUN-3", "SUN-10", "SUN-11"])
+    // The newest Sprint is selected, so the table reports only that Sprint's cohort.
+    const text = renderToStaticMarkup(table)
+    assert.match(text, /Sprint 59/)
+    assert.match(text, /符合條件張數/)
+    assert.equal(nodes(topic(render())).some((node) => node.type === "button" && String(node.props["aria-label"] ?? "").includes("查看工作單明細")), false, "the 明細 column was removed")
     assert.equal(h.requests.length, 0)
   })
   it("keeps a singleton as one signed point and preserves a tiny negative value in scientific text", () => {
@@ -126,5 +124,146 @@ describe("Estimation deviation chart and tab", () => {
     const drawn = h.invoke(chart.type, chart.props)
     assert.equal(nodes(drawn).filter((node) => node.props.className === "projects-trend-line").length, 0)
     assert.equal(nodes(drawn).filter((node) => node.type?.name === "Marker").length, 1)
+  })
+})
+
+describe("Estimation deviation view switch", () => {
+  const request = { project: "SUN", sprintIds: [6823, 6824], groups: [], browserTimeZone: "UTC" }
+  // Sprint 58 window is 2026-04-28..2026-05-11; Sprint 59 is 2026-05-12..2026-05-25.
+  const source = [
+    task(1, { points: 5, actualPoints: 2, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-web", assigneeDisplayName: "Web Dev" }),
+    task(2, { points: 2, actualPoints: 6, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-android", assigneeDisplayName: "Android Dev" }),
+    task(3, { points: 3, actualPoints: 3, resolvedDate: "2026-05-14", sprintIds: [6824], assigneeAccountId: "acc-web", assigneeDisplayName: "Web Dev" }),
+  ]
+  const attribution = { status: "available", byAssignee: [{ accountId: "acc-web", teamId: "ent-web" }, { accountId: "acc-android", teamId: "ent-android" }] }
+  const setup = (taskSource = source, taskRequest = request, taskAttribution = attribution) => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, taskSource, taskRequest, taskAttribution)
+    return { h, result, render: () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }) }
+  }
+  const topic = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+  const switchTo = (render, label) => {
+    const units = nodes(topic(render())).find((node) => node.type?.name === "Panel").props.controls.props.children
+    nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === label).props.onClick()
+  }
+  const tableOf = (tree) => nodes(topic(tree)).find((node) => node.type === "table")
+  const text = (node) => typeof node.props.children === "string" ? node.props.children : Array.isArray(node.props.children) ? node.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
+  const rowsOf = (tree) => nodes(tableOf(tree)).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(text))
+  const estimationCharts = (tree) => nodes(topic(tree)).filter((node) => node.type?.name === "ProjectsTrendChart")
+
+  it("defaults to one aggregate curve and offers 全團隊總覽／各團隊偏差率", () => {
+    const { h, render } = setup()
+    const units = nodes(topic(render())).find((node) => node.type?.name === "Panel").props.controls.props.children
+    assert.deepEqual(nodes(units.type(units.props)).filter((node) => node.type === "button").map((node) => node.props.children), ["全團隊總覽", "各團隊偏差率"])
+    const [chart] = estimationCharts(render())
+    assert.equal(chart.props.id, "estimation-deviation")
+    assert.deepEqual(plain(chart.props.series[0].values.map((value) => value.value)), [3, -4])
+    assert.equal(h.requests.length, 0)
+  })
+
+  it("plots one signed curve per in-scope team", () => {
+    const { h, render } = setup()
+    switchTo(render, "各團隊偏差率")
+    const tree = render()
+    const [chart] = estimationCharts(tree)
+    assert.equal(chart.props.id, "estimation-deviation-teams")
+    assert.equal(chart.props.signed, true)
+    const web = chart.props.series.find((series) => series.id === "ent-web")
+    assert.deepEqual(plain(web.values.map((value) => value.value)), [3, 0], "Web: Sprint 58 +3, Sprint 59 has 3−3 = 0")
+    const android = chart.props.series.find((series) => series.id === "ent-android")
+    assert.deepEqual(plain(android.values.map((value) => value.value)), [null, -4], "Android only has paired work in Sprint 59")
+    // Without a clicked Sprint each team row sums every Sprint; the newest Sprint opens selected, so clear it first.
+    chart.props.onSprintSelect(null)
+    const summed = render()
+    assert.deepEqual(rowsOf(summed).slice(0, 3), [
+      ["團隊", "符合條件張數", "SP", "Actual SP", "SP − Actual SP"],
+      ["Android", "1 張", "2", "6", "-4"],
+      ["AndroidTV", "0 張", "0", "0", "—／不適用"],
+    ])
+    assert.deepEqual(rowsOf(summed).find((row) => row[0] === "Web"), ["Web", "2 張", "8", "5", "3"], "Web: Sprint 58 +3, Sprint 59 0")
+    assert.equal(nodes(tableOf(tree)).some((node) => node.props.children === "明細"), false, "no 明細 column")
+    assert.equal(nodes(topic(tree)).some((node) => node.type === "button" && String(node.props["aria-label"] ?? "").includes("查看工作單明細")), false, "no detail links")
+    assert.equal(h.requests.length, 0)
+  })
+
+  it("hides and restores a team through its own legend list", () => {
+    const { render } = setup()
+    switchTo(render, "各團隊偏差率")
+    estimationCharts(render())[0].props.legendToggle.onToggle("ent-android")
+    assert.equal(estimationCharts(render())[0].props.series.some((series) => series.id === "ent-android"), false)
+    assert.ok(estimationCharts(render())[0].props.legendSeries.some((series) => series.id === "ent-android"))
+    estimationCharts(render())[0].props.legendToggle.onToggle("ent-android")
+    assert.ok(estimationCharts(render())[0].props.series.some((series) => series.id === "ent-android"))
+  })
+})
+
+describe("Estimation deviation for a single team", () => {
+  const request = { project: "SUN", sprintIds: [6823, 6824], groups: ["ent-web"], browserTimeZone: "UTC" }
+  const attribution = { status: "available", byAssignee: [{ accountId: "acc-a", teamId: "ent-web" }, { accountId: "acc-b", teamId: "ent-web" }] }
+  const source = [
+    task(1, { points: 5, actualPoints: 2, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-a", assigneeDisplayName: "A" }),
+    task(2, { points: 2, actualPoints: 6, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-b", assigneeDisplayName: "B" }),
+    task(3, { points: 3, actualPoints: 1, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-a", assigneeDisplayName: "A" }),
+    task(4, { points: 6, actualPoints: 4, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-b", assigneeDisplayName: "B" }),
+  ]
+  const setup = () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    h.groupStates["ent-web"] = { status: "success", members: [{ accountId: "acc-a", displayName: "Ann" }, { accountId: "acc-b", displayName: "Ben" }] }
+    return { h, render: () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result }) }
+  }
+  const topic = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+  const switchTo = (render, label) => {
+    const units = nodes(topic(render())).find((node) => node.type?.name === "Panel").props.controls.props.children
+    nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === label).props.onClick()
+  }
+  const chart = (tree) => nodes(topic(tree)).find((node) => node.type?.name === "ProjectsTrendChart")
+  const text = (node) => typeof node.props.children === "string" ? node.props.children : Array.isArray(node.props.children) ? node.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
+  const tableRows = (tree) => nodes(nodes(topic(tree)).find((node) => node.type === "table")).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(text))
+
+  it("offers member labels and plots one signed curve per member with real values", () => {
+    const { h, render } = setup()
+    switchTo(render, "各成員偏差率")
+    const tree = render()
+    assert.equal(chart(tree).props.id, "estimation-deviation-teams")
+    assert.deepEqual(plain(chart(tree).props.series.map((series) => series.label)), ["Ann", "Ben"])
+    const ann = chart(tree).props.series.find((series) => series.label === "Ann")
+    assert.deepEqual(plain(ann.values.map((value) => value.value)), [3, 2], "Ann: 5−2 and 3−1")
+    const ben = chart(tree).props.series.find((series) => series.label === "Ben")
+    assert.deepEqual(plain(ben.values.map((value) => value.value)), [-4, 2], "Ben: 2−6 and 6−4")
+    assert.equal(h.requests.length, 0)
+  })
+
+  it("sums all selected Sprints per member when no Sprint is selected, and narrows to the clicked Sprint otherwise", () => {
+    const { render } = setup()
+    switchTo(render, "各成員偏差率")
+    // A query opens with the newest Sprint preselected.
+    assert.deepEqual(tableRows(render()), [
+      ["成員", "符合條件張數", "SP", "Actual SP", "SP − Actual SP"],
+      ["Ann", "1 張", "3", "1", "2"],
+      ["Ben", "1 張", "6", "4", "2"],
+    ])
+    // Clearing the selection (chart reports null) falls back to every Sprint summed.
+    chart(render()).props.onSprintSelect(null)
+    assert.deepEqual(tableRows(render()), [
+      ["成員", "符合條件張數", "SP", "Actual SP", "SP − Actual SP"],
+      ["Ann", "2 張", "8", "3", "5"],
+      ["Ben", "2 張", "8", "10", "-2"],
+    ])
+  })
+
+  it("narrows the 全成員總覽 table to the clicked Sprint and sums every Sprint without a selection", () => {
+    const { render } = setup()
+    assert.deepEqual(tableRows(render()), [
+      ["Sprint", "符合條件張數", "SP", "Actual SP", "SP − Actual SP"],
+      ["Sprint 59", "2 張", "9", "5", "4"],
+    ])
+    chart(render()).props.onSprintSelect(null)
+    assert.deepEqual(tableRows(render()), [
+      ["Sprint", "符合條件張數", "SP", "Actual SP", "SP − Actual SP"],
+      ["Sprint 58", "2 張", "7", "8", "-1"],
+      ["Sprint 59", "2 張", "9", "5", "4"],
+      ["全部 Sprint 加總", "4 張", "16", "13", "3"],
+    ])
   })
 })
