@@ -110,7 +110,13 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
       }
       if (name === "@/components/page-header") return { PageHeader: () => null }
       if (name === "@/components/team-select") return { TeamSelect: () => null }
-      if (name === "./workload-filter") return { WorkloadFilterForm: () => null }
+      // The real form is needed to observe the query button's busy state; its heavy children stay stubbed.
+      if (name === "./workload-filter") return load(`${root}workload-filter.tsx`)
+      if (name === "@/components/search-button") return { SearchButton: (props) => ({ type: { name: "SearchButton" }, props }) }
+      if (name === "@/components/filter-dropdown") return { FilterDropdown: () => null }
+      if (name === "@/components/date-range-field") return { DateRangeField: () => null, useBrowserToday: () => "2026-11-03" }
+      if (name === "@/components/filter-defaults-provider") return { currentFilterParams: () => null, useInitialFilterDefaults: () => () => {} }
+      if (name === "@/lib/filter-defaults") return { absentDefaultCondition: () => false, defaultDashboardProjects: () => [] }
       if (name === "./workload-heatmap-grid") return { WorkloadHeatmapGrid: () => null }
       if (name === "./workload-issue-details") return { WorkloadIssueDetails: () => null }
       if (name === "./workload-query-client") return load(`${root}workload-query-client.tsx`)
@@ -207,6 +213,22 @@ function harness(snapshot = { "ent-web": { status: "success", members: [{ accoun
         return stream?.props.metricSwitch ?? tree?.props.children.props.children[0].props.children
       },
       streamKey: () => stream?.key,
+      streamKey: () => stream?.key,
+      /** The 查詢按鈕's busy flag, read from the real form's SearchButton. */
+      queryLoading: () => {
+        // The form is rendered through its loader; read it from there rather than from the stubbed subtree.
+        const tree = wrapper()
+        const stack = [tree]
+        while (stack.length) {
+          const node = stack.pop()
+          if (!node || typeof node !== "object") continue
+          if (node.type?.name === "SearchButton" || (node.props && "loading" in node.props && "disabled" in node.props && node.props["aria-describedby"]?.includes("team-help"))) return node.props.loading
+          const children = node.props?.children
+          if (Array.isArray(children)) stack.push(...children)
+          else if (children) stack.push(children)
+        }
+        return undefined
+      },
       retry: () => stream.props.onRetry(),
     }
     if (submit) result.submit()
@@ -316,6 +338,7 @@ describe("manual workload query activation (offline)", () => {
     const old = mounted.source
     mounted.popstate()
     assert.equal(old.closed, true)
+    assert.equal(mounted.form().props.loading, false)
     await mounted.navigate(a)
     assert.equal(h.sources.length, 1)
     mounted.submit(parsed(h, b))
@@ -327,6 +350,62 @@ describe("manual workload query activation (offline)", () => {
     assert.equal(h.sources.length, 1)
     mounted.cleanup()
     assert.equal(h.popstateListeners.size, 0)
+  })
+
+  it("keeps 查詢 busy until the submitted stream completes, including same-filter queries", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a, { submit: false })
+    t.after(mounted.cleanup)
+    // The harness renders the real form component; `form()` returns its element, `wrapper()` sets it.
+    const formOf = () => mounted.form()
+    assert.equal(formOf().props.loading, false, "idle before any submit")
+    mounted.submit(parsed(h, b))
+    assert.equal(formOf().props.loading, true, "busy while the new filters are not live yet")
+    await mounted.navigate(b)
+    assert.equal(formOf().props.loading, true, "busy after navigation while the stream is loading")
+    const button = h.load("components/search-button.tsx").SearchButton({ loading: formOf().props.loading })
+    assert.equal(button.props.disabled, true)
+    assert.equal(button.props.children, "查詢中…")
+    mounted.source.listeners.get("base")({ data: JSON.stringify(h.base) })
+    assert.equal(formOf().props.loading, true, "busy after the base frame")
+    mounted.source.listeners.get("done")({ data: "{}" })
+    assert.equal(formOf().props.loading, false, "idle after completion")
+    mounted.submit(parsed(h, b))
+    assert.equal(formOf().props.loading, true, "same-filter resubmission is busy")
+    mounted.source.listeners.get("done")({ data: "{}" })
+    assert.equal(formOf().props.loading, false, "same-filter query completes")
+  })
+
+  for (const failure of ["network", "empty-error", "server", "invalid-base"]) {
+    it(`clears query busy state on ${failure} failure`, async (t) => {
+      const h = harness()
+      const mounted = await h.mount(a)
+      t.after(mounted.cleanup)
+      assert.equal(mounted.form().props.loading, true)
+      if (failure === "network") mounted.source.onerror({})
+      else if (failure === "empty-error") mounted.source.onerror({ data: "" })
+      else if (failure === "server") {
+        const event = { data: JSON.stringify({ message: "error" }) }
+        mounted.source.onerror(event)
+        assert.equal(mounted.form().props.loading, true)
+        mounted.source.listeners.get("error")(event)
+      }
+      else mounted.source.listeners.get("base")({ data: "{" })
+      assert.equal(mounted.form().props.loading, false)
+    })
+  }
+
+  it("ignores completion from a cancelled stream while a new query is loading", async (t) => {
+    const h = harness()
+    const mounted = await h.mount(a)
+    t.after(mounted.cleanup)
+    const old = mounted.source
+    mounted.submit(parsed(h, b))
+    await mounted.navigate(b)
+    old.listeners.get("done")({ data: "{}" })
+    assert.equal(mounted.form().props.loading, true)
+    mounted.source.listeners.get("done")({ data: "{}" })
+    assert.equal(mounted.form().props.loading, false)
   })
 
   it("keeps the latest rapid submission if its matching URL commits directly", async (t) => {

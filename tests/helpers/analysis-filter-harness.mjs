@@ -70,9 +70,19 @@ export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) 
     useId: () => "fixture-team",
     useSyncExternalStore: (_subscribe, client, server) => activeHooks ? client() : server(),
   }
+  // 成員分析的查詢只允許打自己的 API；其他路徑一律視為違規並記錄下來供斷言。
+  const analyticsRequests = []
   const sandbox = vm.createContext({
-    Date: FixedDate, URLSearchParams, Error,
-    fetch: () => fail("Analysis filters must not request Planning or analytics data"),
+    Date: FixedDate, URLSearchParams, Error, Response, URL, console,
+    fetch: (url) => {
+      const href = String(url)
+      if (href.startsWith("/api/analytics/members?")) {
+        analyticsRequests.push(href)
+        // A plain thenable, so the filter sees a single Promise implementation across the vm boundary.
+        return { then: (resolve) => resolve({ json: () => ({ then: (done) => done({ status: "success", data: { issues: [], jql: "", jiraBaseUrl: null, from: "", to: "" } }) }) }) }
+      }
+      return fail("Analysis filters must not request Planning or analytics data")
+    },
   })
   const allowed = new Set([
     PROJECT_PAGE, PROJECT_FILTER, TEAM_PAGE, TEAM_FILTER, SELECTOR,
@@ -80,6 +90,7 @@ export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) 
     "components/team-select.tsx", "components/filter-dropdown.tsx", "components/project-selector.tsx", "components/date-range-field.tsx", "components/search-button.tsx",
     "lib/projects-filter.ts", "lib/team-analysis-filter.ts", "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/jira-jql.ts",
     "lib/jira-fields.ts", "lib/date-range.ts", "lib/jira-dashboard-filter.ts", "lib/jira-missing-data.ts", "lib/projects-analysis.ts", "lib/planning-overview.ts",
+    "lib/member-analysis-filter.ts", "lib/member-analysis.ts", "lib/member-analysis-calendar.ts", "app/(app)/analytics/story-points/member-analysis-table.tsx",
   ])
   function load(path) {
     if (modules.has(path)) return modules.get(path).exports
@@ -93,10 +104,14 @@ export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) 
     const fixtureRequire = (name) => {
       if (name === "./projects-query-client") return { ProjectsQueryClient: function ProjectsQueryClient(props) { return createElement(load(PROJECT_FILTER).ProjectsFilter, { ...props, groups: [], onGroupsChange() {}, onDraftChange() {}, onQuery() {} }) } }
       if (name === "react") return react
+      // Elements are created in this realm, so static markup renders them properly; host elements that tests
+      // need to call (the filter form) are exposed separately.
       if (name === "react/jsx-runtime") return require(name)
       if (name === "next/navigation") return { useRouter: () => ({ push: (href) => pushes.push(href), replace: (href) => pushes.push(href) }) }
       // No saved defaults: preserve the original controlled group state and SSR behavior.
       if (name === "@/components/filter-defaults-provider") return { useDefaultTeamGroups: () => react.useState([]) }
+      // The member analysis page now renders its own header and filter (no ComingSoon placeholder).
+      if (name === "@/components/page-header") return { PageHeader: ({ title }) => createElement("header", { className: "fixture-page-header" }, createElement("h1", null, title)) }
       if (name === "@/components/navigation-blocker") return { GuardedLink: ({ children, ...props }) => createElement("a", props, children) }
       if (name === "@/components/team-members-provider") return {
         useTeamMembers: () => ({ groupStates: snapshot, loadGroup: () => fail("Unexpected group load"), retryGroup: () => fail("Unexpected group retry") }),
@@ -113,17 +128,30 @@ export function harness(today = "2026-10-21", { instant, timezoneOffset } = {}) 
     hooksByComponent.set(Component, hooks)
     hooks.cursor = 0
     activeHooks = hooks
-    try { return Component(Component.name === "ProjectsFilter" ? { groups: controlledGroups, onGroupsChange(next) { controlledGroups = next }, onDraftChange() {}, onQuery() {}, ...props } : props) } finally {
+    try {
+      return Component(Component.name === "ProjectsFilter" ? { groups: controlledGroups, onGroupsChange(next) { controlledGroups = next }, onDraftChange() {}, onQuery() {}, ...props } : props)
+    } finally {
       activeHooks = null
       while (layoutEffects.length) layoutEffects.shift()()
     }
   }
   return {
     load, invoke, pushes,
+    analyticsRequests,
     setPending: (value) => { pending = value },
     flushEffects: () => { while (effects.length) effects.shift()() },
     get transitionCount() { return transitionCount },
-    page: async (params = {}, path = PROJECT_PAGE) => load(path).default({ searchParams: Promise.resolve(params) }),
+    // The member analysis page now returns a fragment (header + filter) instead of a ComingSoon props object;
+    // tests read the filter's props, so flatten it to that shape here.
+    page: async (params = {}, path = PROJECT_PAGE) => {
+      const tree = await load(path).default({ searchParams: Promise.resolve(params) })
+      if (path !== TEAM_PAGE) return tree
+      const children = Array.isArray(tree.props.children) ? tree.props.children : [tree.props.children]
+      // <><PageHeader /><div><TeamAnalysisFilter /></div></>
+      const wrapper = children.find((child) => child?.type === "div")
+      const filters = wrapper?.props?.children
+      return { props: { title: "成員分析", showDescription: false, filters } }
+    },
   }
 }
 export function nodes(tree) {
@@ -137,6 +165,8 @@ export const sprintDropdown = (tree) => nodes(tree).find((node) => node.props.id
 export const dateField = (tree) => nodes(tree).find((node) => node.type?.name === "DateRangeField")
 export const queryButton = (tree) => nodes(tree).find((node) => node.type?.name === "SearchButton")
 export const readyNotice = (tree) => nodes(tree).some((node) => node.props.role === "status" && /篩選條件已就緒/.test(node.props.children))
+/** The page form itself: filters now render inside a section, so find the form rather than the root. */
+export const formOf = (tree) => nodes(tree).find((node) => node.type === "form")
 export function checkbox(tree, name) {
   const label = nodes(sprintDropdown(tree)).find((node) => node.type === "label" && nodes(node).some((child) => child.type === "span" && child.props.children === name))
   return nodes(label).find((node) => node.type === "input")

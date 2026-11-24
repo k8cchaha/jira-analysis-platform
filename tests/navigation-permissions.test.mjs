@@ -59,7 +59,7 @@ describe("Sprint Capacity navigation", () => {
     const capacity = sprint.features.at(-1)
     assert.equal(capacity.label, "Capacity")
     assert.equal(capacity.icon, "capacity")
-    const teamAnalysis = nav.navigationCategories.find((category) => category.id === "analytics").features.find((feature) => feature.label === "團隊分析")
+    const teamAnalysis = nav.navigationCategories.find((category) => category.id === "analytics").features.find((feature) => feature.label === "成員分析")
     assert.notEqual(capacity.icon, teamAnalysis.icon)
     assert.deepEqual(JSON.parse(JSON.stringify(capacity.routes)), [{ href: "/sprint/capacity", label: "Capacity" }])
     assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState("/sprint/capacity"))), { title: "Capacity", categoryId: "sprint" })
@@ -88,10 +88,10 @@ describe("Analysis navigation", () => {
       })
     }
   })
-  it("consolidates project, trends and comparison before team analysis without changing visibility", () => {
+  it("consolidates project, trends and comparison before member analysis without changing visibility", () => {
     const nav = harness()
     const analytics = nav.navigationCategories.find((category) => category.id === "analytics")
-    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案回顧與趨勢", "團隊分析"])
+    assert.deepEqual(Array.from(analytics.features, (feature) => feature.label), ["工作量分析", "專案回顧與趨勢", "成員分析"])
     assert.deepEqual(Array.from(analytics.features, (feature) => feature.id), ["workload", "projects", "story-points"])
     assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState("/analytics/members"))), { title: "Jira Analysis", categoryId: null })
     const routeType = readFileSync(new URL("components/app-shell/navigation.ts", root), "utf8").split("export type NavigationIcon")[0]
@@ -106,7 +106,7 @@ describe("Analysis navigation", () => {
     const adminCategories = nav.visibleNavigationCategories(nav.navigationCategories, nav.ADMIN_EMAILS[0])
     assert.ok(adminCategories.find((category) => category.id === "analytics").features.some((feature) => feature.id === "projects"))
     assert.equal(nav.visibleNavigationCategories(nav.navigationCategories, "someone@example.com").length, 0)
-    for (const [path, title] of [[team.routes[0].href, "團隊分析"], [project.routes[0].href, "專案回顧與趨勢"]]) {
+    for (const [path, title] of [[team.routes[0].href, "成員分析"], [project.routes[0].href, "專案回顧與趨勢"]]) {
       assert.deepEqual(JSON.parse(JSON.stringify(nav.getNavigationState(path))), { title, categoryId: "analytics" })
     }
   })
@@ -122,7 +122,7 @@ describe("Analysis navigation", () => {
 
   it("keeps the implemented Projects page and Team ComingSoon page on their async filter contracts", async () => {
     for (const [path, title] of [
-      ["app/(app)/analytics/story-points/page.tsx", "團隊分析"],
+      ["app/(app)/analytics/story-points/page.tsx", "成員分析"],
       ["app/(app)/analytics/projects/page.tsx", "專案回顧與趨勢"],
     ]) {
       const code = ts.transpileModule(readFileSync(new URL(path, root), "utf8"), {
@@ -145,7 +145,7 @@ describe("Analysis navigation", () => {
       const fixtureRequire = (name) => {
         if (name === "react/jsx-runtime") return require(name)
         if (name === "@/components/coming-soon") return { ComingSoon }
-        if (isProjects && name === "@/components/page-header") return { PageHeader }
+        if (name === "@/components/page-header") return { PageHeader }
         if (name === (isProjects ? "./projects-query-client" : "./team-analysis-filter")) {
           return isProjects ? { ProjectsQueryClient: Filter } : { TeamAnalysisFilter: Filter }
         }
@@ -175,10 +175,10 @@ describe("Analysis navigation", () => {
           assert.equal(header.props.title, title)
           controls = page.props.children.find((child) => child.type === Filter)
         } else {
-          assert.equal(page.type, ComingSoon)
-          assert.equal(page.props.title, title)
-          assert.equal(page.props.showDescription, false)
-          controls = page.props.filters
+          // 成員分析 renders <PageHeader /> plus its filter directly, with no ComingSoon placeholder.
+          const header = page.props.children.find((child) => child.type === PageHeader)
+          assert.equal(header.props.title, title)
+          controls = page.props.children.find((child) => child.type === "div").props.children
         }
         assert.equal(parserCalls, 1)
         assert.equal(controls.type, Filter)

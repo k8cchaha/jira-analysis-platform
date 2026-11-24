@@ -29,7 +29,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 | Sprint／[Capacity](features/sprint-capacity.md) | `/sprint/capacity` | 示範容量與請假試算 | 未來需要集中人力確認 | 目前僅mock試算，不能判斷真實容量 | 部分實作；無持久化／Jira容量資料 |
 | 分析／[工作量分析](features/analytics-workload.md) | `/analytics/workload` | 觀察成員週點數分布 | 總量無日序、指標混用、難追原票 | SP／Actual週分布、集中與缺值 | 已實作；Jira唯讀、明確查詢才執行 |
 | 分析／[專案回顧與趨勢](features/analytics-projects.md) | `/analytics/projects` | 比較已結束 Sprint 的唯讀工作摘要 | 輸出、工作構成與承諾／品質口徑不清 | SP／Actual產出、六類Dev Type、Commitment、Bug／Dev、TKK／SUN壓力、目前未完成及本地明細 | 已實作；手動查詢，現值非歷史快照，無Capacity比較 |
-| 分析／[團隊分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
+| 分析／[成員分析](features/analytics-team.md) | `/analytics/story-points` | 規劃指定日曆期間的團隊工作摘要 | 團隊彙整負擔、日期篩選入口不清 | 尚無結果；可選專案、整個Team與日期區間 | 部分實作；日期篩選可用，結果ComingSoon |
 | 報表／[儲存的報表](features/reports-saved.md) | `/reports/saved/list` | 規劃重用報表設定 | 重複輸入常用條件 | 設定管理，非新分析指標 | 規劃中；ComingSoon |
 | 報表／[匯出紀錄](features/reports-exports.md) | `/reports/exports/list` | 規劃查看／下載匯出成果 | 檔案與版本追蹤 | 交付管理，尚無檔案 | 規劃中；ComingSoon |
 | 設定／[系統設定](features/settings-system.md) | `/settings/system` | 保留系統設定入口 | 設定管理尚未實作 | 僅頁面標題；環境診斷與讀值入口已移除 | 規劃中；內容已清空 |
@@ -44,7 +44,7 @@ Markdown 是權威來源，留在 repository 版本管理；未來需要 HTML／
 - 合計17個精確、單跳307別名；無wildcard、未知子路徑與API不變。舊 Projects 日期網址不自動跳頁，而是錯誤＋手動移至團隊分析連結：合法舊 `mode=dates`＋Project／from／to 保留該條件，不合法則連乾淨團隊入口。日期篩選預設近1個瀏覽器本地日曆月，支援近1／2／3／6月及自訂日期；兩頁的Team僅local整個群組，URL還原不自動分析。
 - 登入、OAuth callback、根路徑跳轉及舊 analysis URL redirect 是支援流程，不另列分析功能頁。安全與授權見 [Jira 技術參考](jira-reference.md)。
 
-以上覆蓋目前 `app/(app)` 的12個實體功能頁路由（11個主導覽目的地＋補充 `/settings/jira`），分析只有工作量／專案回顧與趨勢／團隊分析三個 canonical 頁，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
+以上覆蓋目前 `app/(app)` 的12個實體功能頁路由（11個主導覽目的地＋補充 `/settings/jira`），分析只有工作量／專案回顧與趨勢／成員分析三個 canonical 頁，以及1項無路由的舊服務。導覽可能依登入者配置只顯示儀表板；**此表不是使用者權限清單，導覽隱藏也不等於 server API 授權**。
 
 ## 五個閱讀前提醒
 1. **同名點數不一定有相同母體**：Planning與Projects為Sprint母票下Dev＋QA、Burn Down已估Dev-only、工作量是期間曾Done的Dev、Dashboard缺值是狀態依賴的Dev＋QA。

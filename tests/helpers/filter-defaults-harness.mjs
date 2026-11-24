@@ -10,11 +10,13 @@ const pure = new Set([
   "lib/filter-defaults.ts", "lib/jira-jql.ts", "lib/jira-fields.ts", "lib/jira-dashboard-filter.ts",
   "lib/burndown-params.ts", "lib/jira-sprint-data.ts", "lib/projects-filter.ts",
   "lib/team-analysis-filter.ts", "lib/date-range.ts", "lib/workload-filter.ts", "lib/workload-heatmap.ts", "lib/projects-analysis.ts", "lib/planning-overview.ts", "lib/jira-missing-data.ts",
+  "lib/member-analysis-filter.ts", "lib/member-analysis.ts", "lib/member-analysis-calendar.ts",
 ])
 const clients = new Set([
   "components/filter-defaults-provider.tsx", "components/filter-defaults-navigation.tsx", "components/team-select.tsx",
   "app/(app)/dashboard/dashboard-filter.tsx", "app/(app)/analytics/workload/workload-filter.tsx",
   "app/(app)/analytics/projects/projects-filter.tsx", "app/(app)/analytics/projects/projects-query-client.tsx", "app/(app)/analytics/story-points/team-analysis-filter.tsx",
+  "app/(app)/analytics/story-points/member-analysis-table.tsx",
   "app/(app)/sprint/planning/planning-client.tsx", "app/(app)/sprint/burndown/burndown-client.tsx",
 ])
 const inert = (name) => ({ [name]: Object.defineProperty(() => null, "name", { value: name }) })

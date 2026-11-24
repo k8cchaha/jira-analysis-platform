@@ -142,7 +142,7 @@ describe("moved project date URLs", () => {
     assert.equal(queryButton(tree).props.disabled, true)
     assert.equal(dateField(tree), undefined)
     assert.equal(nodes(tree).some((node) => node.props.type === "radio"), false)
-    assert.match(renderToStaticMarkup(tree), /分析區間已移至團隊分析/)
+    assert.match(renderToStaticMarkup(tree), /分析區間已移至成員分析/)
     assert.equal(nodes(tree).find((node) => node.props.href)?.props.href, href)
     tree.props.onSubmit({ preventDefault() {} })
     assert.equal(readyNotice(h.invoke(h.load(FILTER).ProjectsFilter, props)), false)
@@ -678,19 +678,17 @@ describe("analysis headers and query-client slots", () => {
     assert.doesNotMatch(markup, /此功能正在準備中|分析尚未開放/)
     assert.ok(markup.indexOf("</header>") < markup.indexOf("<form"))
   })
-  it("renders async filters between one subtitle-free header and honest placeholder", async () => {
+  it("renders the member analysis filter directly under its header with no placeholder block", async () => {
     const h = harness("2026-11-12")
-    for (const tree of [await h.page({}, TEAM_PAGE)]) {
-      assert.equal(tree.props.showDescription, false)
-      const markup = renderToStaticMarkup(tree)
-      const header = markup.match(/<header\b[^>]*>[\s\S]*?<\/header>/)[0]
-      assert.equal((header.match(/<h1\b/g) ?? []).length, 1)
-      assert.doesNotMatch(header, /<p\b/)
-      assert.ok(markup.includes(tree.props.description))
-      assert.ok(markup.indexOf("</header>") < markup.indexOf("<form"))
-      assert.ok(markup.indexOf("<form") < markup.indexOf("<section"))
-      assert.match(markup, /此功能正在準備中/)
-    }
+    const page = await h.page({}, TEAM_PAGE)
+    // The page is now <PageHeader /> + the filter; its filter props come through the harness' page helper.
+    assert.equal(page.props.title, "成員分析")
+    assert.equal(page.props.showDescription, false)
+    const { TeamAnalysisFilter } = h.load("app/(app)/analytics/story-points/team-analysis-filter.tsx")
+    const markup = render(TeamAnalysisFilter, page.props.filters.props)
+    assert.ok(markup.includes('aria-label="查詢範圍"'), "the 查詢範圍 filter block is rendered")
+    assert.doesNotMatch(markup, /即將推出|此功能正在準備中/, "no placeholder block")
+    assert.equal((markup.match(/<section\b/g) ?? []).length, 1, "only the filter section remains")
   })
   it("preserves default ComingSoon subtitles outside analytics", () => {
     const { ComingSoon } = harness().load("components/coming-soon.tsx")

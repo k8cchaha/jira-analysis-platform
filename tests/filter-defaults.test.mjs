@@ -304,7 +304,10 @@ describe("real filter consumers", () => {
       const selectorName = exportName === "ProjectsQueryClient" ? "ProjectsFilter" : "TeamSelect"
       assert.deepEqual(plain(named(tree, selectorName).props.groups), defaults.groups)
       // Preserve the existing Burndown per-member selector; Projects' controlled Filter is tested separately.
-      if (exportName !== "ProjectsQueryClient") assert.equal(named(tree, "TeamSelect").props.perMember, exportName === "BurndownClient" ? undefined : false)
+      // 成員分析 now uses the same member-capable picker as 工作量分析 (per-member expansion enabled).
+      // 成員分析 uses the same member-capable picker as 工作量分析; only Projects stays team-only.
+      // Projects and Planning keep team-only pickers; 成員分析 now offers per-member selection like 工作量分析.
+      if (exportName !== "ProjectsQueryClient") assert.equal(named(tree, "TeamSelect").props.perMember, exportName === "PlanningClient" ? false : undefined)
       ready(h, { project: "PRIDE", groups: ["ent-ios"] }); tree = h.draw(Component, props)
       assert.deepEqual(plain(named(tree, selectorName).props.groups), defaults.groups)
       assert.equal(h.requests.length, 0); assert.equal(h.pushes.length, 0); assert.equal(h.replacements.length, 0)

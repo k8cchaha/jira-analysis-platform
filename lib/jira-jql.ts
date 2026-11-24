@@ -504,6 +504,24 @@ export function workloadDoneDuringJql(range: DateRange): string {
  * 一次查詢取回整個區間，不再逐日掃描：`resolved` 是欄位值而非事件，逐日查詢
  * 換不到額外資訊。天數因此不影響查詢次數，只影響回應筆數。
  */
+/**
+ * 成員分析的查詢：指定成員在區間內 resolved 的 Dev-Task。
+ * 以 `resolutiondate` 判斷完成日（不是「轉為 Done」事件）；專案條件只在有選專案時附加。
+ * 對應真實 JQL：`assignee in ("<idA>", "<idB>", …) AND issuetype = "Dev-Task"
+ *  AND ((resolved >= "YYYY-MM-DD" AND resolved <= "YYYY-MM-DD") OR (created >= "YYYY-MM-DD" AND created <= "YYYY-MM-DD"))
+ *  [AND project in (…)] ORDER BY key ASC`
+ * 日期由 `requireAnalysisDateRange` 驗證，`assignee` 由 `enforcedWorkloadScope` 驗證。
+ */
+export function memberAnalysisDevTasksJql(scope: ResolvedDashboardScope, range: DateRange): string {
+  const { assignee, projects } = enforcedWorkloadScope(scope)
+  const { from, to } = requireAnalysisDateRange(range)
+  // 區間內 resolved 或建立的 Dev-Task：已完成的以完成日計，尚未完成但區間內開立的也納入（該列點數為未填）。
+  const window = `((resolved >= "${from}" AND resolved <= "${to}") OR (created >= "${from}" AND created <= "${to}"))`
+  const jql = `${assignee} AND issuetype = "Dev-Task" AND ${window}${projects} ${ANALYSIS_ORDER_BY}`
+  if (jql.length > DASHBOARD_JQL_LIMIT) throw new DashboardFilterError("分析查詢過大，請縮小範圍。")
+  return jql
+}
+
 export function workloadDevTasksJql(scope: ResolvedDashboardScope, range: DateRange): string {
   const { assignee, projects } = enforcedWorkloadScope(scope)
   const jql = `issuetype = "Dev-Task" AND ${workloadDoneDuringJql(range)} AND ${assignee}${projects} ${ANALYSIS_ORDER_BY}`

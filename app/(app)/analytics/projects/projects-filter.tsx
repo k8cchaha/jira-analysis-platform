@@ -155,7 +155,7 @@ export function ProjectsFilter(props: ProjectsFilterProps & {
       </div>
       {sprintError ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">{sprintError}</p> : null}
       {isPending ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在更新篩選條件…</p> : null}
-      {selection.error && props.dateMigrationHref ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">分析區間已移至團隊分析。<GuardedLink href={props.dateMigrationHref} className="ml-2 text-blue-600 underline dark:text-blue-400">前往團隊分析</GuardedLink></p> : null}
+      {selection.error && props.dateMigrationHref ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">分析區間已移至成員分析。<GuardedLink href={props.dateMigrationHref} className="ml-2 text-blue-600 underline dark:text-blue-400">前往成員分析</GuardedLink></p> : null}
       <p id="projects-query-help" className="sr-only">請先選擇專案及 1–6 個 Sprint，再按查詢。</p>
       {ids.length > PROJECTS_SPRINT_LIMIT ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">每次最多分析 6 個 Sprint，請縮小選取範圍。</p> : null}
       {groups.length > 0 && props.teamReady === false ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">等待完整團隊成員資料；若載入失敗，請在團隊選單重試。</p> : null}
