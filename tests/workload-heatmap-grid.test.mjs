@@ -285,3 +285,29 @@ describe("weekly heatmap table markup (not browser layout)", () => {
     assert.doesNotMatch(emptyMembers, /<table/)
   })
 })
+
+describe("heatmap palette switch", () => {
+  it("offers 藍/綠/紅/黃 beside the scale, defaulting to 藍 and repainting the cells it controls", () => {
+    const markup = render(build())
+    const legend = markup.slice(markup.lastIndexOf('<div class="mt-3'))
+    const labels = [...legend.matchAll(/aria-pressed="(true|false)"[^>]*>[\s\S]*?>(藍|綠|紅|黃)<\/button>/g)].map((match) => [match[2], match[1]])
+    assert.deepEqual(labels, [["藍", "true"], ["綠", "false"], ["紅", "false"], ["黃", "false"]])
+    // 主色系在左、顏色級距在同一列的右側。
+    assert.match(legend, /class="mt-3 flex flex-wrap items-center justify-between/)
+    assert.ok(legend.indexOf("主色系") < legend.indexOf("少"))
+    assert.match(legend, /1-5[\s\S]*6-9[\s\S]*10-14[\s\S]*15\+/)
+  })
+  it("uses white text on the two deepest yellow levels in both themes", () => {
+    const markup = render(build())
+    const yellowInk = readFileSync(file, "utf8").match(/yellow: \["text-slate-900[^\]]*\]/)[0]
+    assert.match(yellowInk, /"text-white dark:text-white", "text-white dark:text-white"\]$/)
+    assert.doesNotMatch(yellowInk, /yellow-950/)
+    assert.match(markup, /text-slate-900 dark:text-white/)
+  })
+  it("keeps a single depth-ordered class set per palette", () => {
+    // The switch repaints only the depth classes; every palette shares the same 0 cell and ordering.
+    const source = readFileSync(file, "utf8")
+    const palettes = source.match(/const CELL_CLASS: Record<HeatmapPalette,[\s\S]*?\n\}/)[0]
+    for (const color of ["blue", "green", "red", "yellow"]) assert.match(palettes, new RegExp(`\\b${color}: \\[\\s*"bg-slate-100 dark:bg-slate-800",\\s*"bg-${color}-200`))
+  })
+})

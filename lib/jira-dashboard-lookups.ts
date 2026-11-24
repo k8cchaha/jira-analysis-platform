@@ -6,6 +6,7 @@ import {
   DashboardFilterError,
   includedDashboardMembers,
   isDashboardAccountId,
+  isExcludedMemberName,
   parseDashboardFilter,
   serializeDashboardFilter,
   type DashboardFilter,
@@ -180,7 +181,8 @@ async function fetchCompleteGroupMembers(group: string, credentials: JiraCredent
       const id = (raw as Record<string, unknown>).accountId as string
       if (seen.has(id)) throw invalidResponse()
       seen.add(id)
-      if (user) members.push(user)
+      // 主管屏蔽清單不進入任何成員清單：不是驗證錯誤，只是不出現在可選名單與範圍裡。
+      if (user && !isExcludedMemberName(user.displayName)) members.push(user)
     }
     // Explicit completion or a verified total is required; never infer completion from a short page.
     const reachedTotal = expectedTotal !== undefined && next === expectedTotal

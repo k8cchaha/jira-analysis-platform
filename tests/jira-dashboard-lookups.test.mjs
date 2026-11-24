@@ -200,6 +200,21 @@ describe("shared complete multi-group loader", () => {
     assert.deepEqual(plain(members["ent-qa1"]), [])
     assert.equal(h.calls.length, 23)
   })
+  it("drops supervisors on the exclusion list from every roster and scope", async (t) => {
+    const roster = [
+      user("dev-1"),
+      user("sam", { displayName: "Sam Tu" }),
+      user("alex", { displayName: "  alex wc   wang " }),
+      user("alex2", { displayName: "Alex Wang" }),
+      user("kenny", { displayName: "Kenny Lin" }),
+      user("namesake", { displayName: "Kenny Lin (Contractor)" }),
+    ]
+    const h = harness(t, { response: () => ({ values: roster, total: roster.length, isLast: true }) })
+    const members = await h.service.loadDashboardGroupMembers(["ent-web"], credentials)
+    assert.deepEqual(plain(members["ent-web"].map((member) => member.accountId)), ["dev-1", "namesake"])
+    const scope = await h.service.resolveDashboardScope(teamFilter(), credentials)
+    assert.deepEqual(plain(scope.accountIds), ["dev-1", "namesake"], "excluded supervisors never enter the query scope")
+  })
   it("uses four workers and preserves each group's complete pagination", async (t) => {
     let active = 0, peak = 0
     const h = harness(t, { response: async ({ params }) => {
@@ -569,5 +584,15 @@ describe("narrow additive OAuth scopes", () => {
     const scopes = harness(t).oauth().ATLASSIAN_SCOPES.split(" ")
     assert.deepEqual(plain(scopes), ["read:me", "read:jira-work", "read:jira-user", "read:group:jira", "read:user:jira", "read:avatar:jira", "read:issue:jira", "read:issue-details:jira", "read:project:jira", "write:jira-work", "read:board-scope:jira-software", "read:sprint:jira-software", "offline_access"])
     assert.equal(new Set(scopes).size, scopes.length)
+  })
+})
+
+describe("supervisor exclusion also guards the included-member set", () => {
+  it("drops excluded supervisors even from a roster that still lists them (e.g. a stale cache)", async (t) => {
+    const h = harness(t)
+    const members = { "ent-web": [{ accountId: "dev-1", displayName: "Dev One" }, { accountId: "sam", displayName: "Sam Tu" }, { accountId: "kenny", displayName: "Kenny Lin" }] }
+    assert.deepEqual(plain(h.filter.includedDashboardMembers(["ent-web"], {}, members)), ["dev-1"])
+    // An empty group list is an explicit "no members" error, not an empty scope.
+    assert.throws(() => h.filter.includedDashboardMembers([], {}, members), /請至少選擇一名團隊成員/)
   })
 })

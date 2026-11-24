@@ -3,22 +3,56 @@
 import { useId, useState, type ReactNode } from "react"
 import { heatmapLevel, WORKLOAD_METRIC_LABELS, type WorkloadMetric, type WorkloadCellSelection, type HeatmapWeek, type WeeklyWorkloadHeatmap } from "@/lib/workload-heatmap"
 
-/** 暫沿用原有配色與級距；此次只調整每週數值與方格呈現。 */
-const CELL_CLASS = [
-  "bg-slate-100 dark:bg-slate-800",
-  "bg-blue-200 dark:bg-blue-900",
-  "bg-blue-400 dark:bg-blue-700",
-  "bg-blue-600 dark:bg-blue-500",
-  "bg-blue-800 dark:bg-blue-300",
-] as const
-const CELL_INK = [
-  "text-slate-900 dark:text-white",
-  "text-slate-900 dark:text-white",
-  "text-slate-950 dark:text-white",
-  "text-white dark:text-slate-950",
-  "text-white dark:text-slate-950",
-] as const
-const SCALE_LABELS = ["0", "1-2", "3-5", "6-9", "10+"] as const
+/**
+ * 主色系：方格由淺到深都取自同一色相，讓「深＝多」在不同顏色下仍可比較。
+ * 藍（預設）沿用原本的四級；其餘三色以相同深淺順序對應，不改變級距或數值。
+ */
+type HeatmapPalette = "blue" | "green" | "red" | "yellow"
+const CELL_CLASS: Record<HeatmapPalette, readonly [string, string, string, string, string]> = {
+  blue: [
+    "bg-slate-100 dark:bg-slate-800",
+    "bg-blue-200 dark:bg-blue-900",
+    "bg-blue-400 dark:bg-blue-700",
+    "bg-blue-600 dark:bg-blue-500",
+    "bg-blue-800 dark:bg-blue-300",
+  ],
+  green: [
+    "bg-slate-100 dark:bg-slate-800",
+    "bg-green-200 dark:bg-green-900",
+    "bg-green-400 dark:bg-green-700",
+    "bg-green-600 dark:bg-green-500",
+    "bg-green-800 dark:bg-green-300",
+  ],
+  red: [
+    "bg-slate-100 dark:bg-slate-800",
+    "bg-red-200 dark:bg-red-900",
+    "bg-red-400 dark:bg-red-700",
+    "bg-red-600 dark:bg-red-500",
+    "bg-red-800 dark:bg-red-300",
+  ],
+  yellow: [
+    "bg-slate-100 dark:bg-slate-800",
+    "bg-yellow-200 dark:bg-yellow-900",
+    "bg-yellow-400 dark:bg-yellow-700",
+    "bg-yellow-600 dark:bg-yellow-500",
+    "bg-yellow-800 dark:bg-yellow-300",
+  ],
+}
+/** 深色格子用白字、淺色格子用深字；黃色系第 3、4 級在兩種模式下皆用白字。 */
+const CELL_INK: Record<HeatmapPalette, readonly [string, string, string, string, string]> = {
+  blue: ["text-slate-900 dark:text-white", "text-slate-900 dark:text-white", "text-slate-950 dark:text-white", "text-white dark:text-slate-950", "text-white dark:text-slate-950"],
+  green: ["text-slate-900 dark:text-white", "text-slate-900 dark:text-white", "text-slate-950 dark:text-white", "text-white dark:text-slate-950", "text-white dark:text-slate-950"],
+  red: ["text-slate-900 dark:text-white", "text-slate-900 dark:text-white", "text-slate-950 dark:text-white", "text-white dark:text-slate-950", "text-white dark:text-slate-950"],
+  // 深黃（第 3、4 級）在淺色與深色模式下都用白字。
+  yellow: ["text-slate-900 dark:text-white", "text-slate-900 dark:text-white", "text-slate-950 dark:text-white", "text-white dark:text-white", "text-white dark:text-white"],
+}
+const PALETTES: readonly { id: HeatmapPalette; label: string; swatch: string }[] = [
+  { id: "blue", label: "藍", swatch: "bg-blue-600" },
+  { id: "green", label: "綠", swatch: "bg-green-600" },
+  { id: "red", label: "紅", swatch: "bg-red-600" },
+  { id: "yellow", label: "黃", swatch: "bg-yellow-400" },
+]
+const SCALE_LABELS = ["0", "1-5", "6-9", "10-14", "15+"] as const
 const HEADER_CLASS = "border-b border-r border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
 
 export type TotalSort = "none" | "descending" | "ascending"
@@ -53,6 +87,8 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
   const metricLabel = WORKLOAD_METRIC_LABELS[metric]
   const missingLabel = `沒有可計入的 ${metricLabel}`
   const tooltipId = useId()
+  // 主色系只改方格顏色，級距、數值、排序與明細都不受影響。
+  const [palette, setPalette] = useState<HeatmapPalette>("blue")
   const [hover, setHover] = useState<{ label: string; week: HeatmapWeek; points: number | null; x: number; y: number } | null>(null)
 
   if (heatmap.weeks.length === 0) {
@@ -159,7 +195,7 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
                     tabIndex: 0,
                     "aria-label": label,
                     "aria-describedby": hover?.label === label ? tooltipId : undefined,
-                    className: `flex h-[30px] min-w-[52px] w-full items-center justify-center px-2 font-semibold whitespace-nowrap ${selected ? "outline-3 outline-offset-[-3px] outline-amber-600 dark:outline-amber-300" : "outline-offset-[-2px] hover:outline-2 hover:outline-slate-400 focus-visible:outline-2 focus-visible:outline-blue-600"} ${CELL_CLASS[level]} ${CELL_INK[level]}`,
+                    className: `flex h-[30px] min-w-[52px] w-full items-center justify-center px-2 font-semibold whitespace-nowrap ${selected ? "outline-3 outline-offset-[-3px] outline-amber-600 dark:outline-amber-300" : "outline-offset-[-2px] hover:outline-2 hover:outline-slate-400 focus-visible:outline-2 focus-visible:outline-blue-600"} ${CELL_CLASS[palette][level]} ${CELL_INK[palette][level]}`,
                     onMouseMove: (event: React.MouseEvent<HTMLElement>) => setHover({ label, week, points, x: event.clientX, y: event.clientY }),
                     onMouseLeave: () => setHover(null),
                     onFocus: (event: React.FocusEvent<HTMLElement>) => {
@@ -189,12 +225,23 @@ export function WorkloadHeatmapGrid({ heatmap, metric = "points", metricSwitch, 
         </table>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-end gap-3 text-xs text-slate-500 dark:text-slate-400">
+      {/* 左下主色系切換與右下顏色級距同一行；窄畫面才換行。 */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+        <div role="group" aria-label="主色系" className="flex min-w-0 flex-wrap items-center gap-1">
+          <span className="mr-1">主色系</span>
+          {PALETTES.map((option) => (
+            <button key={option.id} type="button" aria-pressed={palette === option.id} onClick={() => setPalette(option.id)}
+              className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-300 px-2 font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-600 aria-pressed:border-blue-600 aria-pressed:bg-blue-50 aria-pressed:text-blue-700 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:aria-pressed:border-blue-500 dark:aria-pressed:bg-slate-800 dark:aria-pressed:text-blue-300">
+              <span className={`inline-block h-3 w-3 rounded-sm ${option.swatch}`} aria-hidden="true" />
+              {option.label}
+            </button>
+          ))}
+        </div>
         <span className="inline-flex items-center gap-1">
           少
           {SCALE_LABELS.map((label, level) => (
             <span key={label} className="inline-flex items-center gap-1">
-              <span className={`inline-block h-3 w-3 rounded-sm ${CELL_CLASS[level]}`} aria-hidden="true" />
+              <span className={`inline-block h-3 w-3 rounded-sm ${CELL_CLASS[palette][level]}`} aria-hidden="true" />
               <span>{label}</span>
             </span>
           ))}
