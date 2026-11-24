@@ -20,6 +20,8 @@ const cohortSource = () => [
 const topic = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
 const chartOf = (tree) => nodes(topic(tree)).find((node) => node.type?.name === "ProjectsTrendChart")
 const close = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8, `${actual} vs ${expected}`)
+// Cells may wrap their value in a link; read the whole element tree as text.
+const renderText = (node) => { const read = (value) => typeof value === "string" ? value : Array.isArray(value) ? value.map(read).join("") : value?.props ? read(value.props.children) : ""; return read(node?.props?.children) }
 
 describe("Completed paired Dev-Task estimation deviation", () => {
   it("uses one completed in-window paired cohort and retains zeros while excluding QA, missing pairs and unresolved work", () => {
@@ -149,7 +151,8 @@ describe("Estimation deviation view switch", () => {
     nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === label).props.onClick()
   }
   const tableOf = (tree) => nodes(topic(tree)).find((node) => node.type === "table")
-  const text = (node) => typeof node.props.children === "string" ? node.props.children : Array.isArray(node.props.children) ? node.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
+  // Cells may wrap their value in a link; read the whole element tree as text.
+  const text = (node) => { const read = (value) => typeof value === "string" ? value : Array.isArray(value) ? value.map(read).join("") : value?.props ? read(value.props.children) : ""; return read(node.props.children) }
   const rowsOf = (tree) => nodes(tableOf(tree)).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(text))
   const estimationCharts = (tree) => nodes(topic(tree)).filter((node) => node.type?.name === "ProjectsTrendChart")
 
@@ -228,11 +231,11 @@ describe("Estimation deviation for a single team", () => {
   }
   const chart = (tree) => nodes(topic(tree)).find((node) => node.type?.name === "ProjectsTrendChart")
   const rowsOfTypeTable = (tree) => {
-    const text = (node) => typeof node.props.children === "string" ? node.props.children : Array.isArray(node.props.children) ? node.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
     const tables = nodes(topic(tree)).filter((node) => node.type === "table")
-    return nodes(tables.at(-1)).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(text))
+    return nodes(tables.at(-1)).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(renderText))
   }
-  const text = (node) => typeof node.props.children === "string" ? node.props.children : Array.isArray(node.props.children) ? node.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
+  // Cells may wrap their value in a link; read the whole element tree as text.
+  const text = (node) => { const read = (value) => typeof value === "string" ? value : Array.isArray(value) ? value.map(read).join("") : value?.props ? read(value.props.children) : ""; return read(node.props.children) }
   const tableRows = (tree) => nodes(nodes(topic(tree)).find((node) => node.type === "table")).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(text))
 
   it("offers member labels and plots one signed curve per member with real values", () => {
@@ -333,8 +336,7 @@ describe("Dev Type deviation trend under the overview table", () => {
     // The cross-check table below carries the current range (newest Sprint selected): Dev (2−6)÷2 = −200%, Bug 0%.
     const tables = nodes(topic(tree)).filter((node) => node.type === "table")
     const typeTable = tables.at(-1)
-    const cellText = (cell) => typeof cell.props.children === "string" ? cell.props.children : Array.isArray(cell.props.children) ? cell.props.children.map((child) => typeof child === "string" ? child : "").join("") : ""
-    const rows = nodes(typeTable).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(cellText))
+    const rows = nodes(typeTable).filter((node) => node.type === "tr").map((row) => nodes(row).filter((cell) => cell.type === "th" || cell.type === "td").map(renderText))
     assert.deepEqual(rows, [
       ["Dev Type", "符合條件張數", "SP", "Actual SP", "SP − Actual SP", "偏差率"],
       ["Dev", "1 張", "2", "6", "-4", "-200%"],
@@ -347,5 +349,148 @@ describe("Dev Type deviation trend under the overview table", () => {
     const units = nodes(topic(render())).find((node) => node.type?.name === "Panel").props.controls.props.children
     nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === "各團隊偏差率").props.onClick()
     assert.deepEqual(plain(charts(render()).map((chart) => chart.props.id)), ["estimation-deviation-teams"])
+  })
+})
+
+describe("Clickable 張數 in the estimation tables", () => {
+  const request = { project: "SUN", sprintIds: [6823, 6824], groups: [], browserTimeZone: "UTC" }
+  const source = [
+    task(1, { points: 5, actualPoints: 2, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-a", assigneeDisplayName: "A" }),
+    task(2, { points: 2, actualPoints: 6, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-b", assigneeDisplayName: "B" }),
+  ]
+  const attribution = { status: "available", byAssignee: [{ accountId: "acc-a", teamId: "ent-web" }, { accountId: "acc-b", teamId: "ent-android" }] }
+  const jqlOf = (node) => decodeURIComponent(new URL(node.props.href).searchParams.get("jql"))
+  // Rendered trees keep custom components unexpanded; an External link is a node whose props carry its href.
+  const countLinks = (tree) => nodes(tree).filter((node) => typeof node.props?.href === "string" && / 張$/.test(renderText(node)))
+
+  it("links every count to a Jira search for exactly that cohort", () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const topicOf = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+    // Without a clicked Sprint every Sprint row links its own cohort.
+    nodes(topicOf(render())).find((node) => node.type?.name === "ProjectsTrendChart").props.onSprintSelect(null)
+    const links = countLinks(topicOf(render()))
+    // Two Sprint rows plus the Dev Type table's own counts share the panel.
+    assert.ok(links.length >= 2, "each Sprint row count is a link")
+    // The rendered <a> of each link opens a new tab with noopener.
+    const anchor = h.invoke(links[0].type, links[0].props)
+    assert.equal(anchor.props.target, "_blank")
+    assert.match(anchor.props.rel, /noopener/)
+    const jqls = links.map(jqlOf)
+    assert.ok(jqls.some((jql) => /id in \(1\)/.test(jql)), "Sprint 58 row links SUN-1")
+    assert.ok(jqls.some((jql) => /id in \(2\)/.test(jql)), "Sprint 59 row links SUN-2")
+  })
+
+  it("links team rows to that team's cohort only", () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const topicOf = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+    const units = nodes(topicOf(render())).find((node) => node.type?.name === "Panel").props.controls.props.children
+    nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === "各團隊偏差率").props.onClick()
+    // The newest Sprint opens selected and only Android has paired work there, so clear it to see both teams.
+    nodes(topicOf(render())).find((node) => node.type?.name === "ProjectsTrendChart").props.onSprintSelect(null)
+    const web = nodes(topicOf(render())).find((node) => node.type === "tr" && nodes(node).some((cell) => cell.type === "th" && renderText(cell) === "Web"))
+    assert.ok(web, "Web row exists")
+    const link = countLinks(web)[0]
+    assert.ok(link, "Web count is a link")
+    assert.match(jqlOf(link), /id in \(1\)/)
+  })
+
+})
+
+describe("Estimation deviation Sprint selection stays consistent across views", () => {
+  const request = { project: "SUN", sprintIds: [6823, 6824], groups: [], browserTimeZone: "UTC" }
+  const source = [
+    task(1, { points: 5, actualPoints: 2, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-a", assigneeDisplayName: "A" }),
+    task(2, { points: 2, actualPoints: 6, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-b", assigneeDisplayName: "B" }),
+  ]
+  const attribution = { status: "available", byAssignee: [{ accountId: "acc-a", teamId: "ent-web" }, { accountId: "acc-b", teamId: "ent-android" }] }
+  const topicOf = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+  const chartsOf = (tree) => nodes(topicOf(tree)).filter((node) => node.type?.name === "ProjectsTrendChart")
+  const switchTo = (tree, label) => {
+    const units = nodes(topicOf(tree)).find((node) => node.type?.name === "Panel").props.controls.props.children
+    nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === label).props.onClick()
+  }
+  it("clearing in the overview then switching to 各團隊偏差率 keeps both views on the same Sprint", () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    // Clear the selection in 全團隊總覽 (the prefilled Sprint takes two clicks: confirm, then clear).
+    const aggregate = chartsOf(render()).find((chart) => chart.props.id === "estimation-deviation")
+    aggregate.props.onSprintSelect(1)
+    let tree = render()
+    chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation").props.onSprintSelect(null)
+    tree = render()
+    assert.equal(chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation").props.selectedSprintId, null)
+    // Switching views must not resurrect a selection.
+    switchTo(tree, "各團隊偏差率")
+    tree = render()
+    const teams = chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation-teams")
+    assert.equal(teams.props.selectedSprintId, null, "no Sprint is selected in 各團隊偏差率 either")
+    // The team table then holds each team's all-Sprint total, exactly like the cleared overview.
+    const caption = nodes(nodes(topicOf(tree)).find((node) => node.type === "table")).find((node) => node.type === "caption")
+    assert.match(renderText(caption), /所有 Sprint/)
+  })
+
+  it("the chart follows the page selection even when it was never clicked here", () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    const render = () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+    const tree = render()
+    // Every estimation chart is controlled by the page, so a selection change reaches them without a click.
+    for (const chart of chartsOf(tree)) assert.notEqual(chart.props.selectedSprintId, undefined, `${chart.props.id} is controlled`)
+  })
+})
+
+describe("Estimation Sprint selection survives view switches", () => {
+  const request = { project: "SUN", sprintIds: [6823, 6824], groups: [], browserTimeZone: "UTC" }
+  const source = [
+    task(1, { points: 5, actualPoints: 2, resolvedDate: "2026-04-28", sprintIds: [6823], assigneeAccountId: "acc-a", assigneeDisplayName: "A" }),
+    task(2, { points: 2, actualPoints: 6, resolvedDate: "2026-05-13", sprintIds: [6824], assigneeAccountId: "acc-b", assigneeDisplayName: "B" }),
+  ]
+  const attribution = { status: "available", byAssignee: [{ accountId: "acc-a", teamId: "ent-web" }, { accountId: "acc-b", teamId: "ent-android" }] }
+  const topicOf = (tree) => nodes(tree).find((node) => node.props["data-topic"] === "estimation-deviation")
+  const chartsOf = (tree) => nodes(topicOf(tree)).filter((node) => node.type?.name === "ProjectsTrendChart")
+  const switchTo = (tree, label) => {
+    const units = nodes(topicOf(tree)).find((node) => node.type?.name === "Panel").props.controls.props.children
+    nodes(units.type(units.props)).find((node) => node.type === "button" && node.props.children === label).props.onClick()
+  }
+  const setup = () => {
+    const h = projectsHarness(), model = h.load(MODEL)
+    const result = resultFixture(model, source, request, attribution)
+    return () => h.invoke(h.load(VIEW).ProjectsAnalysisView, { result })
+  }
+
+  it("keeps the chosen Sprint (and the data) across 全團隊總覽 ⇄ 各團隊偏差率", () => {
+    const render = setup()
+    let tree = render()
+    // Choose Sprint 6823 from the overview chart.
+    chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation").props.onSprintSelect(0)
+    tree = render()
+    assert.equal(chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation").props.selectedSprintId, 6823)
+    for (const [label, id] of [["各團隊偏差率", "estimation-deviation-teams"], ["全團隊總覽", "estimation-deviation"]]) {
+      switchTo(tree, label)
+      tree = render()
+      assert.equal(chartsOf(tree).find((chart) => chart.props.id === id).props.selectedSprintId, 6823, `${label} keeps Sprint 58`)
+    }
+    // The table shows only Sprint 58, matching the selection.
+    const rows = nodes(nodes(topicOf(tree)).find((node) => node.type === "table")).filter((node) => node.type === "tr")
+    assert.deepEqual(rows.map((row) => renderText(nodes(row).find((cell) => cell.type === "th"))), ["Sprint", "Sprint 58"])
+  })
+
+  it("keeps a cleared selection cleared across view switches", () => {
+    const render = setup()
+    let tree = render()
+    chartsOf(tree).find((chart) => chart.props.id === "estimation-deviation").props.onSprintSelect(null)
+    tree = render()
+    for (const [label, id] of [["各團隊偏差率", "estimation-deviation-teams"], ["全團隊總覽", "estimation-deviation"]]) {
+      switchTo(tree, label)
+      tree = render()
+      assert.equal(chartsOf(tree).find((chart) => chart.props.id === id).props.selectedSprintId, null, `${label} stays cleared`)
+    }
+    const rows = nodes(nodes(topicOf(tree)).find((node) => node.type === "table")).filter((node) => node.type === "tr")
+    assert.equal(renderText(nodes(rows.at(-1)).find((cell) => cell.type === "th")), "全部 Sprint 加總")
   })
 })

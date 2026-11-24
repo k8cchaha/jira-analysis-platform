@@ -212,6 +212,13 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
     const link = searchLink(tasks)
     return link.href ? <ExternalNumber href={link.href} label={label}>{display}</ExternalNumber> : <span title={link.unavailable}>{display}</span>
   }
+  // 估點偏差率 counts open the row's exact Jira search in a new tab; a cohort too large for one query keeps plain text.
+  const countLink = (label: string, tasks: readonly ProjectsAnalysisTask[], count: number): ReactNode => {
+    const display = `${number(count)} 張`
+    if (!count || !result.jiraBaseUrl) return display
+    const link = searchLink(tasks)
+    return link.href ? <ExternalNumber href={link.href} label={label}>{display}</ExternalNumber> : <span title={link.unavailable}>{display}</span>
+  }
   const metricValue = (id: number, metric: DetailMetric, label: string, value: number | null, display: ReactNode) => valueLink(value, display, issues(id, metric), `${result.sprints.find((s) => s.id === id)?.name} · ${label}`)
   const coverage = (id: number, metric: DetailMetric, label: string, value: PointTotal, unit: "sp" | "actualSp") => <Coverage value={value} renderValue={(amount, display, subset) => {
     const selected = issues(id, metric)
@@ -252,12 +259,11 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
     return { value: Object.is(value, -0) ? 0 : value, totals }
   }
   // Per-Sprint rows follow the same team scope as the aggregate.
-  const estimationSprintRows = estimationScopeSprints.map((sprint) => ({
-    sprint,
-    ...estimationOf(singleTeam && attribution?.status === "available"
-      ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "estimation-deviation" })
-      : selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" })),
-  }))
+  // Cohort behind one Sprint row, scoped like the row itself (single team when one is in scope).
+  const estimationTasksForSprint = (sprint: ProjectsAnalysisResult["sprints"][number]) => singleTeam && attribution?.status === "available"
+    ? selectProjectsTeamIssues(result.tasks, sprint, attribution, [singleTeam.id], { kind: "estimation-deviation" })
+    : selectProjectsMetricIssues(result.tasks, sprint, { kind: "estimation-deviation" })
+  const estimationSprintRows = estimationScopeSprints.map((sprint) => ({ sprint, ...estimationOf(estimationTasksForSprint(sprint)) }))
   // Selecting a Sprint narrows the table to that Sprint; otherwise every selected Sprint is summed.
   // The aggregate follows the team scope too: one team in scope means that team's work, never the whole project.
   const aggregateTasks = estimationScopeSprints.flatMap((sprint) => singleTeam && attribution?.status === "available"
@@ -306,11 +312,14 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
   // 各團隊偏差率 rows: only teams with qualifying paired work in the range (clicked Sprint, or all Sprints).
   // A team with 0 張 is left out of the table and the chart rather than shown as 不適用.
   const estimationTeamRows = estimationShowsTeams && !singleTeam && attribution?.status === "available" ? estimationTeams
-    .map((team) => ({ team, ...estimationOf(estimationScopeSprints.flatMap((sprint) => selectProjectsTeamIssues(result.tasks, sprint, attribution, [team.id], { kind: "estimation-deviation" }))) }))
+    .map((team) => {
+      const cohort = [...new Map(estimationScopeSprints.flatMap((sprint) => selectProjectsTeamIssues(result.tasks, sprint, attribution, [team.id], { kind: "estimation-deviation" })).map((task) => [task.id, task])).values()]
+      return { team, ...estimationOf(cohort), tasks: cohort }
+    })
     .filter((row) => row.totals.count > 0) : []
   // 各成員偏差率 rows follow the same rule.
   const estimationMemberRows = estimationShowsTeams && singleTeam ? estimationMembers
-    .map((member) => ({ member, ...estimationOf(estimationForAccount(member.accountId, estimationScopeSprints)) }))
+    .map((member) => { const tasks = estimationForAccount(member.accountId, estimationScopeSprints); return { member, ...estimationOf(tasks), tasks } })
     .filter((row) => row.totals.count > 0) : []
   // The chart offers the same set as the table, so a zero-team never shows an empty 不適用 line.
   const estimationChartTeamIds = new Set(estimationTeamRows.map((row) => row.team.id))
@@ -334,7 +343,7 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
   }
   const estimationTypeRows = !estimationShowsTeams ? PROJECTS_DEV_TYPES.map((label) => {
     const tasks = estimationScopeSprints.flatMap((sprint) => estimationTypeTasks(sprint, label))
-    return { label, ...estimationOf(tasks) }
+    return { label, ...estimationOf(tasks), tasks }
   }).filter((row) => row.totals.count > 0) : []
   const estimationTypeSeries: TrendSeries[] = estimationTypeRows.map((row, index) => ({
     id: `estimation-type:${row.label}`,
@@ -678,27 +687,27 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
     {topicPanel("estimation-deviation", <Panel title="估點偏差率" description="偏差率 = (SP − Actual SP) ÷ SP，圖表以偏差率繪製；表格同時保留 SP − Actual SP 點數差。僅計算完成日期在該 Sprint 內、SP 與 Actual SP 都已填的 Dev-Task；正值表示高估、負值表示低估。SP 為 0 或缺漏時偏差率為「—／不適用」。" controls={<div className="projects-output-controls flex max-w-full flex-wrap items-center justify-end gap-3">{/* Two views: one aggregate curve, or one deviation curve per team (members for a single team). */}<Units name="估點偏差率範圍" value={estimationView} onChange={(view) => { if (view !== estimationView) setEstimationView(view) }} choices={["all-teams", "by-team"] as const} labels={singleTeam ? estimationMemberViewLabels : estimationViewLabels} disabled={!hasAttribution} compact /></div>}>
       {!hasAttribution && <p role="status" className="mb-3 text-sm text-slate-500 dark:text-slate-400">團隊歸屬資料無法取得；目前顯示全團隊加總偏差。</p>}
       {estimationShowsTeams
-        ? <ProjectsTrendChart id="estimation-deviation-teams" sprints={result.sprints} series={visibleEstimationSeries} unit="%" signed formatTick={percentTick} legendToggle={{ visibleIds: visibleEstimationIds, onToggle: toggleEstimationTeam }} legendSeries={estimationLegend} emptyMessage={visibleEstimationSeries.length ? undefined : (singleTeam ? "沒有可見成員。" : "沒有可見團隊。")} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues={false} />
+        ? <ProjectsTrendChart id="estimation-deviation-teams" sprints={result.sprints} series={visibleEstimationSeries} unit="%" signed formatTick={percentTick} selectedSprintId={selectedEstimationSprint} legendToggle={{ visibleIds: visibleEstimationIds, onToggle: toggleEstimationTeam }} legendSeries={estimationLegend} emptyMessage={visibleEstimationSeries.length ? undefined : (singleTeam ? "沒有可見成員。" : "沒有可見團隊。")} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues={false} />
         : <>
-          <ProjectsTrendChart id="estimation-deviation" sprints={result.sprints} series={estimationSeries} unit="%" signed formatTick={percentTick} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues />
+          <ProjectsTrendChart id="estimation-deviation" sprints={result.sprints} series={estimationSeries} unit="%" signed formatTick={percentTick} selectedSprintId={selectedEstimationSprint} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} initialSprintId={initialEstimationSprint} labelPointValues />
           {estimationAggregate.totals.count === 0 && <p role="status" className="mt-3 text-sm text-slate-500 dark:text-slate-400">所選 Sprint 沒有符合計算條件的工作單。</p>}
         </>}
       <div className="mt-4 min-w-0 overflow-x-auto"><table>
         <caption className="sr-only">{estimationTableCaption}</caption>
         <thead><tr><th>{estimationTableUnit}</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th><th>偏差率</th></tr></thead>
         {estimationShowsTeams && singleTeam
-          ? <tbody>{estimationMemberRows.length ? estimationMemberRows.map(({ member, value, totals }) => <tr key={member.accountId}>
+          ? <tbody>{estimationMemberRows.length ? estimationMemberRows.map(({ member, value, totals, tasks }) => <tr key={member.accountId}>
             <th scope="row">{member.label}</th>
-            <td>{number(totals.count)} 張</td>
+            <td>{countLink(`${member.label} 估點偏差率符合條件張數${estimationSprint ? ` · ${estimationSprint.name}` : " · 全部 Sprint"}`, tasks, totals.count)}</td>
             <td>{points(totals.sp)}</td>
             <td>{points(totals.actualSp)}</td>
             <td>{estimationDisplay(value)}</td>
             <td>{rateDisplay(estimationRate(value, totals))}</td>
           </tr>) : <tr><td colSpan={6} className="text-sm text-slate-500 dark:text-slate-400">所選範圍沒有符合計算條件的工作單。</td></tr>}</tbody>
           : estimationShowsTeams
-            ? <tbody>{estimationTeamRows.length ? estimationTeamRows.map(({ team, value, totals }) => <tr key={team.id}>
+            ? <tbody>{estimationTeamRows.length ? estimationTeamRows.map(({ team, value, totals, tasks }) => <tr key={team.id}>
               <th scope="row">{team.label}</th>
-              <td>{number(totals.count)} 張</td>
+              <td>{countLink(`${team.label} 估點偏差率符合條件張數${estimationSprint ? ` · ${estimationSprint.name}` : " · 全部 Sprint"}`, tasks, totals.count)}</td>
               <td>{points(totals.sp)}</td>
               <td>{points(totals.actualSp)}</td>
               <td>{estimationDisplay(value)}</td>
@@ -707,7 +716,7 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
             : estimationSprint
               ? <tbody><tr aria-current="true" className="bg-slate-50 dark:bg-slate-800">
                 <th scope="row">{estimationSprint.name}</th>
-                <td>{number(estimationSprintRows[0]?.totals.count ?? 0)} 張</td>
+                <td>{countLink(`${estimationSprint.name} 估點偏差率符合條件張數`, estimationTasksForSprint(estimationSprint), estimationSprintRows[0]?.totals.count ?? 0)}</td>
                 <td>{points(estimationSprintRows[0]?.totals.sp ?? estimationAggregate.totals.sp)}</td>
                 <td>{points(estimationSprintRows[0]?.totals.actualSp ?? estimationAggregate.totals.actualSp)}</td>
                 <td>{estimationDisplay(estimationSprintRows[0]?.value ?? null)}</td>
@@ -718,7 +727,7 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
                   const row = estimationSprintRows.find((entry) => entry.sprint.id === sprint.id)!
                   return <tr key={sprint.id} aria-current={selectedEstimationSprint === sprint.id ? "true" : undefined} className={selectedEstimationSprint === sprint.id ? "bg-slate-50 dark:bg-slate-800" : undefined}>
                     <th scope="row">{sprint.name}</th>
-                    <td>{number(row.totals.count)} 張</td>
+                    <td>{countLink(`${sprint.name} 估點偏差率符合條件張數`, estimationTasksForSprint(sprint), row.totals.count)}</td>
                     <td>{points(row.totals.sp)}</td>
                     <td>{points(row.totals.actualSp)}</td>
                     <td>{estimationDisplay(row.value)}</td>
@@ -727,7 +736,7 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
                 })}
                 {multi && <tr className="border-t-2 border-slate-300 font-semibold dark:border-slate-600">
                   <th scope="row">全部 Sprint 加總</th>
-                  <td>{number(estimationAggregate.totals.count)} 張</td>
+                  <td>{countLink("全部 Sprint 估點偏差率符合條件張數", estimationAggregate.tasks, estimationAggregate.totals.count)}</td>
                   <td>{points(estimationAggregate.totals.sp)}</td>
                   <td>{points(estimationAggregate.totals.actualSp)}</td>
                   <td>{estimationDisplay(estimationAggregate.value)}</td>
@@ -736,13 +745,13 @@ export function ProjectsAnalysisView({ result, selectedGroups = result.request.g
               </tbody>}
       </table></div>
       {!estimationShowsTeams && <h3 className="mt-6 text-sm font-semibold">各種 Dev Type 的偏差率{estimationSprint ? `（${estimationSprint.name}）` : "（所有 Sprint 加總）"}</h3>}
-      {!estimationShowsTeams && <ProjectsTrendChart id="estimation-deviation-types" sprints={result.sprints} series={visibleEstimationTypeSeries} unit="%" signed formatTick={percentTick} legendToggle={{ visibleIds: visibleEstimationTypeSeries.map((series) => series.id), onToggle: toggleEstimationType }} legendSeries={estimationTypeSeries} emptyMessage={estimationTypeSeries.length ? undefined : "所選範圍沒有可計算偏差率的 Dev-Task。"} initialSprintId={initialEstimationSprint} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} />}
+      {!estimationShowsTeams && <ProjectsTrendChart id="estimation-deviation-types" sprints={result.sprints} series={visibleEstimationTypeSeries} unit="%" signed formatTick={percentTick} selectedSprintId={selectedEstimationSprint} legendToggle={{ visibleIds: visibleEstimationTypeSeries.map((series) => series.id), onToggle: toggleEstimationType }} legendSeries={estimationTypeSeries} emptyMessage={estimationTypeSeries.length ? undefined : "所選範圍沒有可計算偏差率的 Dev-Task。"} initialSprintId={initialEstimationSprint} onSprintSelect={(index) => setSelectedEstimationSprint(index === null ? null : result.sprints[index]?.id ?? null)} />}
       {!estimationShowsTeams && estimationTypeRows.length > 0 && <div className="mt-4 min-w-0 overflow-x-auto"><table>
         <caption className="sr-only">各 Dev Type 偏差率計算核對{estimationSprint ? `：${estimationSprint.name}` : "：所有 Sprint 加總"}</caption>
         <thead><tr><th>Dev Type</th><th>符合條件張數</th><th>SP</th><th>Actual SP</th><th>SP − Actual SP</th><th>偏差率</th></tr></thead>
-        <tbody>{estimationTypeRows.map(({ label, value, totals }) => <tr key={label}>
+        <tbody>{estimationTypeRows.map(({ label, value, totals, tasks }) => <tr key={label}>
           <th scope="row">{label}</th>
-          <td>{number(totals.count)} 張</td>
+          <td>{countLink(`${label} 估點偏差率符合條件張數${estimationSprint ? ` · ${estimationSprint.name}` : " · 全部 Sprint"}`, tasks, totals.count)}</td>
           <td>{points(totals.sp)}</td>
           <td>{points(totals.actualSp)}</td>
           <td>{estimationDisplay(value)}</td>
