@@ -102,10 +102,10 @@ export interface WeeklyWorkloadHeatmap {
 }
 
 /**
- * 格子深淺的級距上界：0 為空格，其餘四級為 1-2／3-5／6-9／10+。
+ * 格子深淺的級距上界：0 為空格，其餘四級為 1-5／6-9／10-14／15+。
  * 全圖共用同一把尺，因此可跨成員比較「誰在哪一天做得多」。
  */
-export const HEATMAP_SCALE = [1, 3, 6, 10] as const
+export const HEATMAP_SCALE = [1, 6, 10, 15] as const
 
 /** 團隊分析的基準時區：UTC+8。Jira 回傳 UTC，切日曆日一律先換到這個時區。 */
 export const ANALYSIS_TIMEZONE_OFFSET_MINUTES = 480

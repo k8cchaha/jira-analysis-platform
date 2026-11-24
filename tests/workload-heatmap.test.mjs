@@ -44,17 +44,17 @@ test("級距門檻：0 與 null 為空格，其餘依 HEATMAP_SCALE 分四級", 
   assert.equal(heatmapLevel(null), 0)
   assert.equal(heatmapLevel(0), 0)
   assert.equal(heatmapLevel(-1), 0)
-  // 1-2 → 1 級
+  // 1-5 → 1 級
   assert.equal(heatmapLevel(1), 1)
-  assert.equal(heatmapLevel(2.9), 1)
-  // 3-5 → 2 級
-  assert.equal(heatmapLevel(3), 2)
-  assert.equal(heatmapLevel(5.9), 2)
-  // 6-9 → 3 級
-  assert.equal(heatmapLevel(6), 3)
-  assert.equal(heatmapLevel(9.9), 3)
-  // 10+ → 4 級
-  assert.equal(heatmapLevel(10), 4)
+  assert.equal(heatmapLevel(5.9), 1)
+  // 6-9 → 2 級
+  assert.equal(heatmapLevel(6), 2)
+  assert.equal(heatmapLevel(9.9), 2)
+  // 10-14 → 3 級
+  assert.equal(heatmapLevel(10), 3)
+  assert.equal(heatmapLevel(14.9), 3)
+  // 15+ → 4 級
+  assert.equal(heatmapLevel(15), 4)
   assert.equal(heatmapLevel(1000), 4)
   assert.equal(HEATMAP_SCALE.length + 1, 5)
 })

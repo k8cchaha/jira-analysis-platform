@@ -40,6 +40,10 @@
 
 不套用至 Burn Down 日期明細彈窗、設定／報表頁或其他沒有相容篩選器的入口。團隊預設值不改變既有成員載入、完整性驗證、JQL 或伺服器授權。
 
+## 主管屏蔽清單
+
+`lib/jira-dashboard-filter.ts` 的 `EXCLUDED_MEMBER_NAMES` 列出主要負責管理、目前不參與開發的主管（Sam Tu、Alex WC Wang／Alex Wang、Kenny Lin）。Jira 群組名單載入時即剔除（`isExcludedMemberName`，忽略大小寫與多餘空白），因此不會出現在團隊成員清單、成員數、Dashboard person／team 範圍、Planning／Burn Down／Workload／Projects 分析或 Jira 查詢中。名單以顯示名稱比對，姓名不同（例如加註單位）不會被誤擋；主管日後參與開發時，從清單移除即可。
+
 ## 程式與測試來源
 
 - `lib/filter-defaults.ts`：模型、儲存與 URL 初始化判定；引用現有專案／團隊選項及 URL validators/builders。

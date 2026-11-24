@@ -133,6 +133,21 @@ export function dashboardReturnPath(value: unknown): string {
   if (url.origin !== "https://dashboard.invalid" || url.pathname !== "/dashboard" || url.hash) throw new DashboardFilterError()
   return dashboardHref(parseDashboardFilter(url.searchParams))
 }
+/**
+ * 主管屏蔽清單：主要負責管理、目前不參與開發，因此不列入團隊成員清單、
+ * 也不會被任何範圍（self／person／team-project）納入成員數或查詢。
+ * 以 Jira 顯示名稱比對（忽略大小寫與多餘空白），同時接受英文與中文寫法。
+ */
+export const EXCLUDED_MEMBER_NAMES = ["Sam Tu", "Alex WC Wang", "Alex Wang", "Kenny Lin"] as const
+
+const normalizeMemberName = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase()
+const EXCLUDED_MEMBER_NAME_KEYS = new Set(EXCLUDED_MEMBER_NAMES.map(normalizeMemberName))
+
+/** 顯示名稱是否屬於主管屏蔽清單（不參與開發，不出現在成員清單）。 */
+export function isExcludedMemberName(displayName: string): boolean {
+  return EXCLUDED_MEMBER_NAME_KEYS.has(normalizeMemberName(displayName))
+}
+
 export function includedDashboardMembers(groups: string[], exclusions: Record<string, string[]>, members: Record<string, DashboardUser[]>): string[] {
   const ids = new Set<string>()
   for (const group of groups) {
@@ -140,7 +155,8 @@ export function includedDashboardMembers(groups: string[], exclusions: Record<st
     const excluded = new Set(exclusions[group] ?? [])
     for (const member of members[group]) {
       if (!isDashboardAccountId(member.accountId)) throw new DashboardFilterError()
-      if (!excluded.has(member.accountId)) ids.add(member.accountId)
+      // 主管屏蔽清單不走成員查詢；這裡再檢查一次，任何快取或舊名單都不會把他們帶回範圍。
+      if (!excluded.has(member.accountId) && !isExcludedMemberName(member.displayName)) ids.add(member.accountId)
     }
   }
   if (ids.size === 0) throw new DashboardFilterError("請至少選擇一名團隊成員。")
