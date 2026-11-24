@@ -373,15 +373,22 @@ describe("workload page and filter callbacks", () => {
       assert.equal(h.pushes.length, 0)
     }
   })
-  it("offers 近3月 and 近6月 only and defaults to 近3月", () => {
+  it("offers 近3月, 近6月 and 今年, defaulting to 近3月", () => {
     const h = harness({ "ent-web": success("a") })
     const field = named(h.form(formProps()), "DateRangeField")
     assert.equal(field.props.defaultPreset, "last3Months")
     assert.equal(field.props.required, true, "分析區間 is marked required")
-    assert.deepEqual(plain(field.props.shortcuts).map((option) => option.label), ["近3月", "近6月"])
+    assert.deepEqual(plain(field.props.shortcuts).map((option) => option.label), ["近3月", "近6月", "今年"])
     h.setToday("2026-11-03")
     const markup = h.component(field)
-    assert.deepEqual(elements(markup, (node) => node.type === "button" && "aria-pressed" in node.props).map(text), ["近3月", "近6月"])
+    assert.deepEqual(elements(markup, (node) => node.type === "button" && "aria-pressed" in node.props).map(text), ["近3月", "近6月", "今年"])
+  })
+  it("今年 covers 1/1 through browser today", () => {
+    const h = harness({ "ent-web": success("a") })
+    h.setToday("2026-11-03")
+    const field = named(h.form(), "DateRangeField")
+    const range = h.load("lib/date-range.ts").dateRangeForShortcut(field.props.shortcuts.find((option) => option.id === "yearToDate"), "2026-11-03")
+    assert.deepEqual(plain(range), { from: "2026-01-01", to: "2026-11-03" })
   })
   it("marks 團隊 as required", () => {
     const h = harness({ "ent-web": success("a") })
@@ -453,6 +460,12 @@ describe("workload page and filter callbacks", () => {
     assert.equal(named(tree, "SearchButton").props.disabled, false)
     submit(tree)
     assert.deepEqual(h.pushes, ["/analytics/workload?group=ent-be1&group=ent-web&exclude=ent-web%7Ca&project=tkk&from=2026-10-01&to=2026-10-31"])
+  })
+  it("marks the shared query button busy while loading and leaves it idle otherwise", () => {
+    const h = harness({ "ent-web": success("a") })
+    h.setToday("2026-11-03")
+    assert.equal(named(h.form(formProps()), "SearchButton").props.loading, false, "the form only goes busy from the page's submit")
+    assert.equal(named(h.form({ ...formProps(), loading: true }), "SearchButton").props.loading, true)
   })
   it("submits the range restored from the URL without touching the shortcuts", () => {
     const h = harness({ "ent-web": success("a") })

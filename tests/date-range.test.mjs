@@ -118,6 +118,11 @@ describe("date-range presets", () => {
     assert.equal(dateRangeDayCount(dateRangeForPreset("last1Month", today)), 31)
     assert.equal(dateRangeDayCount(dateRangeForPreset("last1Month", "2026-03-03")), 28)
   })
+  it("covers the current calendar year from January 1 through today", () => {
+    assert.deepEqual(dateRangeForPreset("yearToDate", "2026-11-03"), { from: "2026-01-01", to: "2026-11-03" })
+    assert.deepEqual(dateRangeForPreset("yearToDate", "2026-01-01"), { from: "2026-01-01", to: "2026-01-01" })
+    assert.deepEqual(dateRangeForPreset("yearToDate", "2028-02-29"), { from: "2028-01-01", to: "2028-02-29" })
+  })
   it("clamps the backdated month day before adding one inclusive day, across leap years and year boundaries", () => {
     assert.deepEqual(dateRangeForPreset("last1Month", "2026-03-31"), { from: "2026-03-01", to: "2026-03-31" })
     assert.deepEqual(dateRangeForPreset("last1Month", "2028-03-31"), { from: "2028-03-01", to: "2028-03-31" })

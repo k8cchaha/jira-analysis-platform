@@ -115,9 +115,9 @@ export const navigationCategories = [
       },
       {
         id: "story-points",
-        label: "團隊分析",
+        label: "成員分析",
         icon: "members",
-        routes: [{ href: "/analytics/story-points", label: "團隊分析" }],
+        routes: [{ href: "/analytics/story-points", label: "成員分析" }],
       },
     ],
   },

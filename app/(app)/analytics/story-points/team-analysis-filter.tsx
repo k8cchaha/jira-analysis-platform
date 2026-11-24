@@ -1,125 +1,169 @@
 "use client"
 
-import { useLayoutEffect, useOptimistic, useRef, useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
-import { DateRangeField, useBrowserToday } from "@/components/date-range-field"
-import { FILTER_SELECT_WIDTH_CLASS } from "@/components/filter-dropdown"
-import { ProjectSelector } from "@/components/project-selector"
-import { SearchButton } from "@/components/search-button"
+import { useEffect, useId, useRef, useState, type FormEvent } from "react"
 import { TeamSelect } from "@/components/team-select"
-import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
 import { useTeamMembers } from "@/components/team-members-provider"
-import { DATE_RANGE_PRESET_LABEL, dateRangeForPreset, requireDateRange, sameDateRange, type DateRange, type DateRangeShortcut } from "@/lib/date-range"
-import { teamAnalysisFilterHref, type TeamAnalysisSelection } from "@/lib/team-analysis-filter"
-import type { SprintProjectKey } from "@/lib/jira-jql"
+import { FilterDropdown } from "@/components/filter-dropdown"
+import { SearchButton } from "@/components/search-button"
+import { DateRangeField, useBrowserToday } from "@/components/date-range-field"
+import { useDefaultTeamGroups } from "@/components/filter-defaults-provider"
+import { DASHBOARD_PROJECTS, includedDashboardMembers } from "@/lib/jira-dashboard-filter"
+import type { DashboardUser } from "@/lib/jira-dashboard-filter"
+import { DATE_RANGE_PRESET_LABEL, dateRangeForPreset, type DateRange, type DateRangeShortcut } from "@/lib/date-range"
+import type { TeamAnalysisSelection } from "@/lib/team-analysis-filter"
+import { serializeMemberAnalysisFilter } from "@/lib/member-analysis-filter"
+import type { MemberAnalysisResult } from "@/lib/member-analysis"
+import { MemberAnalysisTable } from "./member-analysis-table"
 
-const TEAM_SHORTCUTS: readonly DateRangeShortcut[] = (["last1Month", "last2Months", "last3Months", "last6Months"] as const).map((preset) => ({
+type QueryState = { loading: boolean; data: MemberAnalysisResult | null; error: string | null }
+
+const choiceClass = "h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+
+/** Same shortcuts as 工作量分析: 近3月／近6月／今年. */
+const TEAM_SHORTCUTS: readonly DateRangeShortcut[] = (["last3Months", "last6Months", "yearToDate"] as const).map((preset) => ({
   id: preset, label: DATE_RANGE_PRESET_LABEL[preset], preset,
 }))
 
-/** 日期篩選與 URL 還原已接通；分析引擎尚未開放。 */
-export function TeamAnalysisFilter(props: TeamAnalysisSelection) {
-  const router = useRouter()
+/**
+ * 與工作量分析頁完全相同的篩選區塊（專案／團隊（含逐人選取）／分析區間／查詢），
+ * 送出前仍走成員分析的 URL 驗證；查詢會呼叫 `/api/analytics/members` 讀取區間內
+ * resolved 的 Dev-Task，成功後在下方顯示成員彙總表。
+ */
+export function TeamAnalysisFilter(input: TeamAnalysisSelection) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { error: pageError, ...props } = input
+  const id = useId()
   const today = useBrowserToday()
-  const [isPending, startTransition] = useTransition()
-  const [groups, setGroups] = useDefaultTeamGroups(!props.error)
+  const [groups, setGroups] = useDefaultTeamGroups(!pageError)
   const { groupStates } = useTeamMembers()
-  const [selection, setSelection] = useOptimistic<TeamAnalysisSelection>(props)
-  const [draft, setDraft] = useState<{ source: TeamAnalysisSelection; range: DateRange } | null>(null)
-  const [notice, setNotice] = useState<{ selection: TeamAnalysisSelection; range: DateRange } | null>(null)
-  const dateRange = draft?.source === selection ? draft.range : selection.dateRange ?? (today ? dateRangeForPreset("last1Month", today) : null)
-  const latestSelection = useRef(selection)
-  const latestRange = useRef(dateRange)
-  const latestProps = useRef(props)
-  useLayoutEffect(() => {
-    latestSelection.current = selection
-    latestRange.current = dateRange
-    latestProps.current = props
-  }, [selection, dateRange, props])
-  const projectSelected = selection.project !== null
-  // Team is required: analysis without a team would silently widen to the whole project.
-  // The filter does not wait for rosters (the query only records the selection); a failed load is
-  // surfaced by the hint below instead of silently blocking.
-  const teamsSelected = groups.length > 0
-  const teamsLoading = groups.some((group) => groupStates[group]?.status === "loading")
+  const [exclusions, setExclusions] = useState<Record<string, string[]>>({})
+  const [projects, setProjects] = useState<string[]>(input.project ? [input.project] : [])
+  const [projectOpen, setProjectOpen] = useState(false)
+  const [range, setRange] = useState<DateRange>(input.dateRange ?? { from: "", to: "" })
+  const [rangeTouched, setRangeTouched] = useState(Boolean(input.dateRange?.from && input.dateRange?.to))
+  const [error, setError] = useState<string | null>(pageError)
+  const [result, setResult] = useState<QueryState>({ loading: false, data: null, error: null })
+  const requestSequence = useRef(0)
+  // 沒有 URL 區間時，等瀏覽器本機今天才知道「近3月」是哪一段；這之前不自行讀時鐘。
+  const initialPreset = useRef(false)
 
-  function canQuery(current: TeamAnalysisSelection, range: DateRange | null) {
-    if (!current.dateRange || !range || !teamsSelected) return false
-    try { teamAnalysisFilterHref({ ...current, dateRange: range }); return true } catch { return false }
+  // 與工作量分析相同的就緒判斷：所選團隊的完整成員名單都載入後才能查詢。
+  const allGroupsLoaded = groups.length > 0 && groups.every((group) => groupStates[group]?.status === "success")
+  const members: Record<string, DashboardUser[]> = {}
+  for (const group of groups) {
+    const state = groupStates[group]
+    if (state?.status === "success") members[group] = state.members
   }
-  function navigate(next: TeamAnalysisSelection) {
-    const href = teamAnalysisFilterHref(next)
-    latestSelection.current = next
-    latestRange.current = next.dateRange
-    setNotice(null)
-    startTransition(() => { setSelection(next); router.push(href) })
+  let memberCount = 0
+  let teamHint = ""
+  if (allGroupsLoaded) {
+    try {
+      memberCount = includedDashboardMembers(groups, exclusions, members).length
+      teamHint = `已選 ${groups.length} 個團隊、${memberCount} 名不重複成員`
+    } catch (failure) {
+      teamHint = failure instanceof Error ? failure.message : "請重新選擇團隊成員。"
+    }
+  } else if (groups.length) {
+    teamHint = "所選團隊必須全部完整載入後才能套用，不會使用部分成員。"
   }
-  function changeProject(project: SprintProjectKey) {
-    const current = latestSelection.current
-    const range = latestRange.current
-    if (current.project === project || !range) return
-    navigate({ project, dateRange: range, error: null })
+
+  function commitRange(next: DateRange) {
+    if (!next.from || !next.to) return
+    setRangeTouched(true)
+    setError(null)
   }
-  function acceptsDateEvent() {
-    // 同次 render 的連續 commit 可累積；舊專案或 history 的月曆不得覆寫新 URL。
-    return latestProps.current === props && selection.project !== null && latestSelection.current.project === selection.project
+  // DateRangeField 取得今天後才回報預設區間；沿用工作量分析的「近3月」起始值。
+  useEffect(() => {
+    if (initialPreset.current || rangeTouched || !today) return
+    initialPreset.current = true
+    setRange(dateRangeForPreset("last3Months", today))
+  }, [today, rangeTouched])
+
+  const projectLabel = DASHBOARD_PROJECTS.filter((project) => projects.includes(project.key)).map((project) => project.label).join(" · ") || "選擇專案…"
+
+  function invalidateQuery() {
+    requestSequence.current += 1
+    setResult((previous) => previous.data || previous.error ? { ...previous, loading: false } : previous)
   }
-  function validRange(range: DateRange) {
-    try { return requireDateRange(range) } catch { return null }
-  }
-  function changeDates(range: DateRange) {
-    if (!acceptsDateEvent()) return
-    const valid = validRange(range)
-    if (!valid) return
-    latestRange.current = valid
-    setDraft({ source: latestSelection.current, range: valid })
-    setNotice(null)
-  }
-  function commitDates(range: DateRange) {
-    if (!acceptsDateEvent()) return
-    const valid = validRange(range)
-    if (!valid) return
-    const current = latestSelection.current
-    latestRange.current = valid
-    setDraft({ source: current, range: valid })
-    if (!current.error && current.dateRange && sameDateRange(current.dateRange, valid)) return
-    navigate({ project: current.project, dateRange: valid, error: null })
+
+  async function query(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    try {
+      if (!allGroupsLoaded) throw new Error("請選擇團隊，並等待所選團隊的完整成員名單載入。")
+      includedDashboardMembers(groups, exclusions, members)
+      if (!rangeTouched || !range.from || !range.to) throw new Error("請先選擇分析區間。")
+      const params = serializeMemberAnalysisFilter({ groups, exclusions, projects, from: range.from, to: range.to })
+      setError(null)
+      setProjectOpen(false)
+      const sequence = ++requestSequence.current
+      setResult((previous) => ({ ...previous, loading: true, error: null }))
+      const response = await fetch(`/api/analytics/members?${params}`, { cache: "no-store", credentials: "same-origin" })
+      const payload: unknown = await response.json().catch(() => null)
+      if (sequence !== requestSequence.current) return
+      if (!payload || typeof payload !== "object" || (payload as { status?: unknown }).status !== "success") {
+        const message = (payload as { error?: { message?: unknown } } | null)?.error?.message
+        throw new Error(typeof message === "string" ? message : "無法取得成員分析資料，請重試。")
+      }
+      setResult({ loading: false, data: (payload as { data: MemberAnalysisResult }).data, error: null })
+    } catch (failure) {
+      if (requestSequence.current < 0) return
+      setResult({ loading: false, data: null, error: failure instanceof Error ? failure.message : "無法取得成員分析資料，請重試。" })
+    }
   }
 
   return (
-    <form aria-busy={isPending} onSubmit={(event) => {
-      event.preventDefault()
-      const current = latestSelection.current
-      const range = latestRange.current
-      if (range && canQuery(current, range)) setNotice({ selection: current, range })
-    }}>
-      {/* Project · Team · 分析區間 · 查詢 sit on one row; the row only wraps when the viewport cannot fit them. */}
-      <div className="flex min-w-0 flex-wrap items-end gap-4">
-        <div className={FILTER_SELECT_WIDTH_CLASS.project}>
-          <ProjectSelector project={selection.project} required onProjectChange={changeProject} idPrefix="team-analysis-project" />
-        </div>
-        <div inert={!projectSelected} aria-disabled={!projectSelected} className={`${FILTER_SELECT_WIDTH_CLASS.team} ${!projectSelected ? "opacity-50" : ""}`}>
-          <TeamSelect key={projectSelected ? "ready" : "no-project"} required groups={groups} perMember={false} onGroupsChange={(nextGroups) => {
-            if (latestSelection.current.project) { setGroups(nextGroups); setNotice(null) }
-          }} helpText="團隊為必選；選取僅保留於本頁，不寫入網址。團隊分析功能尚未開放，目前不會查詢分析資料。" />
-        </div>
-        <fieldset disabled={!projectSelected} aria-disabled={!projectSelected} className="min-w-0 max-w-full flex-1 basis-80">
-          <legend className="sr-only">分析區間</legend>
-          <div inert={!projectSelected || !dateRange} aria-disabled={!projectSelected || !dateRange} className={`min-w-0 max-w-full ${!projectSelected ? "opacity-50" : ""}`}>
-            {dateRange ? <DateRangeField key={`${selection.project}-${props.project}-${props.dateRange?.from}-${props.dateRange?.to}-${props.error}`} idPrefix="team-analysis-dates" value={dateRange} shortcuts={TEAM_SHORTCUTS} defaultPreset="last1Month" onChange={changeDates} onCommit={commitDates} />
-              : <p className="py-2 text-sm text-slate-500 dark:text-slate-400">正在準備分析區間…</p>}
+    <section aria-label="查詢範圍" className="mb-4 min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <form onSubmit={query} className="space-y-3">
+        {/* Same single row as 工作量分析: 分析區間, 團隊, 專案 on the left, 查詢 alone on the right. */}
+        <div className="flex min-w-0 flex-wrap items-end gap-2">
+          <div className="min-w-0 max-w-full">
+            <DateRangeField
+              value={range}
+              // Any edit to the range drops the "ready" notice until 查詢 is pressed again.
+              onChange={(next) => { setRange(next); invalidateQuery() }}
+              onCommit={commitRange}
+              shortcuts={TEAM_SHORTCUTS}
+              defaultPreset="last3Months"
+              idPrefix={`${id}-range`}
+              required
+            />
           </div>
-        </fieldset>
-        <div className="min-w-0 max-w-full shrink-0">
-          <SearchButton disabled={!canQuery(selection, dateRange)} aria-describedby="team-analysis-query-help" />
+          <TeamSelect
+            groups={groups}
+            initialExclusions={exclusions}
+            onGroupsChange={(nextGroups) => { setGroups(nextGroups); setError(null); invalidateQuery() }}
+            onExclusionsChange={(next) => { setExclusions(next); invalidateQuery() }}
+            helpText="團隊與成員變更只更新草稿，按「查詢」套用篩選條件。"
+            required
+          />
+          <FilterDropdown id={`${id}-projects`} kind="project" label="專案" value={projectLabel} open={projectOpen} onOpenChange={setProjectOpen} describedBy={`${id}-project-help`}>
+            <fieldset className="min-w-0">
+              <legend className="sr-only">專案（可複選）</legend>
+              {DASHBOARD_PROJECTS.map((project) => (
+                <label key={project.key} className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800">
+                  <input type="checkbox" checked={projects.includes(project.key)} onChange={(event) => {
+                    setError(null)
+                    invalidateQuery()
+                    setProjects(event.target.checked ? [...new Set([...projects, project.key])] : projects.filter((key) => key !== project.key))
+                  }} className={choiceClass} />
+                  <span>{project.label}</span>
+                </label>
+              ))}
+            </fieldset>
+            <p id={`${id}-project-help`} className="px-3 py-2 text-xs leading-5 text-slate-500 dark:text-slate-400">未選取專案時，不加專案限制。</p>
+          </FilterDropdown>
+          {/* Controls stay left-aligned; the query button alone sits at the row's right edge. */}
+          {/* Same button as 專案回顧與趨勢: disabled and showing 查詢中… until the response arrives. */}
+          <div className="ml-auto shrink-0"><SearchButton loading={result.loading} disabled={!allGroupsLoaded || memberCount === 0} aria-describedby={`${id}-team-help ${id}-help`} /></div>
         </div>
-      </div>
-      {selection.error ? <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-400">{selection.error}</p> : null}
-      {isPending ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在更新篩選條件…</p> : null}
-      {projectSelected && !teamsSelected ? <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">請至少選擇一個團隊。</p> : null}
-      {teamsSelected && !teamsLoading ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">正在載入團隊成員資料；若載入失敗，請在團隊選單重試。</p> : null}
-      <p id="team-analysis-query-help" className="sr-only">請選擇專案、至少一個團隊及有效分析區間。團隊分析功能尚未開放，目前不會查詢分析資料。</p>
-      {notice?.selection === selection && notice.range === dateRange ? <p role="status" className="mt-2 text-sm text-slate-500 dark:text-slate-400">篩選條件已就緒；團隊分析功能尚未開放，目前不會查詢分析資料。</p> : null}
-    </form>
+        {!rangeTouched && <p role="status" className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">尚未選擇分析區間，請按快捷鍵或點選日期欄位。</p>}
+        <p id={`${id}-help`} className="sr-only">按「查詢」或 Enter 讀取區間內 resolved 的 Dev-Task；分析區間以瀏覽器本機時區的日曆日為準。</p>
+        {teamHint && <p id={`${id}-team-help`} role="status" className="text-xs leading-5 text-slate-500 dark:text-slate-400">{teamHint}</p>}
+        {error && <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-400">{error}</p>}
+        {result.error && <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-400">{result.error}</p>}
+      </form>
+      {result.loading ? <p role="status" className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">正在讀取區間內 resolved 的 Dev-Task…</p> : null}
+      {result.data ? <div className="mt-4"><MemberAnalysisTable result={result.data} /></div> : null}
+    </section>
   )
 }

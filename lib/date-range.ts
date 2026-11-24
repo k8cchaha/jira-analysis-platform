@@ -17,7 +17,7 @@ export interface DateRange {
 
 /** 時間區間快捷鍵。`custom` 代表使用者自行挑選、未對應任何快捷鍵的區間。 */
 export type DateRangePreset = "today" | "thisWeek" | "lastWeek" | "thisMonth" | "last7" | "last30"
-  | "last1Month" | "last2Months" | "last3Months" | "last6Months" | "custom"
+  | "last1Month" | "last2Months" | "last3Months" | "last6Months" | "yearToDate" | "custom"
 
 /** 實際可按的快捷鍵（不含 `custom`），順序與畫面按鈕一致。 */
 export type DateRangePresetKey = Exclude<DateRangePreset, "custom">
@@ -43,6 +43,8 @@ export const DATE_RANGE_PRESET_LABEL: Record<DateRangePresetKey, string> = {
   last2Months: "近2月",
   last3Months: "近3月",
   last6Months: "近6月",
+  /** 今年 1/1 到今天（含今天）。 */
+  yearToDate: "今年",
 }
 
 /** 頁面提供的快捷選項：沿用內建日期計算，或提供已解析的絕對日期；id 須唯一。 */
@@ -168,6 +170,8 @@ export function dateRangeForPreset(preset: DateRangePresetKey, today: string, mo
       return recentCalendarMonths(today, 3)
     case "last6Months":
       return recentCalendarMonths(today, 6)
+    case "yearToDate":
+      return { from: `${today.slice(0, 4)}-01-01`, to: today }
     case "last30":
       return { from: shiftDate(today, -29), to: today }
     case "last7":

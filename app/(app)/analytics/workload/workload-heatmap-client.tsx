@@ -36,13 +36,14 @@ interface BasePayload {
  * 沒有逐日 frame：`resolved` 是欄位值而非事件，逐日查詢換不到額外資訊。
  * 收到 `error` ＝ 串流中止：已畫的部分保留，顯示錯誤 banner，不偽裝成功。
  */
-export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl, queryNonce = 0 }: {
+export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl, queryNonce = 0, onQuerySettled }: {
   /** 此次頁面明確提交的序號；只用於重掛串流，不進 URL。 */
   queryNonce?: number
   filter: WorkloadFilter
   /** SSE 端點（server 產生）；尚未明確提交此次查詢時為 null。 */
   endpoint: string | null
   jiraBaseUrl: string | null
+  onQuerySettled?: () => void
 }) {
   /** 手動「重新載入」用的 nonce，bump 會以新的 key 重掛串流（等同重開）。 */
   const [retryNonce, setRetryNonce] = useState(0)
@@ -104,6 +105,7 @@ export function WorkloadHeatmapClient({ filter, endpoint, jiraBaseUrl, queryNonc
             teamOf={teamOf}
             groupStates={groupStates}
             onRetry={() => setRetryNonce((n) => n + 1)}
+            onQuerySettled={onQuerySettled}
           />
         )}
       </section>
@@ -126,6 +128,7 @@ function HeatmapStream({
   teamOf,
   groupStates,
   onRetry,
+  onQuerySettled,
 }: {
   endpoint: string
   filter: WorkloadFilter
@@ -135,6 +138,7 @@ function HeatmapStream({
   teamOf: Record<string, string>
   groupStates: TeamMembersSnapshot
   onRetry: () => void
+  onQuerySettled?: () => void
 }) {
   const [phase, setPhase] = useState<StreamPhase>({ status: "loading" })
   const [days, setDays] = useState<string[]>([])
@@ -146,15 +150,32 @@ function HeatmapStream({
   const [totalSort, setTotalSort] = useState<TotalSort>("none")
   const detailsId = useId()
   const gridRef = useRef<HTMLDivElement>(null)
+  const querySettledRef = useRef(onQuerySettled)
 
   // 訂閱一次串流；卸載或端點改變時關閉連線。停用 EventSource 自動重連
   // （避免重送回 base 造成雙算），錯誤一律自行處理。
   useEffect(() => {
     let active = true
+    let settled = false
+    const settle = () => {
+      if (!active || settled) return
+      settled = true
+      querySettledRef.current?.()
+    }
     // 使用 RSC 產生的合法端點；API 已設 no-store，重試靠重掛開新連線，無需追加參數。
-    const es = new EventSource(endpoint)
+    let es: EventSource
+    try { es = new EventSource(endpoint) } catch {
+      queueMicrotask(() => {
+        if (!active) return
+        setPhase({ status: "error", message: "無法建立串流連線，請重新整理頁面。" })
+        settle()
+      })
+      return () => { active = false }
+    }
     // 停用自動重連：指令碼不再重開相同 URL；連線結束／失敗由下方處理。
-    es.onerror = () => {
+    es.onerror = (event) => {
+      const data = (event as MessageEvent | undefined)?.data
+      if (!active || settled || (typeof data === "string" && data.trim() !== "")) return
       es.close()
       // EventSource 在「server 正常 close（done 已送完）」與「真斷線」都會觸發
       // 原生 error。我們只關心還沒收到 done 的異常中斷；已 complete 就保留成功。
@@ -162,11 +183,12 @@ function HeatmapStream({
         setPhase((prev) =>
           prev.status === "complete" ? prev : { status: "error", message: "連線已中斷，資料可能不完整，請重新整理頁面。" }
         )
+        settle()
       }
     }
 
     es.addEventListener("base", (event) => {
-      if (!active) return
+      if (!active || settled) return
       try {
         const payload = JSON.parse((event as MessageEvent).data) as BasePayload
         setDays(payload.days)
@@ -177,17 +199,23 @@ function HeatmapStream({
         setPhase({ status: "streaming" })
       } catch {
         setPhase({ status: "error", message: "串流資料無法辨識，請重新整理頁面。" })
+        es.close()
+        settle()
       }
     })
 
     es.addEventListener("done", () => {
-      if (active) setPhase({ status: "complete" })
+      if (active && !settled) {
+        setPhase({ status: "complete" })
+        es.close()
+        settle()
+      }
     })
 
     // Server 明確送的 `event: error` frame（帶 JSON data）。未送 close 的連線中斷
     // 交給 `es.onerror` 處理；這裡只認有實際 data 的致命錯誤。
     es.addEventListener("error", (event) => {
-      if (!active) return
+      if (!active || settled) return
       const raw = (event as MessageEvent).data
       if (typeof raw !== "string" || raw.trim() === "") return
       try {
@@ -197,6 +225,7 @@ function HeatmapStream({
         setPhase({ status: "error", message: "串流發生錯誤，請重新整理頁面。" })
       }
       es.close()
+      settle()
     })
 
     return () => {

@@ -17,7 +17,7 @@ import type { WorkloadFilter } from "@/lib/workload-filter"
 const choiceClass = "h-4 w-4 shrink-0 accent-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
 
 // 工作量分析的區間快捷鍵只有近 3 個月與近 6 個月。
-const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last3Months", "last6Months"] as const).map((preset) => ({
+const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last3Months", "last6Months", "yearToDate"] as const).map((preset) => ({
   id: preset,
   label: DATE_RANGE_PRESET_LABEL[preset],
   preset,
@@ -29,11 +29,13 @@ const WORKLOAD_SHORTCUTS: readonly DateRangeShortcut[] = (["last3Months", "last6
  * 沒有 URL 區間時先帶入空區間；`DateRangeField` 取得瀏覽器本機今天後，會以預設的近3月
  * 補上並回報 `onCommit`。本元件不自行讀時鐘，避免 hydration 前後顯示不同日期。
  */
-export function WorkloadFilterForm({ initialFilter, initialError, initialRange = null, onQuery }: {
+export function WorkloadFilterForm({ initialFilter, initialError, initialRange = null, onQuery, loading = false }: {
   initialFilter: WorkloadFilter | null
   initialError: string | null
   initialRange?: DateRange | null
   onQuery: (filter: WorkloadFilter) => void
+  /** True from 查詢 until the submitted stream completes, fails, or is cancelled. */
+  loading?: boolean
 }) {
   const id = useId()
   const [groups, setGroups] = useState<string[]>(initialFilter?.groups ?? [])
@@ -76,6 +78,8 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
 
   function query(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    // A query is already in flight (our button is disabled, Enter is not): do not start another.
+    if (loading) return
     try {
       if (!allGroupsLoaded) throw new Error("請選擇團隊，並等待所選團隊的完整成員名單載入。")
       includedDashboardMembers(groups, exclusions, members)
@@ -144,7 +148,7 @@ export function WorkloadFilterForm({ initialFilter, initialError, initialRange =
               <p id={`${id}-project-help`} className="px-3 py-2 text-xs leading-5 text-slate-500 dark:text-slate-400">未選取專案時，不加專案限制。</p>
             </FilterDropdown>
             {/* Controls stay left-aligned; the query button alone sits at the row's right edge. */}
-            <div className="ml-auto shrink-0"><SearchButton disabled={!allGroupsLoaded || memberCount === 0} aria-describedby={`${id}-team-help ${id}-help`} /></div>
+            <div className="ml-auto shrink-0"><SearchButton loading={loading} disabled={!allGroupsLoaded || memberCount === 0} aria-describedby={`${id}-team-help ${id}-help`} /></div>
           </div>
           {!rangeTouched && <p role="status" className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">尚未選擇分析區間，請按快捷鍵或點選日期欄位。</p>}
           <p id={`${id}-help`} className="sr-only">按「查詢」或 Enter 套用團隊、專案與分析區間；分析區間以瀏覽器本機時區的日曆日為準。</p>
