@@ -45,7 +45,7 @@ function FillKey({ shape, dash, color, patternId }: { shape: number; dash?: stri
 }
 
 /** Presentation only: all metric values and local detail actions are supplied by the view. */
-export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, signed = false, distribution = false, focusableLegend = false, legendToggle, legendSeries, stackedTotalId, emptyMessage, onSprintSelect, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
+export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, integer = false, signed = false, distribution = false, focusableLegend = false, legendToggle, legendSeries, stackedTotalId, emptyMessage, onSprintSelect, selectedSprintId, initialSprintId = null, labelPointValues = false, plotHeight: plotHeightProp = 206 }: {
   id: string
   sprints: readonly SprintRecord[]
   series: TrendSeries[]
@@ -63,6 +63,9 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   emptyMessage?: string
   /** Reports the clicked Sprint, or null when a second click clears the selection. */
   onSprintSelect?: (index: number | null) => void
+  /** Controlled selection: the Sprint currently selected by the page, or null for none. Charts that share one
+   *  selection (the 估點偏差率 views) pass it so switching views never shows a selection the data does not follow. */
+  selectedSprintId?: number | null
   /** Sprint already selected by the page on mount; clicking it once clears, matching a deliberate selection. */
   initialSprintId?: number | null
   /** Print each curve's value above its point for the labelled Sprint (aggregate views only). */
@@ -77,11 +80,20 @@ export function ProjectsTrendChart({ id, sprints, series, unit, formatTick, inte
   const [hover, setHover] = useState<number | null>(null)
   const [focus, setFocus] = useState<number | null>(null)
   // A page-selected Sprint (the newest one after a query) starts out committed, so its band and labels show at once.
-  // Captured on mount only: later prop changes must not resurrect a selection the user cleared.
   const [initialIndex] = useState(() => initialSprintId === null ? -1 : sprints.findIndex((sprint) => sprint.id === initialSprintId))
-  const [pinned, setPinned] = useState<number | null>(() => initialIndex >= 0 ? initialIndex : null)
-  const [selected, setSelected] = useState(() => Math.max(0, initialIndex))
-  const [committedVisual, setCommittedVisual] = useState(() => initialIndex >= 0)
+  // Controlled selection: the page owns which Sprint is selected, so switching between views (which mount another
+  // chart) keeps it exactly — cleared stays cleared, Sprint N stays Sprint N. Uncontrolled charts keep local state.
+  const controlled = selectedSprintId !== undefined
+  const externalIndex = controlled ? (selectedSprintId === null ? -1 : sprints.findIndex((sprint) => sprint.id === selectedSprintId)) : -1
+  const [localPinned, setLocalPinned] = useState<number | null>(() => initialIndex >= 0 ? initialIndex : null)
+  const [localSelected, setLocalSelected] = useState(() => Math.max(0, initialIndex))
+  const [localCommitted, setLocalCommitted] = useState(() => initialIndex >= 0)
+  const pinned = controlled ? (externalIndex >= 0 ? externalIndex : null) : localPinned
+  const selected = controlled ? Math.max(0, externalIndex) : localSelected
+  const committedVisual = controlled ? externalIndex >= 0 : localCommitted
+  const setPinned = (value: number | null) => { if (!controlled) setLocalPinned(value) }
+  const setSelected = (value: number) => { if (!controlled) setLocalSelected(value) }
+  const setCommittedVisual = (value: boolean) => { if (!controlled) setLocalCommitted(value) }
   // The pre-selected Sprint has not been clicked yet: its first click just confirms it.
   const seeded = useRef(initialIndex >= 0)
   const [emphasis, setEmphasis] = useState<string | null>(null)
